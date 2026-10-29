@@ -5,30 +5,11 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../services/supabase'; 
 import { sendPushNotification } from '../services/pushService'; 
-import { useAuth } from './useAuth'; 
+import { useAuth } from './useAuth';
+import { DEFAULT_MEALS } from './health/constants';
+import { setGlobalTimeOffset, getTodayDateStr, getYesterdayDateStr, calculateDiffDays } from './health/dateUtils';
 
 const HealthContext = createContext();
-
-const DEFAULT_MEALS = {
-  '早餐': '【进食顺序】蔬菜 ➔ 蛋白质 ➔ 慢碳水\n• 蛋白质：2 颗全蛋（约 100g）\n• 慢碳水：燕麦片 35g / 贝果半个\n• 饮品：无糖豆浆 250ml / 脱脂奶',
-  '午餐': '【进食顺序】蔬菜 ➔ 蛋白质 ➔ 慢碳水\n• 蔬菜：西兰花、菠菜或沙拉（200g）\n• 蛋白质：鸡胸肉、猪里脊或虾仁（130g）\n• 慢碳水：干意面、红薯或糙米（100g）',
-  '晚餐': '【进食顺序】蔬菜 ➔ 蛋白质 ➔ 慢碳水\n• 蔬菜：白蘑菇、芦笋或菠菜（200g）\n• 蛋白质：去皮鸡腿肉或鱼肉（110g）\n• 慢碳水：小土豆、甜玉米或糙米（90g）'
-};
-
-// 🍎 修复核心：全局绝对时空偏移量
-let globalTimeOffset = 0; 
-
-const getTodayDateStr = () => {
-  // 🍎 不再相信设备时间！本地时间 + 服务器偏移量 = 绝对真理 UTC 时间
-  const d = new Date(Date.now() + globalTimeOffset);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-};
-
-const calculateDiffDays = (date1, date2) => {
-  const d1 = new Date(`${date1}T00:00:00Z`);
-  const d2 = new Date(`${date2}T00:00:00Z`);
-  return Math.round(Math.abs(d1 - d2) / 86400000);
-};
 
 export function HealthProvider({ children }) {
   const { user } = useAuth(); 
@@ -59,7 +40,7 @@ export function HealthProvider({ children }) {
     try {
       const { data: serverTimeStr } = await supabase.rpc('get_server_time');
       if (serverTimeStr) {
-        globalTimeOffset = new Date(serverTimeStr).getTime() - Date.now();
+        setGlobalTimeOffset(new Date(serverTimeStr).getTime() - Date.now());
       }
     } catch (e) {
       console.warn("⚠️ 异国时空校准失败，降级使用本地相对时间", e);
@@ -173,9 +154,7 @@ export function HealthProvider({ children }) {
         AsyncStorage.setItem('@lastCheckInDate', todayStr);
       } else if (!isDoneToday && lastCheckInDate === todayStr) {
         // 撤销打卡逻辑
-        const yesterday = new Date(Date.now() + globalTimeOffset);
-        yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-        const yStr = `${yesterday.getUTCFullYear()}-${String(yesterday.getUTCMonth() + 1).padStart(2, '0')}-${String(yesterday.getUTCDate()).padStart(2, '0')}`;
+        const yStr = getYesterdayDateStr();
         
         const newStreak = Math.max(0, streakDays - 1);
         setStreakDays(newStreak);
