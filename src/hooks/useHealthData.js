@@ -183,7 +183,8 @@ export function HealthProvider({ children }) {
       }
 
       if (targetId) {
-        sendPushNotification(targetId, "滴！打卡啦", `TA 刚刚完成了 ${selectedMeal} 打卡！`, { type: 'health' });
+        // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
+        sendPushNotification(targetId, '', `完成了 ${selectedMeal} 打卡 🥗`, { type: 'health' });
 
         // ⚠️ messages.id 是 uuid 类型，绝不能传 'sys_xxx' 这类字符串
         //    这里不传 id，交给数据库默认值（gen_random_uuid()）自动生成

@@ -199,10 +199,10 @@ export function useAudioRecorder({ targetId, user, saveAndSend }) {
             media_url: cloudUrl,
             duration: durationSec,
           });
-          sendPushNotification(targetId, '新消息', '[语音消息]', {
+          // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
+          sendPushNotification(targetId, '', '[语音消息]', {
             type: 'chat',
             targetId: user.id,
-            targetName: 'TA',
           });
         }
       }, 150);

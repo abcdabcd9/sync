@@ -52,6 +52,34 @@ function isValidText(v: unknown, maxLen: number): v is string {
   return typeof v === 'string' && v.trim().length > 0 && v.length <= maxLen;
 }
 
+/** 判断是否为「无效昵称」：空 / 纯数字 / 通用占位词 */
+const INVALID_NAME_TOKENS = new Set(['聊天', '新消息', 'TA', 'ta', 'Ta', '未知用户', '用户', 'undefined', 'null']);
+function isInvalidName(v: unknown): boolean {
+  if (typeof v !== 'string') return true;
+  const s = v.trim();
+  if (!s) return true;
+  if (/^\d+$/.test(s)) return true; // 纯数字（如 '1'）
+  return INVALID_NAME_TOKENS.has(s);
+}
+
+/**
+ * 解析发送者展示昵称（服务端权威，绝不信任客户端）：
+ *   1. profiles.nickname
+ *   2. profiles.username（若为邮箱则截取 @ 前用户名）
+ *   3. 兜底 '健康搭子'
+ */
+function resolveSenderNickname(nickname: unknown, username: unknown): string {
+  const nick = typeof nickname === 'string' ? nickname.trim() : '';
+  if (!isInvalidName(nick)) return nick.slice(0, 60);
+
+  const uname = typeof username === 'string' ? username.trim() : '';
+  if (uname) {
+    const localPart = uname.includes('@') ? uname.split('@')[0] : uname;
+    if (!isInvalidName(localPart)) return localPart.slice(0, 60);
+  }
+  return '健康搭子';
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   // ---- CORS 预检 ----
   if (req.method === 'OPTIONS') {
@@ -96,14 +124,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { targetUserId, title, body, data } = payload;
+  const { targetUserId, body, data } = payload;
 
   if (!isValidText(targetUserId, 64)) {
     return json({ error: 'targetUserId is required' }, 400);
   }
-  if (!isValidText(title, 120)) {
-    return json({ error: 'title is required (max 120 chars)' }, 400);
-  }
+  // ⚠️ title 不再由客户端决定（客户端传什么都会被服务端覆盖），因此不再强制校验
   if (!isValidText(body, 500)) {
     return json({ error: 'body is required (max 500 chars)' }, 400);
   }
@@ -117,15 +143,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
   });
 
   // ---- 3. 权限校验：sender 与 target 必须存在社交关系 ----
+  // 同时取出 sender 的昵称，用于服务端覆盖推送标题（前端不再硬编码 'TA'）
   const { data: relation, error: relationError } = await adminClient
     .from('profiles')
-    .select('id, bound_partner_id')
+    .select('id, bound_partner_id, nickname, username')
     .eq('id', senderId)
     .single();
 
   if (relationError || !relation) {
     return json({ error: 'Sender profile not found' }, 403);
   }
+
+  // 🔑 推送标题以「发送者真实昵称」为准，客户端传入的 title 一律丢弃
+  const senderProfile = relation as {
+    id: string;
+    bound_partner_id: string | null;
+    nickname: string | null;
+    username: string | null;
+  };
+  const senderNickname = resolveSenderNickname(senderProfile.nickname, senderProfile.username);
 
   let allowed = relation.bound_partner_id === targetUserId;
 
@@ -174,12 +210,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // ---- 5. 服务端发起真正的推送 ----
+  // 🔒 载荷统一：title 与 data.targetName 一律由服务端权威覆盖，
+  //    客户端传入的任何 title / targetName（'聊天'、'1'、'TA' 等）全部丢弃。
+  const safeData: Record<string, unknown> = { ...(data ?? {}) };
+  safeData.targetName = senderNickname; // 点击跳转时携带的真实昵称
+  if (!safeData.targetId) safeData.targetId = senderId; // 兜底：跳转目标会话的对方 ID
+
   const expoMessage = {
     to: pushToken,
     sound: 'default',
-    title,
-    body,
-    data: data ?? {},
+    title: senderNickname, // 通知栏大字永远是发件人昵称
+    body: body.trim(), // body 只保留纯内容
+    data: safeData,
   };
 
   try {

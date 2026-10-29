@@ -70,7 +70,8 @@ export default function InviteFriendScreen() {
     
     if (error) console.error("发送影院卡片失败:", error);
 
-    sendPushNotification(friend.id, '🎬 影院邀请', '邀请你加入同步放映室，快来！', { type: 'chat', targetId: user.id });
+    // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
+    sendPushNotification(friend.id, '', '邀请你加入同步放映室，快来！', { type: 'chat', targetId: user.id });
     
     Alert.alert('邀请已发送', `邀请卡片已发送至与 ${friend.username} 的聊天界面`, [
       { text: '返回影院', onPress: () => router.back() }

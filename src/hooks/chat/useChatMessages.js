@@ -107,11 +107,21 @@ export function useChatMessages(targetId, user) {
     };
     fetchMessages();
 
-    // ④ Realtime 订阅（频道名沿用原规则：chat_<排序后的双方 ID>）
+    // ④ Realtime 订阅
+    // ⚠️ 频道名必须唯一：effect 依赖 user 对象引用，Auth 刷新会重跑 effect，
+    //    若复用固定频道名，supabase.channel() 会返回「已 subscribe 的旧实例」，
+    //    再对其 .on() 即抛出 "cannot add postgres_changes callbacks after subscribe()"。
     const sortedIds = [user.id, targetId].sort().join('_');
-    const channelName = `chat_${sortedIds}`;
+    const channelName = `chat_${sortedIds}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // 保险：若同名频道仍残留在 client 中，先彻底移除，保证拿到全新实例
+    supabase.getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
     const channel = supabase.channel(channelName);
 
+    // ✅ 所有 .on() 必须在 .subscribe() 之前链式完成
     channel
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
         const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)

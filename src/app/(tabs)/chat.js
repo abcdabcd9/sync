@@ -171,7 +171,15 @@ export default function ChatMainScreen() {
   // 🍎 新增：全局消息实时监听雷达 (无需刷新，列表自动变化)
   useEffect(() => {
     if (!user) return;
-    const channel = supabase.channel('chat_list_realtime')
+    // ⚠️ 频道名必须唯一：effect 依赖 user 对象引用，重跑时若复用固定名，
+    //    supabase.channel() 会返回已 subscribe 的旧实例，再 .on() 会直接抛错。
+    const channelName = `chat_list_realtime_${user.id}_${Date.now()}`;
+    supabase.getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
+    // ✅ 所有 .on() 必须在 .subscribe() 之前链式完成
+    const channel = supabase.channel(channelName)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
         const msg = payload.new;
         if (msg.user_id === user.id || msg.receiver_id === user.id) {

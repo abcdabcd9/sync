@@ -176,11 +176,11 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
       });
 
       // ⑦ 推送通知
+      // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
       const msgLabel = isVideo ? '[视频]' : '[图片]';
-      sendPushNotification(targetId, '新消息', msgLabel, {
+      sendPushNotification(targetId, '', msgLabel, {
         type: 'chat',
         targetId: user.id,
-        targetName: 'TA',
       });
 
       setUploadProgress(1);

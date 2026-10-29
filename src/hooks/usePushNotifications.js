@@ -62,9 +62,12 @@ export function usePushNotifications() {
     responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
       if (data?.type === 'chat' && data?.targetId) {
+        // 🔑 targetName 由云函数权威写入（真实昵称）；缺失时留空，
+        //    交给 chat_room.js 按 targetId 反查 profiles 自我修复，绝不传「聊天」或数字
+        const name = typeof data.targetName === 'string' ? data.targetName.trim() : '';
         router.push({
           pathname: '/chat_room',
-          params: { targetId: data.targetId, targetName: data.targetName || '聊天' },
+          params: { targetId: data.targetId, targetName: name },
         });
       }
     });

@@ -61,12 +61,13 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   }, [targetId]);
 
   // ===== 文本发送 / 搭子邀请 =====
+  // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
   const handleSendText = useCallback(async (text) => {
     if (!user || !targetId) return;
     const msgId = generateUUID();
     saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
     await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
-    sendPushNotification(targetId, '新消息', text, { type: 'chat', targetId: user.id, targetName: 'TA' });
+    sendPushNotification(targetId, '', text, { type: 'chat', targetId: user.id });
   }, [user, targetId, saveAndSend]);
 
   const handleAcceptPartner = async (msg) => {
@@ -74,7 +75,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     await supabase.from('profiles').update({ bound_partner_id: targetId }).eq('id', user.id);
     await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！', subtype: 'SYNC_PARTNER_ACCEPTED' }).eq('id', msg.id);
     await supabase.from('messages').insert({ id: generateUUID(), user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
-    sendPushNotification(targetId, '邀请通过', 'TA 已同意成为你的健康搭子！', { type: 'chat', targetId: user.id });
+    sendPushNotification(targetId, '', '已同意成为你的健康搭子！', { type: 'chat', targetId: user.id });
   };
 
   const handleRejectPartner = async (msg) => {
@@ -175,7 +176,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         {!isTabletMode && (
           <TouchableOpacity onPress={onBack} style={styles.backBtn}><Ionicons name="chevron-back" size={28} color={palette.primary} /></TouchableOpacity>
         )}
-        <Text style={[styles.headerTitle, { color: palette.textPrimary, marginLeft: isTabletMode ? 16 : 0 }]}>{targetName || '聊天'}</Text>
+        <Text style={[styles.headerTitle, { color: palette.textPrimary, marginLeft: isTabletMode ? 16 : 0 }]}>{targetName || '好友'}</Text>
         <View style={{ width: 28 }} />
       </View>
 

@@ -92,7 +92,8 @@ export default function BindPartnerScreen() {
           
           if (error) console.error("发送搭子卡片失败:", error);
           
-          sendPushNotification(friendId, '💖 搭子邀请', '邀请你成为健康守护伴侣，快来同意！', { type: 'chat', targetId: user.id });
+          // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
+          sendPushNotification(friendId, '', '向你发来了搭子邀请', { type: 'chat', targetId: user.id });
 
           setLoading(false);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
