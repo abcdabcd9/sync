@@ -52,6 +52,18 @@ function isValidText(v: unknown, maxLen: number): v is string {
   return typeof v === 'string' && v.trim().length > 0 && v.length <= maxLen;
 }
 
+/**
+ * 去除文本中的 Emoji / 变体选择符 / 零宽连接符 / 区域指示符，
+ * 保证推送 title 与 body 100% 为纯文字。
+ * 覆盖范围：Emoji 主区、杂项符号、装饰符号、箭头、变体选择符、ZWJ、肤色修饰符、旗帜。
+ */
+const EMOJI_PATTERN =
+  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE00}-\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}\u{1F1E6}-\u{1F1FF}]/gu;
+
+function stripEmoji(input: string): string {
+  return input.replace(EMOJI_PATTERN, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 /** 判断是否为「无效昵称」：空 / 纯数字 / 通用占位词 */
 const INVALID_NAME_TOKENS = new Set(['聊天', '新消息', 'TA', 'ta', 'Ta', '未知用户', '用户', 'undefined', 'null']);
 function isInvalidName(v: unknown): boolean {
@@ -69,10 +81,10 @@ function isInvalidName(v: unknown): boolean {
  *   3. 兜底 '健康搭子'
  */
 function resolveSenderNickname(nickname: unknown, username: unknown): string {
-  const nick = typeof nickname === 'string' ? nickname.trim() : '';
+  const nick = typeof nickname === 'string' ? stripEmoji(nickname.trim()) : '';
   if (!isInvalidName(nick)) return nick.slice(0, 60);
 
-  const uname = typeof username === 'string' ? username.trim() : '';
+  const uname = typeof username === 'string' ? stripEmoji(username.trim()) : '';
   if (uname) {
     const localPart = uname.includes('@') ? uname.split('@')[0] : uname;
     if (!isInvalidName(localPart)) return localPart.slice(0, 60);
@@ -216,11 +228,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   safeData.targetName = senderNickname; // 点击跳转时携带的真实昵称
   if (!safeData.targetId) safeData.targetId = senderId; // 兜底：跳转目标会话的对方 ID
 
+  // 🚫 纯文字策略：title 与 body 一律剥离 Emoji，确保通知栏 100% 无表情符号
+  const safeTitle = stripEmoji(senderNickname) || '健康搭子';
+  const safeBody = stripEmoji(body) || '新消息';
+
   const expoMessage = {
     to: pushToken,
     sound: 'default',
-    title: senderNickname, // 通知栏大字永远是发件人昵称
-    body: body.trim(), // body 只保留纯内容
+    title: safeTitle, // 通知栏大字永远是发件人昵称（已去 Emoji）
+    body: safeBody, // body 只保留纯文字内容（已去 Emoji）
     data: safeData,
   };
 

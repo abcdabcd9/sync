@@ -224,7 +224,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
           )}
           {isRecording && (
             <View style={[styles.uploadBar, { backgroundColor: palette.chatBorder }]}>
-              <Text style={[styles.uploadBarText, { color: palette.primary }]}>🎙️ 正在录音 {formatDuration(recordingDuration)}</Text>
+              <Text style={[styles.uploadBarText, { color: palette.primary }]}>正在录音 {formatDuration(recordingDuration)}</Text>
             </View>
           )}
           <FlatList
