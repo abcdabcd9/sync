@@ -52,8 +52,11 @@ const uploadToSupabase = async (uri, prefix) => {
 };
 
 const formatDbMsg = (row, currentUserId) => ({
-  id: row.id, type: row.type, 
-  text: row.type === 'action' ? (row.user_id === currentUserId ? '你撤回了一条消息' : '对方撤回了一条消息') : row.text,
+  id: row.id, type: row.type, subtype: row.subtype ?? null,
+  // ⚠️ 只有「撤回」类 action 才覆写文案；带 subtype 的协议消息必须保留真实 text
+  text: (row.type === 'action' && !row.subtype)
+    ? (row.user_id === currentUserId ? '你撤回了一条消息' : '对方撤回了一条消息')
+    : row.text,
   mediaUrl: row.media_url, thumbnailUrl: row.thumbnail_url, duration: row.duration || 0,
   isMe: row.user_id === currentUserId, timestamp: new Date(row.created_at).getTime()
 });
@@ -176,12 +179,12 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const handleAcceptPartner = async (msg) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await supabase.from('profiles').update({ bound_partner_id: targetId }).eq('id', user.id);
-    await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！' }).eq('id', msg.id);
+    await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！', subtype: 'SYNC_PARTNER_ACCEPTED' }).eq('id', msg.id);
     const sysMsgId = generateUUID();
     await supabase.from('messages').insert({ id: sysMsgId, user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
     sendPushNotification(targetId, "邀请通过", "TA 已同意成为你的健康搭子！", { type: 'chat', targetId: user.id });
   };
-  const handleRejectPartner = async (msg) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); await supabase.from('messages').update({ type: 'system', text: '已拒绝健康搭子邀请' }).eq('id', msg.id); };
+  const handleRejectPartner = async (msg) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); await supabase.from('messages').update({ type: 'system', text: '已拒绝健康搭子邀请', subtype: 'SYNC_PARTNER_REJECTED' }).eq('id', msg.id); };
 
   const handleStartRecord = useCallback(async () => { 
     try { 

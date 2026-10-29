@@ -163,7 +163,7 @@ export function CinemaProvider({ children }) {
     if(player) { player.pause(); player.replaceAsync(null); }
     setCurrentUrl(null); setIsMinimized(false); setIsPlaying(false);
     if (cinemaRoomId) {
-      try { await supabase.from('messages').update({ text: `[SYNC_CINEMA_ENDED]:${cinemaRoomId}` }).eq('text', `[SYNC_CINEMA_INVITE]:${cinemaRoomId}`); } catch(e) {}
+      try { await supabase.from('messages').update({ subtype: 'SYNC_CINEMA_ENDED' }).eq('type', 'cinema_invite').eq('text', cinemaRoomId); } catch(e) {}
     }
     setCinemaRoomId(null);
   }, [player, cinemaRoomId]);

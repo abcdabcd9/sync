@@ -16,19 +16,19 @@ import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../services/supabase';
 import ChatRoomInner from '../../components/ChatRoomInner'; 
 
-// 🍎 新增：将数据库里的密语翻译成人类可读的预览文本
+// 🍎 将数据库里的密语翻译成人类可读的预览文本（按 subtype 协议字段判断）
 const formatPreview = (msg) => {
   if (!msg) return '点击进入会话...';
   if (msg.type === 'image') return '[图片]';
   if (msg.type === 'video') return '[视频]';
   if (msg.type === 'audio') return '[语音]';
-  if (msg.type === 'cinema_invite' || msg.text?.startsWith('[SYNC_CINEMA_INVITE]')) return '[邀请同步观影]';
-  if (msg.text?.startsWith('[SYNC_CINEMA_ENDED]')) return '[本次同步放映已结束]';
-  if (msg.text === '[SYNC_PARTNER_INVITE]') return '[健康搭子邀请]';
-  if (msg.text === '[SYNC_PARTNER_ACCEPTED]') return '你们已成为健康搭子！';
-  if (msg.text === '[SYNC_PARTNER_REJECTED]') return '已拒绝健康搭子邀请';
-  if (msg.text === '[SYNC_PARTNER_UNBOUND]') return '已解除健康守护伴侣关系';
-  if (msg.text?.startsWith('[SYNC_SYSTEM]:')) return msg.text.replace('[SYNC_SYSTEM]:', '');
+  if (msg.type === 'cinema_invite') return '[邀请同步观影]';
+  if (msg.subtype === 'SYNC_CINEMA_ENDED') return '[本次同步放映已结束]';
+  if (msg.subtype === 'SYNC_PARTNER_INVITE') return '[健康搭子邀请]';
+  if (msg.subtype === 'SYNC_PARTNER_ACCEPTED') return '你们已成为健康搭子！';
+  if (msg.subtype === 'SYNC_PARTNER_REJECTED') return '已拒绝健康搭子邀请';
+  if (msg.subtype === 'SYNC_PARTNER_UNBOUND') return '已解除健康守护伴侣关系';
+  if (msg.subtype === 'SYNC_SYSTEM') return msg.text || '暂无新消息';
   return msg.text || '暂无新消息';
 };
 

@@ -11,30 +11,38 @@ export default React.memo(function MessageBubble({
   const isMe = item.isMe;
   let msgType = item.type || 'text';
   let displayText = item.text || '';
-  let isCinemaEnded = false; 
+  let isCinemaEnded = false;
 
-  if (msgType === 'text' && typeof displayText === 'string') {
-    if (displayText.startsWith('[SYNC_CINEMA_INVITE]:')) {
-      msgType = 'cinema_invite';
-      displayText = displayText.replace('[SYNC_CINEMA_INVITE]:', '');
-    } else if (displayText.startsWith('[SYNC_CINEMA_ENDED]:')) {
-      msgType = 'cinema_invite';
-      displayText = displayText.replace('[SYNC_CINEMA_ENDED]:', '');
-      isCinemaEnded = true; 
-    } else if (displayText === '[SYNC_PARTNER_INVITE]') {
-      msgType = 'partner_invite';
-    } else if (displayText === '[SYNC_PARTNER_ACCEPTED]') {
-      msgType = 'action';
-      displayText = '你们已成为健康搭子！';
-    } else if (displayText === '[SYNC_PARTNER_REJECTED]') {
-      msgType = 'action';
-      displayText = '已拒绝健康搭子邀请';
-    } else if (displayText === '[SYNC_PARTNER_UNBOUND]') {
-      msgType = 'action';
-      displayText = '已解除健康守护伴侣关系';
-    } else if (displayText.startsWith('[SYNC_SYSTEM]:')) {
-      msgType = 'action';
-      displayText = displayText.replace('[SYNC_SYSTEM]:', '');
+  // 协议消息统一按 subtype 字段判断（text 只承载真实内容）
+  if (item.subtype) {
+    switch (item.subtype) {
+      case 'SYNC_CINEMA_INVITE':
+        msgType = 'cinema_invite';
+        break;
+      case 'SYNC_CINEMA_ENDED':
+        msgType = 'cinema_invite';
+        isCinemaEnded = true;
+        break;
+      case 'SYNC_PARTNER_INVITE':
+        msgType = 'partner_invite';
+        break;
+      case 'SYNC_PARTNER_ACCEPTED':
+        msgType = 'action';
+        displayText = '你们已成为健康搭子！';
+        break;
+      case 'SYNC_PARTNER_REJECTED':
+        msgType = 'action';
+        displayText = '已拒绝健康搭子邀请';
+        break;
+      case 'SYNC_PARTNER_UNBOUND':
+        msgType = 'action';
+        displayText = '已解除健康守护伴侣关系';
+        break;
+      case 'SYNC_SYSTEM':
+        msgType = 'action';
+        break;
+      default:
+        break;
     }
   }
 

@@ -157,13 +157,52 @@ export function HealthProvider({ children }) {
     syncToCloud(waterAmount, newMeals);
 
     // 伴侣通知（非阻塞，失败不影响本地状态）
-    if (user && partnerId) {
-      sendPushNotification(partnerId, "滴！打卡啦", `TA 刚刚完成了 ${selectedMeal} 打卡！`, { type: 'health' });
-      const msgId = 'sys_' + Date.now();
-      await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: partnerId, type: 'text', text: `[SYNC_SYSTEM]:完成了 ${selectedMeal} 饮食打卡 🥗` });
+    if (user) {
+      // 🛡️ partnerId 可能尚未就绪（loadAllData 还在网络往返中）→ 现场兜底查一次
+      let targetId = partnerId;
+      if (!targetId) {
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('bound_partner_id')
+            .eq('id', user.id)
+            .single();
+          targetId = profile?.bound_partner_id || null;
+          if (!targetId) {
+            const { data: whoBoundMe } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('bound_partner_id', user.id)
+              .limit(1);
+            targetId = whoBoundMe?.[0]?.id || null;
+          }
+          if (targetId) setPartnerId(targetId);
+        } catch (e) {
+          console.warn('⚠️ 打卡时解析搭子 ID 失败:', e?.message ?? e);
+        }
+      }
+
+      if (targetId) {
+        sendPushNotification(targetId, "滴！打卡啦", `TA 刚刚完成了 ${selectedMeal} 打卡！`, { type: 'health' });
+
+        // ⚠️ messages.id 是 uuid 类型，绝不能传 'sys_xxx' 这类字符串
+        //    这里不传 id，交给数据库默认值（gen_random_uuid()）自动生成
+        const { error } = await supabase.from('messages').insert({
+          user_id: user.id,
+          receiver_id: targetId,
+          type: 'text',
+          text: `完成了 ${selectedMeal} 饮食打卡 🥗`,
+          subtype: 'SYNC_SYSTEM',
+        });
+        if (error) {
+          console.warn('⚠️ 打卡系统消息写入失败:', error.message, error.details ?? '', error.hint ?? '');
+        }
+      } else {
+        console.warn('⚠️ 打卡系统消息未发送：当前用户没有绑定健康搭子');
+      }
     }
     setSelectedMeal(null);
-  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, syncToCloud, setMeals]);
+  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, setPartnerId, syncToCloud, setMeals]);
 
   const undoCheck = useCallback(() => {
     if (!selectedMeal || !mealsStatus[selectedMeal]) return;

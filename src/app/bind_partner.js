@@ -38,8 +38,7 @@ export default function BindPartnerScreen() {
         const { data: acceptedMsgs } = await supabase.from('messages')
           .select('receiver_id')
           .eq('user_id', user.id)
-          .eq('type', 'text') // 🍎 优化修复：添加索引约束条件，彻底规避全表扫描导致的数据库内存溢出
-          .eq('text', '[SYNC_PARTNER_ACCEPTED]')
+          .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
           .order('created_at', { ascending: false })
           .limit(1);
 
@@ -78,16 +77,17 @@ export default function BindPartnerScreen() {
           setLoading(true);
           
           const msgId = generateUUID();
-          const secretText = '[SYNC_PARTNER_INVITE]';
-          
-          const newMsg = { id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, isMe: true, timestamp: Date.now() };
+          const secretText = '';
+          const secretSubtype = 'SYNC_PARTNER_INVITE';
+
+          const newMsg = { id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype, isMe: true, timestamp: Date.now() };
           const cacheKey = `@chatMessages_${friendId}`;
           const cached = await AsyncStorage.getItem(cacheKey);
           const msgs = cached ? JSON.parse(cached) : [];
           await AsyncStorage.setItem(cacheKey, JSON.stringify([newMsg, ...msgs]));
 
           const { error } = await supabase.from('messages').insert({
-            id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText
+            id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype
           });
           
           if (error) console.error("发送搭子卡片失败:", error);
@@ -109,8 +109,8 @@ export default function BindPartnerScreen() {
           await supabase.from('profiles').update({ bound_partner_id: null }).eq('id', user.id);
           
           await supabase.from('messages')
-            .update({ text: '[SYNC_PARTNER_UNBOUND]' })
-            .eq('text', '[SYNC_PARTNER_ACCEPTED]')
+            .update({ text: '', subtype: 'SYNC_PARTNER_UNBOUND' })
+            .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
             .or(`user_id.eq.${user.id},receiver_id.eq.${user.id}`);
 
           setBoundPartnerId(null);
