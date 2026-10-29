@@ -19,6 +19,10 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 const MOBILE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15";
 const DESKTOP_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
 
+// 🔒 安全审计 #25：仅允许加密协议 https:// 与内部 about: 协议，彻底拒绝明文 http://
+const SAFE_URL_PATTERN = /^(https:\/\/|about:)/i;
+const isSafeUrl = (url) => typeof url === 'string' && SAFE_URL_PATTERN.test(url);
+
 export default function BrowserScreen() {
   const { isDark, colors: palette } = useAppTheme();
   const router = useRouter();
@@ -214,10 +218,15 @@ export default function BrowserScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       loadUrl(target); emitCommand('PLAY', 0, target);
       if (Platform.OS === 'ios') setTimeout(() => { router.replace('/cinema'); }, 150); else router.replace('/cinema');
-      return; 
+      return;
     }
 
-    if (!target.startsWith('http')) target = 'https://cn.bing.com/search?q=' + encodeURIComponent(target);
+    // 🔒 安全审计 #25：明文 http:// 一律升级为 https://，非 http(s) 输入走 Bing 搜索
+    if (/^http:\/\//i.test(target)) {
+      target = target.replace(/^http:\/\//i, 'https://');
+    } else if (!/^https:\/\//i.test(target)) {
+      target = 'https://cn.bing.com/search?q=' + encodeURIComponent(target);
+    }
     setCurrentUrl(target);
     actualLoadedUrl.current = target; 
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -320,20 +329,20 @@ export default function BrowserScreen() {
           source={{ uri: currentUrl }} 
           style={styles.webview} 
           
-          originWhitelist={['*']}
+          originWhitelist={['https://*', 'about:*']}
           javaScriptEnabled={true}
           setSupportMultipleWindows={false}
           
-          contentMode={isDesktopMode ? 'desktop' : 'mobile'} 
+          contentMode={isDesktopMode ? 'desktop' : 'mobile'}
 
-          injectedJavaScriptBeforeContentLoaded={runBeforeLoad} 
-          onMessage={onMessage} 
-          onShouldStartLoadWithRequest={(req) => req.url.startsWith('http') || req.url.startsWith('about:')} 
-          onNavigationStateChange={(navState) => { 
-            setCanGoBack(navState.canGoBack); 
-            setCanGoForward(navState.canGoForward); 
+          injectedJavaScriptBeforeContentLoaded={runBeforeLoad}
+          onMessage={onMessage}
+          onShouldStartLoadWithRequest={(req) => isSafeUrl(req.url)}
+          onNavigationStateChange={(navState) => {
+            setCanGoBack(navState.canGoBack);
+            setCanGoForward(navState.canGoForward);
             actualLoadedUrl.current = navState.url;
-            if (navState.url.startsWith('http') && navState.url !== inputUrl && !navState.url.includes('cn.bing.com')) { 
+            if (isSafeUrl(navState.url) && navState.url !== inputUrl && !navState.url.includes('cn.bing.com')) {
               setInputUrl(navState.url); 
               if (capturedUrl) setCapturedUrl(null);
             } 

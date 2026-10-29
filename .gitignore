@@ -41,10 +41,13 @@ yarn-error.*
 /ios
 /android
 
-GoogleService-Info.plist
-
 # 物理隔离云端服务私钥和配置（绝对不允许上传）
 push.json
 sync.json
-google-services.json
 *.apk
+
+# Firebase / FCM 配置文件：本地忽略，EAS 云端构建通过 EAS Secret 文件注入
+# 上传方式：eas secret:create --scope project --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json
+#           eas secret:create --scope project --name GOOGLE_SERVICE_INFO_PLIST --type file --value ./GoogleService-Info.plist
+google-services.json
+GoogleService-Info.plist
