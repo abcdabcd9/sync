@@ -3,7 +3,6 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import * as Clipboard from 'expo-clipboard';
@@ -15,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useAppTheme } from '../context/ThemeContext';
+import { useChatMessages } from '../hooks/chat/useChatMessages';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -51,31 +51,18 @@ const uploadToSupabase = async (uri, prefix) => {
   } catch (e) { return null; }
 };
 
-const formatDbMsg = (row, currentUserId) => ({
-  id: row.id, type: row.type, subtype: row.subtype ?? null,
-  // ⚠️ 只有「撤回」类 action 才覆写文案；带 subtype 的协议消息必须保留真实 text
-  text: (row.type === 'action' && !row.subtype)
-    ? (row.user_id === currentUserId ? '你撤回了一条消息' : '对方撤回了一条消息')
-    : row.text,
-  mediaUrl: row.media_url, thumbnailUrl: row.thumbnail_url, duration: row.duration || 0,
-  isMe: row.user_id === currentUserId, timestamp: new Date(row.created_at).getTime()
-});
-
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
-  
+
+  // 💬 消息域（拉取 / 订阅 / 已读 / 格式化 / 撤回 / 删除 / 乐观发送）
+  const { messages, loading, messagesRef, saveAndSend, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
+
   const { player: cinemaPlayer } = useCinema();
   const wasCinemaPlayingRef = useRef(false);
-  
-  const CACHE_MSG_KEY = `@chatMessages_${targetId}`;
-  const CACHE_DEL_KEY = `@deletedMsgIds_${targetId}`;
 
   const [isTransitioning, setIsTransitioning] = useState(true);
-  const [messages, setMessages] = useState([]);
-  const messagesRef = useRef([]);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   const [previewState, setPreviewState] = useState({ visible: false, index: 0, mediaList: [] }); 
   const [actionMessage, setActionMessage] = useState(null);
@@ -95,78 +82,33 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     return () => clearTimeout(timer);
   }, [targetId]);
 
+  // 🎙️ 音频模式初始化（录音相关，保留在组件内 —— 阶段 1 不抽离）
   useEffect(() => {
     if (!user || !targetId) return;
-    const initAudio = async () => { 
-      try { 
-        await requestRecordingPermissionsAsync(); 
+    const initAudio = async () => {
+      try {
+        await requestRecordingPermissionsAsync();
         if (typeof setAudioModeAsync === 'function') {
-          await setAudioModeAsync({ 
-            allowsRecording: true, 
+          await setAudioModeAsync({
+            allowsRecording: true,
             playsInSilentMode: true,
             staysActiveInBackground: true,
             interruptionModeIOS: 0,
-            interruptionModeAndroid: 0 
-          }); 
+            interruptionModeAndroid: 0
+          });
         }
       } catch (e) {
         console.warn("Audio init warning:", e);
-      } 
+      }
     };
     initAudio();
 
-    const fetchMessages = async () => {
-      try { const cachedStr = await AsyncStorage.getItem(CACHE_MSG_KEY); if (cachedStr) setMessages(JSON.parse(cachedStr)); } catch (e) {}
-      const { data } = await supabase.from('messages').select('*').or(`and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`).order('created_at', { ascending: false }).limit(50);
-      if (data) {
-        const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
-        const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-        const mergedMessages = data.map(r => formatDbMsg(r, user.id)).filter(m => !deletedIds.includes(m.id));
-        setMessages(mergedMessages);
-        AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(mergedMessages.slice(0, 300)));
-      }
-      await supabase.from('messages').update({ is_read: true }).eq('user_id', targetId).eq('receiver_id', user.id).eq('is_read', false);
-    };
-    fetchMessages();
-
-    const sortedIds = [user.id, targetId].sort().join('_');
-    const channelName = `chat_${sortedIds}`;
-    const channel = supabase.channel(channelName);
-    
-    channel
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
-        const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId) || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
-        if (!isRelevant) return;
-        const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
-        const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-        if (deletedIds.includes(payload.new.id)) return;
-
-        const newMsg = formatDbMsg(payload.new, user.id);
-        setMessages(prev => {
-          if (prev.find(m => m.id === newMsg.id)) return prev;
-          if (!newMsg.isMe) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          return [newMsg, ...prev];
-        });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
-        const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId) || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
-        if (!isRelevant) return;
-        const updatedMsg = formatDbMsg(payload.new, user.id);
-        setMessages(prev => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
-      }).subscribe();
-
-    return () => { 
-      supabase.removeChannel(channel); 
+    return () => {
       if (typeof setAudioModeAsync === 'function') {
-        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true }).catch(()=>{}); 
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true }).catch(()=>{});
       }
     };
   }, [user, targetId]);
-
-  const saveAndSend = useCallback((newMsg) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setMessages((prev) => { const updated = [newMsg, ...prev]; AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(updated.slice(0, 300))); return updated; });
-  }, [targetId, CACHE_MSG_KEY]);
 
   const handleSendText = useCallback(async (text) => {
     if (!user || !targetId) return;
@@ -338,8 +280,9 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const handleCopy = async (text) => { await Clipboard.setStringAsync(text); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };
   const handleSaveToAlbum = async (url) => { const { status } = await MediaLibrary.requestPermissionsAsync(); if (status === 'granted') { await MediaLibrary.saveToLibraryAsync(url); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } setActionMessage(null); };
   const handleFavorite = () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };
-  const handleDelete = useCallback(async (id) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); setMessages(prev => prev.filter(m => m.id !== id)); setActionMessage(null); const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY); const deletedIds = deletedStr ? JSON.parse(deletedStr) : []; deletedIds.push(id); await AsyncStorage.setItem(CACHE_DEL_KEY, JSON.stringify(deletedIds)); }, [targetId, CACHE_DEL_KEY]);
-  const handleRecallMsg = useCallback(async (id) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setActionMessage(null); setMessages(prev => prev.map(m => m.id === id ? { ...m, type: 'action', text: '你撤回了一条消息', mediaUrl: null, thumbnailUrl: null } : m)); await supabase.from('messages').update({ type: 'action', text: '撤回了一条消息', media_url: null, thumbnail_url: null }).eq('id', id); }, []);
+  // 🗑️ 本地删除 / ↩️ 撤回：委托给 useChatMessages
+  const handleDelete = useCallback(async (id) => { setActionMessage(null); await deleteMessage(id); }, [deleteMessage]);
+  const handleRecallMsg = useCallback(async (id) => { setActionMessage(null); await revokeMessage(id); }, [revokeMessage]);
 
   const handleStartCall = useCallback((type) => {
     Keyboard.dismiss();
@@ -359,7 +302,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         <View style={{ width: 28 }} />
       </View>
 
-      {isTransitioning ? (
+      {(isTransitioning || loading) ? (
         <View style={styles.loadingContainer}><ActivityIndicator size="small" color={palette.textSecondary} /></View>
       ) : (
         <View style={styles.chatArea}>
