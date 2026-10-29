@@ -28,7 +28,12 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mycoupleapp.app"
+      "bundleIdentifier": "com.mycoupleapp.app",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
     },
     "android": {
       "package": "com.mycoupleapp.app",

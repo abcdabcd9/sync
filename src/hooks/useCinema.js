@@ -1,6 +1,6 @@
 // --- START OF FILE src/hooks/useCinema.js ---
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { useVideoPlayer } from 'expo-video';
 import { setAudioModeAsync } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
@@ -60,9 +60,24 @@ export function CinemaProvider({ children }) {
     }
   }, [partnerStatus]);
 
-  useEffect(() => {
-    if (!currentUrl) return;
-    const interval = setInterval(() => {
+  // 🔋 500ms 进度漂移检测轮询
+  //    仅在 App 处于前台（active）时运行；切后台/切屏立即暂停，回前台自动恢复。
+  //    定时器句柄放在 ref 中，便于 AppState 回调与卸载清理统一管理。
+  const pollTimerRef = useRef(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    // 幂等：已在运行则不重复创建，避免定时器叠加
+    if (pollTimerRef.current) return;
+    if (!player || !currentUrl) return;
+
+    pollTimerRef.current = setInterval(() => {
       if (!player) return;
       const currentVideoTime = player.currentTime;
       const currentPlaying = player.playing;
@@ -92,8 +107,34 @@ export function CinemaProvider({ children }) {
       }
       lastVideoTime.current = currentVideoTime;
     }, 500);
-    return () => clearInterval(interval);
   }, [player, currentUrl, emitCommand]);
+
+  // 1️⃣ 播放源/播放器变化时，按当前前后台状态决定是否启动轮询
+  useEffect(() => {
+    if (!currentUrl || !player) {
+      stopPolling();
+      return;
+    }
+    if (AppState.currentState === 'active') startPolling();
+    else stopPolling();
+    return () => stopPolling();
+  }, [player, currentUrl, startPolling, stopPolling]);
+
+  // 2️⃣ 监听前后台切换：后台暂停轮询，前台恢复
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        startPolling();
+      } else {
+        // 'background' | 'inactive'（iOS 切屏/来电/下拉通知中心）一律暂停
+        stopPolling();
+      }
+    });
+    return () => {
+      subscription?.remove();
+      stopPolling();
+    };
+  }, [startPolling, stopPolling]);
 
   useEffect(() => {
     if (!remoteCommand) return;
