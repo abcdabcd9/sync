@@ -7,12 +7,14 @@ import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService'; 
 import { useAuth } from './useAuth';
 import { DEFAULT_MEALS } from './health/constants';
-import { setGlobalTimeOffset, getTodayDateStr, getYesterdayDateStr, calculateDiffDays } from './health/dateUtils';
+import { calculateDiffDays } from './health/dateUtils';
+import { useTimeSync } from './health/useTimeSync';
 
 const HealthContext = createContext();
 
 export function HealthProvider({ children }) {
-  const { user } = useAuth(); 
+  const { user } = useAuth();
+  const { todayStr, calibrate, getDateStr } = useTimeSync();
   
   const [isInitialized, setIsInitialized] = useState(false);
   const [selectedMeal, setSelectedMeal] = useState(null);
@@ -36,17 +38,11 @@ export function HealthProvider({ children }) {
 
   const loadAllData = async () => {
     
-    // 🍎 每次加载数据前，先强制校准时空法则！(即使网络不好，也有 try/catch 保底防御机制)
-    try {
-      const { data: serverTimeStr } = await supabase.rpc('get_server_time');
-      if (serverTimeStr) {
-        setGlobalTimeOffset(new Date(serverTimeStr).getTime() - Date.now());
-      }
-    } catch (e) {
-      console.warn("⚠️ 异国时空校准失败，降级使用本地相对时间", e);
-    }
+    // 🍎 每次加载数据前，先强制校准时空法则！(失败时 useTimeSync 内部会保留旧 offset)
+    await calibrate();
 
-    const todayStr = getTodayDateStr();
+    // 校准后重新取一次"今天"，确保拿到的是最新偏移量下的日期
+    const todayStr = getDateStr();
 
     const [savedWater, savedMeals, savedMaxWater, savedMotto, savedGuides, savedStreak, savedCheckIn, savedActive] = await Promise.all([
       AsyncStorage.getItem('@waterAmount'), AsyncStorage.getItem('@mealsStatus'),
@@ -119,11 +115,11 @@ export function HealthProvider({ children }) {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
         // App 切回前台时，会顺带执行 loadAllData 里的最新一次对表校准！
-        const todayStr = getTodayDateStr();
+        const currentDayStr = getDateStr();
         setLastActiveDate(prev => {
-          if (prev && prev !== todayStr) {
+          if (prev && prev !== currentDayStr) {
             loadAllData();
-            return todayStr;
+            return currentDayStr;
           }
           return prev;
         });
@@ -134,7 +130,6 @@ export function HealthProvider({ children }) {
 
   useEffect(() => {
     if (!isInitialized) return;
-    const todayStr = getTodayDateStr();
     const isDoneToday = mealsStatus['早餐'] && mealsStatus['午餐'] && mealsStatus['晚餐'] && waterAmount >= maxWater;
 
     AsyncStorage.setItem('@waterAmount', waterAmount.toString());
@@ -153,8 +148,10 @@ export function HealthProvider({ children }) {
         AsyncStorage.setItem('@streakDays', newStreak.toString());
         AsyncStorage.setItem('@lastCheckInDate', todayStr);
       } else if (!isDoneToday && lastCheckInDate === todayStr) {
-        // 撤销打卡逻辑
-        const yStr = getYesterdayDateStr();
+        // 撤销打卡逻辑：把 lastCheckInDate 回退到"昨天"
+        const yDate = new Date(`${todayStr}T00:00:00Z`);
+        yDate.setUTCDate(yDate.getUTCDate() - 1);
+        const yStr = getDateStr(yDate);
         
         const newStreak = Math.max(0, streakDays - 1);
         setStreakDays(newStreak);
@@ -164,11 +161,10 @@ export function HealthProvider({ children }) {
       }
     }
     wasGoalCompleteRef.current = isDoneToday;
-  }, [mealsStatus, waterAmount, maxWater, isInitialized, lastCheckInDate, streakDays]);
+  }, [mealsStatus, waterAmount, maxWater, isInitialized, lastCheckInDate, streakDays, todayStr, getDateStr]);
 
   useEffect(() => {
     if (!partnerId) return;
-    const todayStr = getTodayDateStr();
     const channel = supabase.channel('partner_health_channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'health_records', filter: `user_id=eq.${partnerId}` }, (payload) => {
         if (payload.new && payload.new.record_date === todayStr) {
@@ -176,16 +172,16 @@ export function HealthProvider({ children }) {
         }
       }).subscribe();
     return () => supabase.removeChannel(channel);
-  }, [partnerId]);
+  }, [partnerId, todayStr]);
 
   const syncToCloud = useCallback((newWater, newMeals) => {
     if (!user) return;
-    const todayStr = getTodayDateStr();
+    const recordDate = getDateStr();
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = setTimeout(async () => {
-      await supabase.from('health_records').upsert({ user_id: user.id, record_date: todayStr, water_amount: newWater, meals_status: newMeals }, { onConflict: 'user_id, record_date' });
+      await supabase.from('health_records').upsert({ user_id: user.id, record_date: recordDate, water_amount: newWater, meals_status: newMeals }, { onConflict: 'user_id, record_date' });
     }, 1500);
-  }, [user]);
+  }, [user, getDateStr]);
 
   const setWaterDirect = useCallback((val) => {
     setWaterAmount(prev => {
