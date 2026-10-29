@@ -7,10 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
+import { useBrowserHistory } from '../hooks/browser/useBrowserHistory';
 
 // 🌐 常量与纯工具函数（阶段 1 抽离）
 import {
@@ -20,10 +19,7 @@ import {
   isAdUrl,
   ellipsisMiddle,
   formatHistoryTime,
-  buildHistoryTitle,
   mergeMediaList,
-  HISTORY_KEY,
-  HISTORY_LIMIT,
 } from '../constants/browser';
 
 // 🧩 注入脚本（阶段 1 抽离）
@@ -57,7 +53,18 @@ export default function BrowserScreen() {
   const [isSniffing, setIsSniffing] = useState(false);
 
   const [isDesktopMode, setIsDesktopMode] = useState(false);
-  const [savedUrls, setSavedUrls] = useState([]);
+
+  // 🕘 历史记录 + 🏷️ 书签收藏（阶段 2 抽离至 useBrowserHistory）
+  const {
+    historyList,
+    addHistory,
+    deleteHistory,
+    clearHistory,
+    bookmarksList,
+    toggleBookmark,
+    removeBookmark,
+    isBookmarked,
+  } = useBrowserHistory();
 
   // 🛡️ 广告拦截开关（默认开启）与累计拦截计数
   const [isAdBlockEnabled, setIsAdBlockEnabled] = useState(true);
@@ -95,8 +102,6 @@ export default function BrowserScreen() {
   const [pickerExpanded, setPickerExpanded] = useState(false);
   const pickerExpandedRef = useRef(false);
 
-  // 🕘 历史浏览记录
-  const [historyList, setHistoryList] = useState([]);
   const [menuTab, setMenuTab] = useState('bookmark'); // 'bookmark' | 'history'
 
   // 🎚️ 嗅探弹窗格式筛选
@@ -140,64 +145,12 @@ export default function BrowserScreen() {
     });
   };
 
-  useEffect(() => {
-    const loadBookmarks = async () => {
-      try {
-        const cached = await AsyncStorage.getItem('@browser_bookmarks');
-        if (cached !== null) {
-          setSavedUrls(JSON.parse(cached));
-        } else {
-          const defaultBookmarks = ['https://nnyy.in/'];
-          setSavedUrls(defaultBookmarks);
-          await AsyncStorage.setItem('@browser_bookmarks', JSON.stringify(defaultBookmarks));
-        }
-      } catch (_) {}
-    };
-    loadBookmarks();
-  }, []);
-
-  // 🕘 启动时读取历史记录（容错：脏数据直接丢弃）
-  useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        const cached = await AsyncStorage.getItem(HISTORY_KEY);
-        if (!cached) return;
-        const parsed = JSON.parse(cached);
-        if (!Array.isArray(parsed)) return;
-        const cleaned = parsed
-          .filter((it) => it && typeof it.url === 'string' && isSafeUrl(it.url))
-          .slice(0, HISTORY_LIMIT);
-        setHistoryList(cleaned);
-      } catch (_) {}
-    };
-    loadHistory();
-  }, []);
-
-  // 🕘 写入历史：去重（同 URL 只保留最新一条）+ 上限 100 条
-  const recordHistory = (url, title) => {
-    if (!isSafeUrl(url)) return;
-    if (url.includes('cn.bing.com/search')) return;
-    const entry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      url,
-      title: buildHistoryTitle(title, url),
-      timestamp: Date.now(),
-    };
-    setHistoryList((prev) => {
-      if (prev.length > 0 && prev[0].url === url) return prev; // 同一页面重复回调，跳过
-      const next = [entry, ...prev.filter((it) => it.url !== url)].slice(0, HISTORY_LIMIT);
-      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  };
+  // 🕘 历史记录 / 🏷️ 书签的读取与持久化已迁移至 useBrowserHistory（阶段 2）
+  //    此处仅保留带触感反馈与二次确认的 UI 包装层
 
   const handleDeleteHistory = (id) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setHistoryList((prev) => {
-      const next = prev.filter((it) => it.id !== id);
-      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
+    deleteHistory(id);
   };
 
   const handleClearHistory = () => {
@@ -207,10 +160,7 @@ export default function BrowserScreen() {
       {
         text: '清空',
         style: 'destructive',
-        onPress: () => {
-          setHistoryList([]);
-          AsyncStorage.removeItem(HISTORY_KEY).catch(() => {});
-        },
+        onPress: () => clearHistory(),
       },
     ]);
   };
@@ -535,6 +485,8 @@ export default function BrowserScreen() {
     }
   };
 
+  // 🏷️ 书签收藏的持久化已迁移至 useBrowserHistory（阶段 2）
+  //    此处仅保留触感反馈与提示弹窗的 UI 包装层
   const handleSaveBookmark = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const targetUrl = actualLoadedUrl.current;
@@ -545,11 +497,19 @@ export default function BrowserScreen() {
       return;
     }
 
-    if (savedUrls.includes(targetUrl)) { Alert.alert('提示', '该网址已在收藏夹中'); closeMenu(); return; }
-    const newUrls = [targetUrl, ...savedUrls];
-    setSavedUrls(newUrls);
-    await AsyncStorage.setItem('@browser_bookmarks', JSON.stringify(newUrls));
-    
+    if (isBookmarked(targetUrl)) {
+      Alert.alert('提示', '该网址已在收藏夹中');
+      closeMenu();
+      return;
+    }
+
+    const result = await toggleBookmark(targetUrl);
+    if (!result.ok) {
+      Alert.alert('无法收藏', '仅支持收藏 HTTPS 安全链接。');
+      closeMenu();
+      return;
+    }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert('收藏成功', '已添加到影院书签列表');
     closeMenu();
@@ -557,9 +517,7 @@ export default function BrowserScreen() {
 
   const handleDeleteBookmark = async (urlToDelete) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    const newUrls = savedUrls.filter(url => url !== urlToDelete);
-    setSavedUrls(newUrls);
-    await AsyncStorage.setItem('@browser_bookmarks', JSON.stringify(newUrls));
+    await removeBookmark(urlToDelete);
   };
 
   const handleLoadBookmark = (url) => {
@@ -642,7 +600,7 @@ export default function BrowserScreen() {
 
     // 🕘 页面加载完成即写入历史（isSafeUrl 校验 + 去重 + 100 条上限）
     const loadedUrl = nativeEvent?.url || actualLoadedUrl.current;
-    if (loadedUrl) recordHistory(loadedUrl, nativeEvent?.title);
+    if (loadedUrl) addHistory(loadedUrl, nativeEvent?.title);
   };
 
   // 🎚️ 嗅探弹窗筛选：计数 + 过滤列表
@@ -722,7 +680,7 @@ export default function BrowserScreen() {
             }
             // 🕘 单页应用（SPA）路由切换不会触发 onLoadEnd，这里兜底记录
             if (navState.url && !navState.loading) {
-              recordHistory(navState.url, navState.title);
+              addHistory(navState.url, navState.title);
             }
           }}
           onLoadStart={handleLoadStart}
@@ -822,7 +780,7 @@ export default function BrowserScreen() {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.menuTabText, { color: menuTab === 'bookmark' ? palette.primary : palette.textSecondary }]}>
-                  影院书签 ({savedUrls.length})
+                  影院书签 ({bookmarksList.length})
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -838,7 +796,7 @@ export default function BrowserScreen() {
 
             {menuTab === 'bookmark' ? (
               <FlatList
-                data={savedUrls}
+                data={bookmarksList}
                 keyExtractor={(item) => item}
                 style={styles.bookmarkList}
                 showsVerticalScrollIndicator={false}
