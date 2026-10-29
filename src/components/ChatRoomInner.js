@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
+import { File, Paths } from 'expo-file-system';
 import { useAudioPlayer } from 'expo-audio';
 import { useRouter } from 'expo-router';
 
@@ -147,15 +148,37 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
 
   const handleSaveToAlbum = async (url) => {
     try {
+      if (!url) return;
       const { status } = await requestPermissionsAsync();
-      if (status === 'granted') {
-        await Asset.create(url);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (status !== 'granted') {
+        Alert.alert('无法保存', '请在系统设置中允许访问相册。');
+        return;
       }
+
+      // 🔒 安全审计 #14：media_url 现在是私有桶的签名 URL（带 ?token=...），
+      //    Asset.create 只接受本地文件路径，必须先把远程签名 URL 下载到缓存再入库。
+      let localUri = url;
+      let tempFile = null;
+      if (url.startsWith('http')) {
+        const pathOnly = url.split('?')[0].split('#')[0];
+        const rawExt = pathOnly.split('/').pop()?.split('.').pop()?.toLowerCase() || '';
+        const ext = /^[a-z0-9]{2,5}$/.test(rawExt) ? rawExt : 'jpg';
+        const target = new File(Paths.cache, `save_${Date.now()}.${ext}`);
+        tempFile = await File.downloadFileAsync(url, target, { idempotent: true });
+        localUri = tempFile.uri;
+      }
+
+      await Asset.create(localUri);
+      if (tempFile) { try { tempFile.delete(); } catch (_) {} }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('已保存', '媒体已保存到系统相册。');
     } catch (e) {
       console.warn('保存到相册失败:', e);
+      Alert.alert('保存失败', '媒体保存失败，请稍后重试。');
+    } finally {
+      setActionMessage(null);
     }
-    setActionMessage(null);
   };
 
   const handleFavorite = () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };

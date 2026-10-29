@@ -12,8 +12,28 @@ import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+/**
+ * 🔒 安全审计 #14：从签名 URL 中推断真实文件扩展名
+ *
+ * Supabase 私有桶的签名 URL 形如：
+ *   https://xxx.supabase.co/storage/v1/object/sign/chat_media/img_123.jpg?token=eyJ...
+ * 路径部分仍保留原始文件名，因此先剥离 query/hash 再取扩展名；
+ * 若扩展名非法（含 token 片段、过长、非字母数字），回退到 fallback。
+ */
+const inferFileExt = (url, fallback = 'jpg') => {
+  try {
+    const pathOnly = url.split('?')[0].split('#')[0];
+    const raw = pathOnly.split('/').pop() || '';
+    const ext = raw.includes('.') ? raw.split('.').pop().toLowerCase() : '';
+    if (ext && /^[a-z0-9]{2,5}$/.test(ext)) return ext;
+  } catch (_) {}
+  return fallback;
+};
+
 const handleDownloadMedia = async (url, onSuccess, onError) => {
   try {
+    if (!url) { onError('媒体地址无效'); return; }
+
     // 🍎 核心修复 2：彻底拦截流媒体格式，防止底层崩溃
     if (url.includes('.m3u8')) {
       onError('流媒体(M3U8)无法直接保存到本地');
@@ -26,8 +46,10 @@ const handleDownloadMedia = async (url, onSuccess, onError) => {
 
     let localUri = url;
     let tempFile = null;
+    // 🔒 安全审计 #14：签名 URL 同样是 http(s) 远程地址，走下载分支即可正常保存；
+    //    扩展名需从「剥离 token 后的路径」推断，避免生成 xxx.jpg?token=... 的非法文件名。
     if (url.startsWith('http')) {
-      const fileExt = url.split('.').pop().split('?')[0] || 'mp4';
+      const fileExt = inferFileExt(url, 'jpg');
       const target = new File(Paths.cache, `temp_dl_${Date.now()}.${fileExt}`);
 
       // SDK 58 标准 API：File.downloadFileAsync 替代已废弃的 FileSystem.downloadAsync
@@ -39,7 +61,7 @@ const handleDownloadMedia = async (url, onSuccess, onError) => {
     await Asset.create(localUri);
 
     if (tempFile) {
-      try { tempFile.delete(); } catch (e) {}
+      try { tempFile.delete(); } catch (_) {}
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

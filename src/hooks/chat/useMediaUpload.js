@@ -29,6 +29,12 @@ import { sendPushNotification } from '../../services/pushService';
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024; // 50MB
 const STORAGE_BUCKET = 'chat_media';
 
+/**
+ * 🔒 安全审计 #14：私密媒体签名有效期（7 天）
+ * chat_media 桶已私有化，任何公开 URL 都无法访问，必须使用带 token 的签名 URL。
+ */
+export const SIGNED_URL_TTL = 60 * 60 * 24 * 7;
+
 const generateUUID = () =>
   'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -37,7 +43,32 @@ const generateUUID = () =>
   });
 
 /**
- * 上传本地文件到 Supabase Storage，返回 publicUrl（失败返回 null）
+ * 🔒 安全审计 #14：为已上传的私有对象生成临时签名 URL
+ * @param {string} fileName 桶内对象路径
+ * @param {number} expiresIn 有效期（秒），默认 7 天
+ * @returns {Promise<string|null>} 签名 URL，失败返回 null
+ */
+export async function createSignedMediaUrl(fileName, expiresIn = SIGNED_URL_TTL) {
+  if (!fileName) return null;
+  try {
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(fileName, expiresIn);
+    if (error) throw error;
+    return data?.signedUrl || null;
+  } catch (e) {
+    console.warn('生成签名 URL 失败:', e);
+    return null;
+  }
+}
+
+/**
+ * 上传本地文件到 Supabase Storage，返回「7 天有效期的签名 URL」（失败返回 null）
+ *
+ * 🔒 安全审计 #14：chat_media 桶已设为私有，getPublicUrl 生成的链接将永久 403。
+ *    因此上传成功后必须调用 createSignedUrl 换取带 token 的临时链接，
+ *    该链接会写入 messages.media_url / thumbnail_url，并在聊天室中直接渲染。
+ *
  * @param {string} uri 本地文件 URI
  * @param {'img'|'vid'|'thumb'|'audio'} prefix 文件名前缀
  */
@@ -65,9 +96,12 @@ export async function uploadToSupabase(uri, prefix) {
       .upload(fileName, blob, { contentType: blob.type || 'application/octet-stream' });
     if (error) throw error;
 
-    const { data: urlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fileName);
-    return urlData.publicUrl;
-  } catch (_) {
+    // 🔒 安全审计 #14：私有桶 → 必须换取签名 URL（7 天有效）
+    const signedUrl = await createSignedMediaUrl(fileName, SIGNED_URL_TTL);
+    if (!signedUrl) throw new Error('createSignedUrl failed');
+    return signedUrl;
+  } catch (e) {
+    console.warn('媒体上传失败:', e);
     return null;
   }
 }
@@ -166,6 +200,10 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
       setUploadProgress(0.9);
 
       // ⑥ 落库
+      // 🔒 安全审计 #14：media_url / thumbnail_url 存的都是 7 天签名 URL，
+      //    桶私有化后公开链接已不可访问，签名链接是唯一可渲染的地址。
+      if (!cloudMediaUrl) throw new Error('media upload failed');
+
       await supabase.from('messages').insert({
         id: msgId,
         user_id: user.id,
@@ -200,6 +238,7 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
     uploadProgress,
     pickAndSendMedia,
     uploadToSupabase,
+    createSignedMediaUrl,
   };
 }
 
