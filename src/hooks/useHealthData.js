@@ -1,14 +1,14 @@
 // --- START OF FILE src/hooks/useHealthData.js ---
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
 import { useAuth } from './useAuth';
-import { calculateDiffDays } from './health/dateUtils';
 import { useTimeSync } from './health/useTimeSync';
 import { useHealthStorage } from './health/useHealthStorage';
 import { useHealthCloud } from './health/useHealthCloud';
+import { useStreak } from './health/useStreak';
 
 const HealthContext = createContext();
 
@@ -36,9 +36,21 @@ export function HealthProvider({ children }) {
     subscribePartner, syncToCloud, flushNow,
   } = cloud;
 
-  const [selectedMeal, setSelectedMeal] = useState(null);
+  // 🧠 连续打卡状态机（纯业务规则，零网络 / 零磁盘）
+  const { isDoneToday } = useStreak({
+    todayStr,
+    getDateStr,
+    isLoaded,
+    mealsStatus,
+    waterAmount,
+    maxWater,
+    streakDays,
+    lastCheckInDate,
+    setStreak,
+    setCheckInDate,
+  });
 
-  const wasGoalCompleteRef = useRef(null);
+  const [selectedMeal, setSelectedMeal] = useState(null);
 
   const loadAllData = async () => {
     
@@ -102,35 +114,6 @@ export function HealthProvider({ children }) {
     return () => subscription.remove();
   }, [lastActiveDate, getDateStr, flushNow]);
 
-  useEffect(() => {
-    // 本地磁盘加载完成后才允许判定打卡状态，避免用初始空值误判
-    if (!isLoaded) return;
-    const isDoneToday = mealsStatus['早餐'] && mealsStatus['午餐'] && mealsStatus['晚餐'] && waterAmount >= maxWater;
-
-    if (wasGoalCompleteRef.current !== null && isDoneToday !== wasGoalCompleteRef.current) {
-      if (isDoneToday && lastCheckInDate !== todayStr) {
-        let newStreak = 1;
-        if (lastCheckInDate) {
-          const diff = calculateDiffDays(todayStr, lastCheckInDate);
-          if (diff === 1) newStreak = streakDays + 1;
-          else if (diff > 1) newStreak = 1;
-        }
-        setStreak(newStreak);
-        setCheckInDate(todayStr);
-      } else if (!isDoneToday && lastCheckInDate === todayStr) {
-        // 撤销打卡逻辑：把 lastCheckInDate 回退到"昨天"
-        const yDate = new Date(`${todayStr}T00:00:00Z`);
-        yDate.setUTCDate(yDate.getUTCDate() - 1);
-        const yStr = getDateStr(yDate);
-        
-        const newStreak = Math.max(0, streakDays - 1);
-        setStreak(newStreak);
-        setCheckInDate(yStr);
-      }
-    }
-    wasGoalCompleteRef.current = isDoneToday;
-  }, [mealsStatus, waterAmount, maxWater, isLoaded, lastCheckInDate, streakDays, todayStr, getDateStr, setStreak, setCheckInDate]);
-
   // 🔄 伴侣数据实时订阅（网络 IO 由 useHealthCloud 负责）
   useEffect(() => {
     if (!partnerId) return;
@@ -187,10 +170,10 @@ export function HealthProvider({ children }) {
   const closeMeal = useCallback(() => setSelectedMeal(null), []);
 
   const value = useMemo(() => ({
-    isInitialized: isLoaded, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    isInitialized: isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
   }), [
-    isLoaded, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
   ]);
 
