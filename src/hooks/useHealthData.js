@@ -1,40 +1,39 @@
 // --- START OF FILE src/hooks/useHealthData.js ---
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { AppState } from 'react-native'; 
+import { AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../services/supabase'; 
-import { sendPushNotification } from '../services/pushService'; 
+import { supabase } from '../services/supabase';
+import { sendPushNotification } from '../services/pushService';
 import { useAuth } from './useAuth';
-import { DEFAULT_MEALS } from './health/constants';
 import { calculateDiffDays } from './health/dateUtils';
 import { useTimeSync } from './health/useTimeSync';
+import { useHealthStorage } from './health/useHealthStorage';
 
 const HealthContext = createContext();
 
 export function HealthProvider({ children }) {
   const { user } = useAuth();
   const { todayStr, calibrate, getDateStr } = useTimeSync();
-  
-  const [isInitialized, setIsInitialized] = useState(false);
+
+  // 📦 所有本地磁盘读写都收敛在 useHealthStorage 内部（零网络请求）
+  const storage = useHealthStorage(todayStr);
+  const {
+    isLoaded,
+    waterAmount, mealsStatus, maxWater, motto, mealGuides,
+    streakDays, lastCheckInDate, lastActiveDate,
+    load: loadLocal,
+    hydrateFromCloud,
+    setWater, setMeals, setMaxWater, setMotto, setMealGuide,
+    setStreak, setCheckInDate, resetTodayLocal,
+  } = storage;
+
   const [selectedMeal, setSelectedMeal] = useState(null);
-  
-  const [mealsStatus, setMealsStatus] = useState({ '早餐': false, '午餐': false, '晚餐': false });
-  const [waterAmount, setWaterAmount] = useState(0);
   
   const [partnerData, setPartnerData] = useState({ waterAmount: 0, mealsStatus: { '早餐': false, '午餐': false, '晚餐': false } });
   const [partnerId, setPartnerId] = useState(null);
 
-  const [maxWater, setMaxWater] = useState(1800);
-  const [motto, setMotto] = useState('今日概览');
-  const [mealGuides, setMealGuides] = useState(DEFAULT_MEALS);
-
-  const [streakDays, setStreakDays] = useState(0);
-  const [lastCheckInDate, setLastCheckInDate] = useState(null);
-  const [lastActiveDate, setLastActiveDate] = useState(null); 
-
   const cloudSyncTimerRef = useRef(null);
-  const wasGoalCompleteRef = useRef(null); 
+  const wasGoalCompleteRef = useRef(null);
 
   const loadAllData = async () => {
     
@@ -42,39 +41,12 @@ export function HealthProvider({ children }) {
     await calibrate();
 
     // 校准后重新取一次"今天"，确保拿到的是最新偏移量下的日期
-    const todayStr = getDateStr();
+    const currentDayStr = getDateStr();
 
-    const [savedWater, savedMeals, savedMaxWater, savedMotto, savedGuides, savedStreak, savedCheckIn, savedActive] = await Promise.all([
-      AsyncStorage.getItem('@waterAmount'), AsyncStorage.getItem('@mealsStatus'),
-      AsyncStorage.getItem('@maxWater'), AsyncStorage.getItem('@motto'), AsyncStorage.getItem('@mealGuides'),
-      AsyncStorage.getItem('@streakDays'), AsyncStorage.getItem('@lastCheckInDate'), AsyncStorage.getItem('@lastActiveDate')
-    ]);
-    
-    if (savedMaxWater) setMaxWater(Number(savedMaxWater));
-    if (savedMotto) setMotto(savedMotto);
-    if (savedGuides) setMealGuides(JSON.parse(savedGuides));
-    
-    let currentStreak = savedStreak ? Number(savedStreak) : 0;
-    if (savedCheckIn && savedCheckIn !== todayStr) {
-      if (calculateDiffDays(todayStr, savedCheckIn) > 1) {
-        currentStreak = 0; 
-        AsyncStorage.setItem('@streakDays', '0');
-      }
-    }
-    setStreakDays(currentStreak);
-    if (savedCheckIn) setLastCheckInDate(savedCheckIn);
+    // 1️⃣ 先读本地磁盘（含跨天清零）
+    await loadLocal();
 
-    if (savedActive !== todayStr) {
-      setWaterAmount(0);
-      setMealsStatus({ '早餐': false, '午餐': false, '晚餐': false });
-      setLastActiveDate(todayStr);
-      AsyncStorage.setItem('@lastActiveDate', todayStr);
-    } else {
-      setLastActiveDate(savedActive);
-      if (savedWater) setWaterAmount(Number(savedWater));
-      if (savedMeals) setMealsStatus(JSON.parse(savedMeals));
-    }
-
+    // 2️⃣ 再拉云端，拿到后显式覆盖本地
     if (user) {
       try {
         const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
@@ -90,21 +62,19 @@ export function HealthProvider({ children }) {
 
         setPartnerId(pId);
 
-        const { data: myData } = await supabase.from('health_records').select('*').eq('user_id', user.id).eq('record_date', todayStr).single();
+        const { data: myData } = await supabase.from('health_records').select('*').eq('user_id', user.id).eq('record_date', currentDayStr).single();
         if (myData) {
-          setWaterAmount(myData.water_amount);
-          setMealsStatus(myData.meals_status);
+          hydrateFromCloud({ waterAmount: myData.water_amount, mealsStatus: myData.meals_status });
         }
         
         if (pId) {
-          const { data: pData } = await supabase.from('health_records').select('*').eq('user_id', pId).eq('record_date', todayStr).single();
+          const { data: pData } = await supabase.from('health_records').select('*').eq('user_id', pId).eq('record_date', currentDayStr).single();
           if (pData) setPartnerData({ waterAmount: pData.water_amount || 0, mealsStatus: pData.meals_status || { '早餐': false, '午餐': false, '晚餐': false } });
         }
       } catch (e) {
         console.warn("云端同步失败，降级使用本地数据", e);
       }
     }
-    setIsInitialized(true);
   };
 
   useEffect(() => {
@@ -116,24 +86,18 @@ export function HealthProvider({ children }) {
       if (nextAppState === 'active') {
         // App 切回前台时，会顺带执行 loadAllData 里的最新一次对表校准！
         const currentDayStr = getDateStr();
-        setLastActiveDate(prev => {
-          if (prev && prev !== currentDayStr) {
-            loadAllData();
-            return currentDayStr;
-          }
-          return prev;
-        });
+        if (lastActiveDate && lastActiveDate !== currentDayStr) {
+          loadAllData();
+        }
       }
     });
     return () => subscription.remove();
-  }, []);
+  }, [lastActiveDate, getDateStr]);
 
   useEffect(() => {
-    if (!isInitialized) return;
+    // 本地磁盘加载完成后才允许判定打卡状态，避免用初始空值误判
+    if (!isLoaded) return;
     const isDoneToday = mealsStatus['早餐'] && mealsStatus['午餐'] && mealsStatus['晚餐'] && waterAmount >= maxWater;
-
-    AsyncStorage.setItem('@waterAmount', waterAmount.toString());
-    AsyncStorage.setItem('@mealsStatus', JSON.stringify(mealsStatus));
 
     if (wasGoalCompleteRef.current !== null && isDoneToday !== wasGoalCompleteRef.current) {
       if (isDoneToday && lastCheckInDate !== todayStr) {
@@ -143,10 +107,8 @@ export function HealthProvider({ children }) {
           if (diff === 1) newStreak = streakDays + 1;
           else if (diff > 1) newStreak = 1;
         }
-        setStreakDays(newStreak);
-        setLastCheckInDate(todayStr);
-        AsyncStorage.setItem('@streakDays', newStreak.toString());
-        AsyncStorage.setItem('@lastCheckInDate', todayStr);
+        setStreak(newStreak);
+        setCheckInDate(todayStr);
       } else if (!isDoneToday && lastCheckInDate === todayStr) {
         // 撤销打卡逻辑：把 lastCheckInDate 回退到"昨天"
         const yDate = new Date(`${todayStr}T00:00:00Z`);
@@ -154,14 +116,12 @@ export function HealthProvider({ children }) {
         const yStr = getDateStr(yDate);
         
         const newStreak = Math.max(0, streakDays - 1);
-        setStreakDays(newStreak);
-        setLastCheckInDate(yStr);
-        AsyncStorage.setItem('@streakDays', newStreak.toString());
-        AsyncStorage.setItem('@lastCheckInDate', yStr);
+        setStreak(newStreak);
+        setCheckInDate(yStr);
       }
     }
     wasGoalCompleteRef.current = isDoneToday;
-  }, [mealsStatus, waterAmount, maxWater, isInitialized, lastCheckInDate, streakDays, todayStr, getDateStr]);
+  }, [mealsStatus, waterAmount, maxWater, isLoaded, lastCheckInDate, streakDays, todayStr, getDateStr, setStreak, setCheckInDate]);
 
   useEffect(() => {
     if (!partnerId) return;
@@ -184,13 +144,13 @@ export function HealthProvider({ children }) {
   }, [user, getDateStr]);
 
   const setWaterDirect = useCallback((val) => {
-    setWaterAmount(prev => {
+    setWater(prev => {
       const newVal = typeof val === 'function' ? val(prev) : val;
       const nextVal = Math.min(maxWater, Math.max(0, Math.round(newVal)));
       if (prev !== nextVal) syncToCloud(nextVal, mealsStatus);
       return nextVal;
     });
-  }, [maxWater, mealsStatus, syncToCloud]);
+  }, [maxWater, mealsStatus, syncToCloud, setWater]);
 
   const handleAddWater = useCallback(() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setWaterDirect(prev => prev + 1); }, [setWaterDirect]);
   const handleMinusWater = useCallback(() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setWaterDirect(prev => Math.max(0, prev - 1)); }, [setWaterDirect]);
@@ -199,7 +159,7 @@ export function HealthProvider({ children }) {
     if (!selectedMeal || mealsStatus[selectedMeal]) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const newMeals = { ...mealsStatus, [selectedMeal]: true };
-    setMealsStatus(newMeals);
+    setMeals(newMeals);
     syncToCloud(waterAmount, newMeals);
 
     if (user && partnerId) {
@@ -208,35 +168,35 @@ export function HealthProvider({ children }) {
       await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: partnerId, type: 'text', text: `[SYNC_SYSTEM]:完成了 ${selectedMeal} 饮食打卡 🥗` });
     }
     setSelectedMeal(null);
-  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, syncToCloud]);
+  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, syncToCloud, setMeals]);
 
   const undoCheck = useCallback(() => {
     if (!selectedMeal || !mealsStatus[selectedMeal]) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     const newMeals = { ...mealsStatus, [selectedMeal]: false };
-    setMealsStatus(newMeals);
+    setMeals(newMeals);
     syncToCloud(waterAmount, newMeals);
     setSelectedMeal(null);
-  }, [selectedMeal, mealsStatus, waterAmount, syncToCloud]);
+  }, [selectedMeal, mealsStatus, waterAmount, syncToCloud, setMeals]);
 
-  const updateMaxWater = useCallback((val) => { setMaxWater(val); AsyncStorage.setItem('@maxWater', val.toString()); setWaterAmount(prev => prev > val ? val : prev); }, []);
-  const updateMotto = useCallback((text) => { setMotto(text); AsyncStorage.setItem('@motto', text); }, []);
-  const updateMealGuide = useCallback((meal, text) => { setMealGuides(prev => { const updated = { ...prev, [meal]: text }; AsyncStorage.setItem('@mealGuides', JSON.stringify(updated)); return updated; }); }, []);
+  const updateMaxWater = useCallback((val) => { setMaxWater(val); }, [setMaxWater]);
+  const updateMotto = useCallback((text) => { setMotto(text); }, [setMotto]);
+  const updateMealGuide = useCallback((meal, text) => { setMealGuide(meal, text); }, [setMealGuide]);
   
-  const resetToday = useCallback(() => { 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); 
-    setWaterAmount(0); setMealsStatus({ '早餐': false, '午餐': false, '晚餐': false }); 
-    syncToCloud(0, { '早餐': false, '午餐': false, '晚餐': false }); 
-  }, [syncToCloud]);
+  const resetToday = useCallback(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    resetTodayLocal();
+    syncToCloud(0, { '早餐': false, '午餐': false, '晚餐': false });
+  }, [syncToCloud, resetTodayLocal]);
   
   const openMeal = useCallback((meal) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedMeal(meal); }, []);
   const closeMeal = useCallback(() => setSelectedMeal(null), []);
 
   const value = useMemo(() => ({
-    isInitialized, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    isInitialized: isLoaded, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
   }), [
-    isInitialized, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    isLoaded, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
   ]);
 
