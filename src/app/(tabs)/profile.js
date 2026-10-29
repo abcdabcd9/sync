@@ -68,7 +68,8 @@ export default function ProfileScreen() {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
             setLoadingProfile(true);
             const { error } = await supabase.rpc('delete_my_account');
-            if (error) { Alert.alert('注销失败', error.message); setLoadingProfile(false); } 
+            // 🔒 安全审计 #12：不再透传 error.message，避免泄露数据库函数/表结构
+            if (error) { Alert.alert('注销失败', '注销失败，请稍后重试。'); setLoadingProfile(false); }
             else { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); Alert.alert('账号已注销', '您在云端的所有数据已被彻底抹除。'); await signOut(); }
           }
         }

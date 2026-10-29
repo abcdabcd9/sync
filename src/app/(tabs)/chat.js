@@ -216,25 +216,47 @@ export default function ChatMainScreen() {
       { text: '取消', style: 'cancel' },
       { text: '发送请求', onPress: async () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          // 🔒 安全审计 #7：sender_id 强制绑定当前登录用户，杜绝伪造发送者
+          if (!user?.id) return;
           const { error } = await supabase.from('friend_requests').insert({ sender_id: user.id, receiver_id: targetUser.id });
           if (error && error.code === '23505') Alert.alert('提示', '请求已发送，等待对方通过。');
+          else if (error) Alert.alert('发送失败', '好友请求发送失败，请稍后重试。');
           else { Alert.alert('发送成功', '好友请求已发送，等待对方通过。'); setSearchQuery(''); fetchFriendsAndData(); }
       }}
     ]);
   };
 
   const handleAcceptRequest = async (request) => {
+    // 🔒 安全审计 #6/#7：归属校验，只能处理「发给自己的」好友请求
+    if (!user || !request || request.receiver_id !== user.id) return;
+    if (!request.sender_id || request.sender_id === user.id) return;
+
     try {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await supabase.from('friend_requests').update({ status: 'accepted' }).eq('id', request.id);
-      await supabase.from('friends').insert({ user_id: user.id, friend_id: request.sender_id });
+      await supabase
+        .from('friend_requests')
+        .update({ status: 'accepted' })
+        .eq('id', request.id)
+        .eq('receiver_id', user.id);
+      // 🔒 安全审计 #7：friends 关系必须包含当前用户自身，禁止代他人建立关系
+      await supabase
+        .from('friends')
+        .insert({ user_id: user.id, friend_id: request.sender_id })
+        .select('id');
       fetchFriendsAndData();
     } catch (e) {}
   };
 
   const handleRejectRequest = async (request) => {
+    // 🔒 安全审计 #6：归属校验，只能删除「发给自己的」好友请求
+    if (!user || !request || request.receiver_id !== user.id) return;
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await supabase.from('friend_requests').delete().eq('id', request.id);
+    await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('id', request.id)
+      .eq('receiver_id', user.id);
     fetchFriendsAndData();
   };
 

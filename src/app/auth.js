@@ -1,12 +1,38 @@
 // --- START OF FILE src/app/auth.js ---
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Animated, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
+
+// 🔒 安全审计 #12：将 Supabase 原始错误映射为友好文案，避免泄露表名/约束名/SQL 细节
+const mapAuthError = (error, isLoginMode) => {
+  const code = error?.code || '';
+  const raw = (error?.message || '').toLowerCase();
+
+  if (code === 'invalid_credentials' || raw.includes('invalid login credentials')) {
+    return '登录失败，请检查账号密码';
+  }
+  if (code === 'email_not_confirmed' || raw.includes('email not confirmed')) {
+    return '邮箱尚未验证，请先前往邮箱点击验证链接';
+  }
+  if (code === 'user_already_exists' || code === 'email_exists' || raw.includes('already registered')) {
+    return '该邮箱已被注册，请直接登录';
+  }
+  if (code === 'weak_password' || raw.includes('password should be at least')) {
+    return '密码强度不足，请设置至少 6 位密码';
+  }
+  if (code === 'over_email_send_rate_limit' || raw.includes('rate limit')) {
+    return '操作过于频繁，请稍后再试';
+  }
+  if (raw.includes('network') || raw.includes('fetch')) {
+    return '网络连接失败，请稍后重试';
+  }
+  return isLoginMode ? '登录失败，请检查账号密码' : '注册失败，请稍后重试';
+};
 
 export default function AuthScreen() {
   const { colors: palette } = useAppTheme();
@@ -49,7 +75,8 @@ export default function AuthScreen() {
         : await signUp(email, password);
 
       if (error) {
-        triggerErrorShake(error.message);
+        // 🔒 安全审计 #12：不再透传 error.message，统一映射为友好文案
+        triggerErrorShake(mapAuthError(error, isLoginMode));
       } else if (!data?.user?.id) {
         // 🍎 安全校验：拦截服务端假阳性返回，阻断权限穿透隐患
         triggerErrorShake('服务器未返回有效用户信息，请重试');
@@ -57,13 +84,15 @@ export default function AuthScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         
         if (!isLoginMode && !data?.session) {
-          alert('注册成功！请前往邮箱点击验证链接激活账号。');
-          toggleMode(); 
+          Alert.alert('注册成功', '请前往邮箱点击验证链接激活账号。');
+          toggleMode();
         } else {
-          router.back(); 
+          // 登录成功后由根布局守卫接管跳转，此处仅关闭登录弹层
+          if (router.canGoBack()) router.back();
+          else router.replace('/');
         }
       }
-    } catch (err) {
+    } catch (_err) {
       triggerErrorShake('网络连接失败，请稍后重试');
     } finally {
       setLoading(false);

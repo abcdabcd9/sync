@@ -93,12 +93,15 @@ export function useChatMessages(targetId, user) {
       }
 
       // ③ 已读标定：把对方发给我的未读消息置为已读
-      await supabase
-        .from('messages')
-        .update({ is_read: true })
-        .eq('user_id', targetId)
-        .eq('receiver_id', user.id)
-        .eq('is_read', false);
+      // 🔒 安全审计 #8：三重归属校验，只能标记「发给自己」的消息，杜绝越权改他人已读态
+      if (user?.id && targetId) {
+        await supabase
+          .from('messages')
+          .update({ is_read: true })
+          .eq('user_id', targetId)
+          .eq('receiver_id', user.id)
+          .eq('is_read', false);
+      }
 
       if (!cancelled) setLoading(false);
     };

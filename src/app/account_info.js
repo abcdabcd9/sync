@@ -132,10 +132,15 @@ export default function AccountInfoScreen() {
     setIsSaving(false);
 
     if (error) {
+      // 🔒 安全审计 #12：不再透传 error.message，避免泄露表名/约束名/SQL 细节
       if (error.code === '23505' && activeModal === 'syncId') {
         Alert.alert('修改失败', '该 ID 已被其他用户占用！');
+      } else if (error.code === '23514' || error.code === '23502') {
+        Alert.alert('修改失败', '内容格式不符合要求，请检查后重试。');
+      } else if (error.code === '42501' || error.code === 'PGRST301') {
+        Alert.alert('修改失败', '登录状态已失效，请重新登录。');
       } else {
-        Alert.alert('修改失败', error.message);
+        Alert.alert('修改失败', '修改失败，请稍后重试。');
       }
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
