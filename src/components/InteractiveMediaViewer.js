@@ -6,8 +6,8 @@ import {
 } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
-import * as MediaLibrary from 'expo-media-library/legacy'; 
-import * as FileSystem from 'expo-file-system';
+import { Asset, requestPermissionsAsync } from 'expo-media-library';
+import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -21,22 +21,25 @@ const handleDownloadMedia = async (url, onSuccess, onError) => {
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const { status } = await MediaLibrary.requestPermissionsAsync();
+    const { status } = await requestPermissionsAsync();
     if (status !== 'granted') { onError('相册权限被拒绝'); return; }
 
     let localUri = url;
+    let tempFile = null;
     if (url.startsWith('http')) {
       const fileExt = url.split('.').pop().split('?')[0] || 'mp4';
-      const tempPath = `${FileSystem.cacheDirectory}temp_dl_${Date.now()}.${fileExt}`;
-      
-      const { uri } = await FileSystem.downloadAsync(url, tempPath);
-      localUri = uri;
+      const target = new File(Paths.cache, `temp_dl_${Date.now()}.${fileExt}`);
+
+      // SDK 58 标准 API：File.downloadFileAsync 替代已废弃的 FileSystem.downloadAsync
+      tempFile = await File.downloadFileAsync(url, target, { idempotent: true });
+      localUri = tempFile.uri;
     }
 
-    await MediaLibrary.saveToLibraryAsync(localUri);
-    
-    if (url.startsWith('http')) {
-      FileSystem.deleteAsync(localUri, { idempotent: true }).catch(()=>{});
+    // SDK 58 标准 API：Asset.create 替代已废弃的 saveToLibraryAsync
+    await Asset.create(localUri);
+
+    if (tempFile) {
+      try { tempFile.delete(); } catch (e) {}
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

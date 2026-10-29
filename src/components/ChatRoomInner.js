@@ -3,18 +3,16 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import * as Clipboard from 'expo-clipboard';
-import * as MediaLibrary from 'expo-media-library/legacy'; 
-import * as FileSystem from 'expo-file-system';
-import { useAudioRecorder, RecordingPresets, setAudioModeAsync, requestRecordingPermissionsAsync, useAudioPlayer } from 'expo-audio'; 
+import { Asset, requestPermissionsAsync } from 'expo-media-library';
+import { useAudioRecorder, RecordingPresets, setAudioModeAsync, requestRecordingPermissionsAsync, useAudioPlayer } from 'expo-audio';
 import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
+import { useMediaUpload, uploadToSupabase } from '../hooks/chat/useMediaUpload';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -25,32 +23,6 @@ import { useCinema } from '../hooks/useCinema';
 const generateUUID = () => { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) { const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); };
 const AUDIO_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true };
 
-const uploadToSupabase = async (uri, prefix) => {
-  if (!uri) return null;
-  try {
-    let safeUri = uri;
-    if (Platform.OS === 'ios' && !safeUri.startsWith('file://')) {
-      safeUri = 'file://' + safeUri;
-    }
-    const response = await fetch(safeUri);
-    const blob = await response.blob();
-    
-    // 🍎 核心修复 4：正确匹配视频和音频的容错后缀，绝不滥杀无辜全变 JPG
-    let ext = uri.split('.').pop()?.split('?')[0];
-    if (!ext || ext.length > 5) {
-      if (prefix === 'audio') ext = 'm4a';
-      else if (prefix === 'vid') ext = 'mp4';
-      else ext = 'jpg';
-    }
-    
-    const fileName = `${prefix}_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
-    const { error } = await supabase.storage.from('chat_media').upload(fileName, blob, { contentType: blob.type || 'application/octet-stream' });
-    if (error) throw error;
-    const { data: urlData } = supabase.storage.from('chat_media').getPublicUrl(fileName);
-    return urlData.publicUrl;
-  } catch (e) { return null; }
-};
-
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
@@ -58,6 +30,9 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
 
   // 💬 消息域（拉取 / 订阅 / 已读 / 格式化 / 撤回 / 删除 / 乐观发送）
   const { messages, loading, messagesRef, saveAndSend, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
+
+  // 🖼️ 媒体域（相册选择 / 视频缩略图 / Storage 上传 / 乐观发送）
+  const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend });
 
   const { player: cinemaPlayer } = useCinema();
   const wasCinemaPlayingRef = useRef(false);
@@ -198,24 +173,8 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); 
   }, [audioRecorder]);
 
-  const handlePickMedia = useCallback(async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.6, videoMaxDuration: 120 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      try { const fileInfo = await FileSystem.getInfoAsync(asset.uri); if (fileInfo.size > 50 * 1024 * 1024) { Alert.alert('文件过大', '请发送小于 50MB 的媒体文件。'); return; } } catch(e) {}
-      const prefix = asset.type === 'video' ? 'vid' : 'img';
-      let localThumbUri = null;
-      if (asset.type === 'video') { try { const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, { time: 500 }); localThumbUri = uri; } catch(e) {} }
-      const msgId = generateUUID();
-      saveAndSend({ id: msgId, type: asset.type === 'video' ? 'video' : 'image', mediaUrl: asset.uri, thumbnailUrl: localThumbUri, isMe: true, timestamp: Date.now() });
-      const cloudMediaUrl = await uploadToSupabase(asset.uri, prefix);
-      let cloudThumbUrl = null;
-      if (localThumbUri) cloudThumbUrl = await uploadToSupabase(localThumbUri, 'thumb');
-      await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: asset.type === 'video' ? 'video' : 'image', media_url: cloudMediaUrl, thumbnail_url: cloudThumbUrl });
-      const msgLabel = asset.type === 'video' ? '[视频]' : '[图片]';
-      sendPushNotification(targetId, "新消息", msgLabel, { type: 'chat', targetId: user.id, targetName: 'TA' });
-    }
-  }, [user, targetId, saveAndSend]);
+  // 🖼️ 媒体选择与上传：委托给 useMediaUpload（阶段 2 已抽离）
+  const handlePickMedia = pickAndSendMedia;
 
   const handleNudge = useCallback(() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); handleSendText('向对方发送了震动提醒'); }, [handleSendText]);
   
@@ -278,7 +237,19 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const handleOpenMedia = useCallback((tappedItem) => { Keyboard.dismiss(); const mediaMessages = messagesRef.current.filter(m => m.type === 'image' || m.type === 'video').reverse(); const index = mediaMessages.findIndex(m => m.id === tappedItem.id); if (index !== -1) setPreviewState({ visible: true, index: index, mediaList: mediaMessages }); }, []);
   const handleLongPressMessage = useCallback((msg) => { Keyboard.dismiss(); setActionMessage(msg); }, []);
   const handleCopy = async (text) => { await Clipboard.setStringAsync(text); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };
-  const handleSaveToAlbum = async (url) => { const { status } = await MediaLibrary.requestPermissionsAsync(); if (status === 'granted') { await MediaLibrary.saveToLibraryAsync(url); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } setActionMessage(null); };
+  // 💾 保存到相册：SDK 58 标准 API（Asset.create 替代已废弃的 saveToLibraryAsync）
+  const handleSaveToAlbum = async (url) => {
+    try {
+      const { status } = await requestPermissionsAsync();
+      if (status === 'granted') {
+        await Asset.create(url);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e) {
+      console.warn('保存到相册失败:', e);
+    }
+    setActionMessage(null);
+  };
   const handleFavorite = () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };
   // 🗑️ 本地删除 / ↩️ 撤回：委托给 useChatMessages
   const handleDelete = useCallback(async (id) => { setActionMessage(null); await deleteMessage(id); }, [deleteMessage]);
@@ -306,7 +277,15 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         <View style={styles.loadingContainer}><ActivityIndicator size="small" color={palette.textSecondary} /></View>
       ) : (
         <View style={styles.chatArea}>
-          <FlatList 
+          {uploading && (
+            <View style={[styles.uploadBar, { backgroundColor: palette.chatBorder }]}>
+              <View style={[styles.uploadBarFill, { width: `${Math.round(uploadProgress * 100)}%`, backgroundColor: palette.primary }]} />
+              <Text style={[styles.uploadBarText, { color: palette.textSecondary }]}>
+                正在上传 {Math.round(uploadProgress * 100)}%
+              </Text>
+            </View>
+          )}
+          <FlatList
             ref={flatListRef} data={messages} keyExtractor={(item) => item.id} 
             renderItem={({ item }) => (
               <MessageBubble 
@@ -350,6 +329,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { padding: 4, marginLeft: -8 }, headerTitle: { fontSize: 17, fontWeight: '600' },
   chatArea: { flex: 1, position: 'relative' }, listContent: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 60 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' }
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  uploadBar: { height: 22, justifyContent: 'center', overflow: 'hidden' },
+  uploadBarFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
+  uploadBarText: { fontSize: 11, textAlign: 'center', fontWeight: '500' }
 });
 // --- END OF FILE src/components/ChatRoomInner.js ---
