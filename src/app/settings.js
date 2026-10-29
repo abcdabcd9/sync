@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 
 import { SIZES } from '../constants/theme';
+import { DEVICE_DATA_PROTECTION_NOTES } from '../constants/security';
 import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
 import { useAuth } from '../hooks/useAuth';
@@ -121,6 +122,8 @@ export default function SettingsScreen() {
       title: '注销账号',
       body: '注销将永久删除账号、聊天记录、媒体文件、健康数据与好友关系。为防误触，注销流程包含两次确认弹窗，确认后立即执行且无法撤销。',
     },
+    // 🔒 安全审计 #26：设备敏感数据保护说明（文案源：src/constants/security.js）
+    ...DEVICE_DATA_PROTECTION_NOTES,
   ];
 
   // 🎨 主题模式切换（跟随系统 / 浅色 / 深色）
