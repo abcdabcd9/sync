@@ -1,5 +1,5 @@
 // --- START OF FILE src/hooks/useHealthData.js ---
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { supabase } from '../services/supabase';
@@ -52,9 +52,11 @@ export function HealthProvider({ children }) {
 
   const [selectedMeal, setSelectedMeal] = useState(null);
 
+  // 🛡️ 竞态守卫：用户一旦产生任何交互，云端回包就不再允许覆盖本地状态
+  const userInteractedRef = useRef(false);
+
   const loadAllData = async () => {
-    
-    // 🍎 每次加载数据前，先强制校准时空法则！(失败时 useTimeSync 内部会保留旧 offset)
+    // 🍎 先校准时空法则（失败时 useTimeSync 内部会保留旧 offset）
     await calibrate();
 
     // 校准后重新取一次"今天"，确保拿到的是最新偏移量下的日期
@@ -80,7 +82,8 @@ export function HealthProvider({ children }) {
         setPartnerId(pId);
 
         const myData = await fetchMyRecord(currentDayStr);
-        if (myData) {
+        // 🛡️ 网络往返期间用户已操作过 → 丢弃云端旧数据，避免覆盖秒级点击
+        if (myData && !userInteractedRef.current) {
           hydrateFromCloud({ waterAmount: myData.water_amount, mealsStatus: myData.meals_status });
         }
 
@@ -120,6 +123,7 @@ export function HealthProvider({ children }) {
     return subscribePartner(partnerId, todayStr);
   }, [partnerId, todayStr, subscribePartner]);
 
+  // 饮水写入：本地 state 收敛 + 云端防抖同步（顺序：本地 → 云端）
   const setWaterDirect = useCallback((val) => {
     setWater(prev => {
       const newVal = typeof val === 'function' ? val(prev) : val;
@@ -129,16 +133,30 @@ export function HealthProvider({ children }) {
     });
   }, [maxWater, mealsStatus, syncToCloud, setWater]);
 
-  const handleAddWater = useCallback(() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setWaterDirect(prev => prev + 1); }, [setWaterDirect]);
-  const handleMinusWater = useCallback(() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setWaterDirect(prev => Math.max(0, prev - 1)); }, [setWaterDirect]);
+  // 顺序：① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
+  const handleAddWater = useCallback(() => {
+    userInteractedRef.current = true;
+    setWaterDirect(prev => prev + 1);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [setWaterDirect]);
+
+  const handleMinusWater = useCallback(() => {
+    userInteractedRef.current = true;
+    setWaterDirect(prev => Math.max(0, prev - 1));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [setWaterDirect]);
 
   const confirmCheck = useCallback(async () => {
     if (!selectedMeal || mealsStatus[selectedMeal]) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    userInteractedRef.current = true;
+
+    // ① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
     const newMeals = { ...mealsStatus, [selectedMeal]: true };
     setMeals(newMeals);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     syncToCloud(waterAmount, newMeals);
 
+    // 伴侣通知（非阻塞，失败不影响本地状态）
     if (user && partnerId) {
       sendPushNotification(partnerId, "滴！打卡啦", `TA 刚刚完成了 ${selectedMeal} 打卡！`, { type: 'health' });
       const msgId = 'sys_' + Date.now();
@@ -149,9 +167,12 @@ export function HealthProvider({ children }) {
 
   const undoCheck = useCallback(() => {
     if (!selectedMeal || !mealsStatus[selectedMeal]) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    userInteractedRef.current = true;
+
+    // ① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
     const newMeals = { ...mealsStatus, [selectedMeal]: false };
     setMeals(newMeals);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     syncToCloud(waterAmount, newMeals);
     setSelectedMeal(null);
   }, [selectedMeal, mealsStatus, waterAmount, syncToCloud, setMeals]);
@@ -159,13 +180,15 @@ export function HealthProvider({ children }) {
   const updateMaxWater = useCallback((val) => { setMaxWater(val); }, [setMaxWater]);
   const updateMotto = useCallback((text) => { setMotto(text); }, [setMotto]);
   const updateMealGuide = useCallback((meal, text) => { setMealGuide(meal, text); }, [setMealGuide]);
-  
+
+  // 顺序：① storage 纯本地重置 → ② Haptics → ③ cloud.syncToCloud（防抖）
   const resetToday = useCallback(() => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    userInteractedRef.current = true;
     resetTodayLocal();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     syncToCloud(0, { '早餐': false, '午餐': false, '晚餐': false });
   }, [syncToCloud, resetTodayLocal]);
-  
+
   const openMeal = useCallback((meal) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedMeal(meal); }, []);
   const closeMeal = useCallback(() => setSelectedMeal(null), []);
 
