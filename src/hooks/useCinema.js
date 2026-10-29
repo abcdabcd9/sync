@@ -28,13 +28,13 @@ export function CinemaProvider({ children }) {
     const setupAudioMixing = async () => {
       try {
         if (typeof setAudioModeAsync === 'function') {
-          // 🍎 全局底层约束：绝对数字 0，代表一切音频完全共存！
+          // 🍎 全局底层约束：SDK 58 要求 interruptionMode 为字符串枚举（传 Number 会红屏崩溃）
+          // 'mixWithOthers' = 一切音频完全共存（电影 / 语音 / 微信通话互不打断）
           await setAudioModeAsync({
-            playsInSilentMode: true, 
-            staysActiveInBackground: true,
-            interruptionModeIOS: 0,
-            interruptionModeAndroid: 0,
-            shouldRouteThroughEarpiece: false, 
+            playsInSilentMode: true,
+            shouldPlayInBackground: true,
+            interruptionMode: 'mixWithOthers',
+            shouldRouteThroughEarpiece: false,
             allowsRecording: true,
           });
         }

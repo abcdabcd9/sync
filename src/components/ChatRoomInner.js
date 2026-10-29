@@ -5,14 +5,15 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
-import { useAudioRecorder, RecordingPresets, setAudioModeAsync, requestRecordingPermissionsAsync, useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer } from 'expo-audio';
 import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
-import { useMediaUpload, uploadToSupabase } from '../hooks/chat/useMediaUpload';
+import { useMediaUpload } from '../hooks/chat/useMediaUpload';
+import { useAudioRecorder } from '../hooks/chat/useAudioRecorder';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -21,7 +22,6 @@ import ChatContextMenu from './ChatContextMenu';
 import { useCinema } from '../hooks/useCinema';
 
 const generateUUID = () => { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) { const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16); }); };
-const AUDIO_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true };
 
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
@@ -34,6 +34,9 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   // 🖼️ 媒体域（相册选择 / 视频缩略图 / Storage 上传 / 乐观发送）
   const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend });
 
+  // 🎙️ 录音域（麦克风权限 / 音频模式 / 开始停止取消 / 时长 / 语音上传）
+  const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend });
+
   const { player: cinemaPlayer } = useCinema();
   const wasCinemaPlayingRef = useRef(false);
 
@@ -43,47 +46,17 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const [actionMessage, setActionMessage] = useState(null);
   const [playingAudioId, setPlayingAudioId] = useState(null);
 
-  const globalAudioPlayer = useAudioPlayer(null); 
+  const globalAudioPlayer = useAudioPlayer(null);
   const flatListRef = useRef(null);
-  const chatInputRef = useRef(null); 
-  const recordStartTimeRef = useRef(0);
-  const audioRecorder = useAudioRecorder(AUDIO_OPTIONS);
+  const chatInputRef = useRef(null);
 
-  useEffect(() => { return () => { try { if (globalAudioPlayer) { globalAudioPlayer.pause(); globalAudioPlayer.replace(null); } } catch (e) {} }; }, [globalAudioPlayer]);
+  useEffect(() => { return () => { try { if (globalAudioPlayer) { globalAudioPlayer.pause(); globalAudioPlayer.replace(null); } } catch (_) {} }; }, [globalAudioPlayer]);
 
   useEffect(() => {
     setIsTransitioning(true);
     const timer = setTimeout(() => setIsTransitioning(false), 300);
     return () => clearTimeout(timer);
   }, [targetId]);
-
-  // 🎙️ 音频模式初始化（录音相关，保留在组件内 —— 阶段 1 不抽离）
-  useEffect(() => {
-    if (!user || !targetId) return;
-    const initAudio = async () => {
-      try {
-        await requestRecordingPermissionsAsync();
-        if (typeof setAudioModeAsync === 'function') {
-          await setAudioModeAsync({
-            allowsRecording: true,
-            playsInSilentMode: true,
-            staysActiveInBackground: true,
-            interruptionModeIOS: 0,
-            interruptionModeAndroid: 0
-          });
-        }
-      } catch (e) {
-        console.warn("Audio init warning:", e);
-      }
-    };
-    initAudio();
-
-    return () => {
-      if (typeof setAudioModeAsync === 'function') {
-        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, staysActiveInBackground: true }).catch(()=>{});
-      }
-    };
-  }, [user, targetId]);
 
   const handleSendText = useCallback(async (text) => {
     if (!user || !targetId) return;
@@ -103,75 +76,19 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   };
   const handleRejectPartner = async (msg) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); await supabase.from('messages').update({ type: 'system', text: '已拒绝健康搭子邀请', subtype: 'SYNC_PARTNER_REJECTED' }).eq('id', msg.id); };
 
-  const handleStartRecord = useCallback(async () => { 
-    try { 
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); 
-      setPlayingAudioId(null); 
-      recordStartTimeRef.current = 0; 
-
-      if (Platform.OS === 'ios') {
-        try {
-          if (typeof setAudioModeAsync === 'function') {
-            await setAudioModeAsync({ 
-              allowsRecording: true, 
-              playsInSilentMode: true,
-              staysActiveInBackground: true,
-              interruptionModeIOS: 0,
-            });
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        } catch (modeErr) {}
-      }
-
-      await audioRecorder.prepareToRecordAsync(); 
-      recordStartTimeRef.current = Date.now(); 
-      audioRecorder.record(); 
-    } catch (e) {
-      console.warn("录音引擎启动失败:", e);
-      recordStartTimeRef.current = 0; 
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } 
-  }, [audioRecorder]);
+  // 🎙️ 录音：委托给 useAudioRecorder（阶段 3 已抽离）
+  const handleStartRecord = useCallback(async () => {
+    setPlayingAudioId(null);
+    await startRecord();
+  }, [startRecord]);
 
   const handleStopRecord = useCallback(() => {
-    try {
-      if (!recordStartTimeRef.current) { 
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); 
-        return; 
-      }
-      
-      try { audioRecorder.stop(); } catch(e){} 
+    stopAndSendRecord();
+  }, [stopAndSendRecord]);
 
-      const tempUri = audioRecorder.uri;
-      const durationSec = Math.round((Date.now() - recordStartTimeRef.current) / 1000);
-      recordStartTimeRef.current = 0; 
-
-      if (durationSec < 1 || !tempUri) { 
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); 
-        return; 
-      }
-
-      setTimeout(async () => {
-        const msgId = generateUUID();
-        saveAndSend({ id: msgId, type: 'audio', mediaUrl: tempUri, duration: durationSec, isMe: true, timestamp: Date.now() });
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        
-        const cloudUrl = await uploadToSupabase(tempUri, 'audio');
-        if (cloudUrl) {
-          await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'audio', media_url: cloudUrl, duration: durationSec });
-          sendPushNotification(targetId, "新消息", "[语音消息]", { type: 'chat', targetId: user.id, targetName: 'TA' });
-        }
-      }, 150);
-    } catch (e) {
-      console.error("停止录音异常:", e);
-    }
-  }, [audioRecorder, user, targetId, saveAndSend]);
-
-  const handleCancelRecord = useCallback(() => { 
-    try { audioRecorder.stop(); } catch (e) {}
-    recordStartTimeRef.current = 0; 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); 
-  }, [audioRecorder]);
+  const handleCancelRecord = useCallback(() => {
+    cancelRecord();
+  }, [cancelRecord]);
 
   // 🖼️ 媒体选择与上传：委托给 useMediaUpload（阶段 2 已抽离）
   const handlePickMedia = pickAndSendMedia;
@@ -282,6 +199,13 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
               <View style={[styles.uploadBarFill, { width: `${Math.round(uploadProgress * 100)}%`, backgroundColor: palette.primary }]} />
               <Text style={[styles.uploadBarText, { color: palette.textSecondary }]}>
                 正在上传 {Math.round(uploadProgress * 100)}%
+              </Text>
+            </View>
+          )}
+          {isRecording && (
+            <View style={[styles.uploadBar, { backgroundColor: palette.chatBorder }]}>
+              <Text style={[styles.uploadBarText, { color: palette.primary }]}>
+                🎙️ 正在录音 {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:{String(recordingDuration % 60).padStart(2, '0')}
               </Text>
             </View>
           )}
