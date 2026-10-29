@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "Sync test",
+    "slug": "my-app",
+    "version": "2.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-light.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff",
+      "dark": {
+        "image": "./assets/splash-dark.png",
+        "backgroundColor": "#000000"
+      }
+    },
+    "scheme": "mycoupleapp",
+    "plugins": [
+      "expo-router",
+      "expo-audio",
+      "expo-video",
+      "expo-secure-store",
+      "expo-font",
+      "expo-asset",
+      "expo-image",
+      "expo-status-bar"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mycoupleapp.app"
+    },
+    "android": {
+      "package": "com.mycoupleapp.app",
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7314ce1c-a3c0-4484-bb43-88dd98829353"
+      }
+    },
+    "owner": "abcd_abcd9",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7314ce1c-a3c0-4484-bb43-88dd98829353"
+    }
+  }
+}
