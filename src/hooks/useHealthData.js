@@ -8,6 +8,7 @@ import { useAuth } from './useAuth';
 import { calculateDiffDays } from './health/dateUtils';
 import { useTimeSync } from './health/useTimeSync';
 import { useHealthStorage } from './health/useHealthStorage';
+import { useHealthCloud } from './health/useHealthCloud';
 
 const HealthContext = createContext();
 
@@ -27,12 +28,16 @@ export function HealthProvider({ children }) {
     setStreak, setCheckInDate, resetTodayLocal,
   } = storage;
 
-  const [selectedMeal, setSelectedMeal] = useState(null);
-  
-  const [partnerData, setPartnerData] = useState({ waterAmount: 0, mealsStatus: { '早餐': false, '午餐': false, '晚餐': false } });
-  const [partnerId, setPartnerId] = useState(null);
+  // ☁️ 所有 health_records 网络 IO 都收敛在 useHealthCloud 内部（不碰本地存储）
+  const cloud = useHealthCloud(user, getDateStr);
+  const {
+    partnerData, partnerId, setPartnerId,
+    fetchMyRecord, fetchPartnerRecord, applyPartnerRecord,
+    subscribePartner, syncToCloud, flushNow,
+  } = cloud;
 
-  const cloudSyncTimerRef = useRef(null);
+  const [selectedMeal, setSelectedMeal] = useState(null);
+
   const wasGoalCompleteRef = useRef(null);
 
   const loadAllData = async () => {
@@ -46,7 +51,7 @@ export function HealthProvider({ children }) {
     // 1️⃣ 先读本地磁盘（含跨天清零）
     await loadLocal();
 
-    // 2️⃣ 再拉云端，拿到后显式覆盖本地
+    // 2️⃣ 再拉云端，拿到后显式覆盖本地（编排层负责串联 storage ↔ cloud）
     if (user) {
       try {
         const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
@@ -62,14 +67,14 @@ export function HealthProvider({ children }) {
 
         setPartnerId(pId);
 
-        const { data: myData } = await supabase.from('health_records').select('*').eq('user_id', user.id).eq('record_date', currentDayStr).single();
+        const myData = await fetchMyRecord(currentDayStr);
         if (myData) {
           hydrateFromCloud({ waterAmount: myData.water_amount, mealsStatus: myData.meals_status });
         }
-        
+
         if (pId) {
-          const { data: pData } = await supabase.from('health_records').select('*').eq('user_id', pId).eq('record_date', currentDayStr).single();
-          if (pData) setPartnerData({ waterAmount: pData.water_amount || 0, mealsStatus: pData.meals_status || { '早餐': false, '午餐': false, '晚餐': false } });
+          const pData = await fetchPartnerRecord(pId, currentDayStr);
+          applyPartnerRecord(pData);
         }
       } catch (e) {
         console.warn("云端同步失败，降级使用本地数据", e);
@@ -89,10 +94,13 @@ export function HealthProvider({ children }) {
         if (lastActiveDate && lastActiveDate !== currentDayStr) {
           loadAllData();
         }
+      } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // 🚨 进入后台前，强制提交还在防抖队列里的数据，防止丢失
+        flushNow();
       }
     });
     return () => subscription.remove();
-  }, [lastActiveDate, getDateStr]);
+  }, [lastActiveDate, getDateStr, flushNow]);
 
   useEffect(() => {
     // 本地磁盘加载完成后才允许判定打卡状态，避免用初始空值误判
@@ -123,25 +131,11 @@ export function HealthProvider({ children }) {
     wasGoalCompleteRef.current = isDoneToday;
   }, [mealsStatus, waterAmount, maxWater, isLoaded, lastCheckInDate, streakDays, todayStr, getDateStr, setStreak, setCheckInDate]);
 
+  // 🔄 伴侣数据实时订阅（网络 IO 由 useHealthCloud 负责）
   useEffect(() => {
     if (!partnerId) return;
-    const channel = supabase.channel('partner_health_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'health_records', filter: `user_id=eq.${partnerId}` }, (payload) => {
-        if (payload.new && payload.new.record_date === todayStr) {
-          setPartnerData({ waterAmount: payload.new.water_amount || 0, mealsStatus: payload.new.meals_status || { '早餐': false, '午餐': false, '晚餐': false } });
-        }
-      }).subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [partnerId, todayStr]);
-
-  const syncToCloud = useCallback((newWater, newMeals) => {
-    if (!user) return;
-    const recordDate = getDateStr();
-    if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
-    cloudSyncTimerRef.current = setTimeout(async () => {
-      await supabase.from('health_records').upsert({ user_id: user.id, record_date: recordDate, water_amount: newWater, meals_status: newMeals }, { onConflict: 'user_id, record_date' });
-    }, 1500);
-  }, [user, getDateStr]);
+    return subscribePartner(partnerId, todayStr);
+  }, [partnerId, todayStr, subscribePartner]);
 
   const setWaterDirect = useCallback((val) => {
     setWater(prev => {
