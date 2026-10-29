@@ -1,7 +1,7 @@
 // --- START OF FILE src/app/account_info.js ---
 import React, { useState, useEffect } from 'react';
 import { 
-  View, Text, StyleSheet, TouchableOpacity, useColorScheme, 
+  View, Text, StyleSheet, TouchableOpacity,
   ScrollView, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,13 +10,13 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { SIZES } from '../constants/theme'; 
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
 
 export default function AccountInfoScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter(); 
   const { user } = useAuth();
 

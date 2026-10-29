@@ -1,16 +1,16 @@
 // --- START OF FILE space.js ---
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 // 🍎 核心修复：加上 ../../ 退回两级目录
-import { getPalette } from '../../constants/colors';
+import { useAppTheme } from '../../context/ThemeContext';
 import { SIZES, TYPOGRAPHY } from '../../constants/theme'; 
 
 export default function SpaceScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
 
   return (

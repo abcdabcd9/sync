@@ -1,18 +1,17 @@
 // 文件：src/components/CustomTabBar.js
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, useColorScheme, Platform, Keyboard, Animated } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, Keyboard, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router'; // 👈 增加路由 Hook 用于保底跳转
 
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
 
 export default function CustomTabBar({ state, descriptors, navigation }) {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
   const slideAnim = useRef(new Animated.Value(0)).current;
   const { user } = useAuth();
   const router = useRouter(); // 👈 初始化 router

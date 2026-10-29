@@ -1,9 +1,9 @@
 // --- START OF FILE WaterProgress.js ---
 import React, { useRef, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, useColorScheme, TouchableOpacity, PanResponder, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, PanResponder, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { SIZES } from '../constants/theme';
 
 const ThemedText = React.memo(({ children, style, color, ...props }) => (
@@ -39,7 +39,7 @@ const ProgressTrack = React.memo(({ palette, done, animatedPercentage, knobOpaci
 ));
 
 export default function WaterProgress({ waterAmount, maxWater, onSetWater, setScrollEnabled, onAdd, onMinus }) {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const safeMaxWater = Math.max(1, maxWater || 1800);
   const ratio = Math.min(1, Math.max(0, waterAmount / safeMaxWater));
   const done = waterAmount >= safeMaxWater;

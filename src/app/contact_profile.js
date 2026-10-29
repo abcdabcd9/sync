@@ -1,16 +1,15 @@
 // --- START OF FILE src/app/contact_profile.js ---
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Platform, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 
 export default function ContactProfileScreen() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
   
   const { id, nickname, sync_id, username, remark } = useLocalSearchParams();

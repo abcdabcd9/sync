@@ -1,19 +1,19 @@
 // --- START OF FILE src/app/(tabs)/index.js ---
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, useColorScheme, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useHealthData } from '../../hooks/useHealthData';
 import MealListItem from '../../components/MealListItem';
 import MealDetailSheet from '../../components/MealDetailSheet';
 import WaterProgress from '../../components/WaterProgress';
-import { getPalette } from '../../constants/colors';
+import { useAppTheme } from '../../context/ThemeContext';
 import { SIZES, TYPOGRAPHY } from '../../constants/theme'; 
 
 const MEALS = ['早餐', '午餐', '晚餐'];
 
 export default function DietScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const { width } = useWindowDimensions(); // 🍎 引入屏幕宽度检测
   const {
     selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, partnerData, partnerId,

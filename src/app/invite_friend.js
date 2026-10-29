@@ -1,13 +1,13 @@
 // --- START OF FILE src/app/invite_friend.js ---
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
@@ -21,7 +21,7 @@ const generateUUID = () => {
 };
 
 export default function InviteFriendScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { roomId } = useLocalSearchParams();
   const { user } = useAuth();

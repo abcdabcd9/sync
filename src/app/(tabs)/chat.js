@@ -1,7 +1,7 @@
 // --- START OF FILE src/app/(tabs)/chat.js ---
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { 
-  View, Text, StyleSheet, TouchableOpacity, TextInput, useColorScheme, Keyboard, 
+  View, Text, StyleSheet, TouchableOpacity, TextInput, Keyboard,
   Alert, ActivityIndicator, ScrollView, Platform, Modal, Pressable, Dimensions, 
   Animated, useWindowDimensions, PanResponder 
 } from 'react-native';
@@ -11,7 +11,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 
-import { getPalette } from '../../constants/colors';
+import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../services/supabase';
 import ChatRoomInner from '../../components/ChatRoomInner'; 
@@ -33,8 +33,7 @@ const formatPreview = (msg) => {
 };
 
 export default function ChatMainScreen() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
   
   const router = useRouter();
   const { user, isAuthLoading } = useAuth();

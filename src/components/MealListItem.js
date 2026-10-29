@@ -1,11 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet, useColorScheme, TouchableHighlight } from 'react-native';
+import { View, Text, StyleSheet, TouchableHighlight } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 
 export default function MealListItem({ meal, checked, onPress }) {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
 
   return (
     <TouchableHighlight

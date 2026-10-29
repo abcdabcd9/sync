@@ -1,16 +1,15 @@
 // --- START OF FILE src/app/auth.js ---
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, useColorScheme, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 
 export default function AuthScreen() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { signIn, signUp } = useAuth();
 

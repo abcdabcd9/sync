@@ -1,17 +1,18 @@
 // --- START OF FILE src/app/_layout.js ---
 import React from 'react';
-import { View, useColorScheme, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { HealthProvider, useHealthData } from '../hooks/useHealthData';
 import { CinemaProvider } from '../hooks/useCinema';
 import { AuthProvider } from '../hooks/useAuth';
+import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import FloatingPlayer from '../components/FloatingPlayer';
-import { getPalette } from '../constants/colors';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
 function RootNavigation() {
   const { isInitialized } = useHealthData();
-  const palette = getPalette(useColorScheme() === 'dark');
+  // 🎨 统一主题控制权：跟随系统 / 强制浅色 / 强制深色
+  const { colors: palette } = useAppTheme();
   usePushNotifications();
 
   if (!isInitialized) return <View style={{ flex: 1, backgroundColor: palette.background }} />;
@@ -32,13 +33,15 @@ function RootNavigation() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <HealthProvider>
-        <CinemaProvider>
-          <RootNavigation />
-        </CinemaProvider>
-      </HealthProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <HealthProvider>
+          <CinemaProvider>
+            <RootNavigation />
+          </CinemaProvider>
+        </HealthProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 // --- END OF FILE src/app/_layout.js ---

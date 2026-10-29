@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/cinema.js ---
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, useColorScheme, TouchableOpacity, Platform, useWindowDimensions, PanResponder, Animated, TextInput, KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, Dimensions, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, useWindowDimensions, PanResponder, Animated, TextInput, KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, Dimensions, StatusBar } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -9,7 +9,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { VideoView } from 'expo-video';
 import * as Brightness from 'expo-brightness';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useAuth } from '../hooks/useAuth';
 
@@ -31,8 +31,7 @@ const DanmakuItem = React.memo(({ text, color, screenWidth }) => {
 });
 
 export default function CinemaScreen() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();

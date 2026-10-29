@@ -1,6 +1,6 @@
 // --- START OF FILE src/components/ChatRoomInner.js ---
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, Keyboard, useColorScheme, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,7 +14,7 @@ import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -62,7 +62,7 @@ const formatDbMsg = (row, currentUserId) => ({
 });
 
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
   

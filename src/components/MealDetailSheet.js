@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, StyleSheet, useColorScheme, TouchableOpacity, Pressable, Animated, Platform } from 'react-native';
-import { getPalette } from '../constants/colors';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, Pressable, Animated, Platform } from 'react-native';
+import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
 
 export default function MealDetailSheet({ meal, checked, onClose, onConfirm, onUndo }) {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const { mealGuides } = useHealthData();
   
   const [isVisible, setIsVisible] = useState(false);

@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/browser.js ---
 import React, { useRef, useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, TextInput, useColorScheme, ActivityIndicator, Keyboard, Platform, LayoutAnimation, UIManager, Modal, FlatList, Alert, Animated } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, TextInput, ActivityIndicator, Keyboard, Platform, LayoutAnimation, UIManager, Modal, FlatList, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,7 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -20,8 +20,7 @@ const MOBILE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X
 const DESKTOP_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36";
 
 export default function BrowserScreen() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
   const router = useRouter();
   const params = useLocalSearchParams();
   const { loadUrl, emitCommand } = useCinema(); 

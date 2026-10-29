@@ -2,12 +2,13 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, Animated, Keyboard, Platform, 
-  StyleSheet, PanResponder, Dimensions, useColorScheme, ScrollView, AppState, Pressable, ActivityIndicator
+  StyleSheet, PanResponder, Dimensions, ScrollView, AppState, Pressable, ActivityIndicator
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioRecorderState } from 'expo-audio';
+import { useAppTheme } from '../context/ThemeContext';
 
 const AI_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions'; 
 const AI_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
@@ -93,7 +94,7 @@ const SYSTEM_EMOJIS = ['😀','😂','🥰','😎','😭','😡','🥺','🥳','
 
 const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRecord, onStopRecord, onCancelRecord, onPickMedia, onNudge, onStartCall, audioRecorder, onPanelVisibilityChange }, ref) => {
   const insets = useSafeAreaInsets();
-  const isDark = useColorScheme() === 'dark';
+  const { isDark } = useAppTheme();
   const restingPadding = insets.bottom > 0 ? insets.bottom + 8 : 16; 
   const activePadding = 12;
   

@@ -4,7 +4,6 @@ import {
   View, 
   Text, 
   StyleSheet, 
-  useColorScheme, 
   Platform, 
   Animated,
   Pressable,
@@ -18,14 +17,13 @@ import { useRouter, usePathname } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCinema } from '../hooks/useCinema';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const DOCK_OFFSET = (SCREEN_WIDTH / 2) - 20;
 
 export default function FloatingPlayer() {
-  const isDark = useColorScheme() === 'dark';
-  const palette = getPalette(isDark);
+  const { isDark, colors: palette } = useAppTheme();
   const router = useRouter();
   const pathname = usePathname(); 
   const insets = useSafeAreaInsets();

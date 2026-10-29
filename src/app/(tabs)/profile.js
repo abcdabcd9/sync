@@ -1,7 +1,7 @@
 // --- START OF FILE src/app/(tabs)/profile.js ---
 import React, { useState } from 'react';
 import { 
-  View, Text, StyleSheet, TouchableOpacity, useColorScheme, 
+  View, Text, StyleSheet, TouchableOpacity,
   ScrollView, Alert, ActivityIndicator, useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,13 +9,13 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useFocusEffect } from 'expo-router';
 
-import { getPalette } from '../../constants/colors';
+import { useAppTheme } from '../../context/ThemeContext';
 import { SIZES, TYPOGRAPHY } from '../../constants/theme'; 
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../services/supabase';
 
 export default function ProfileScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter(); 
   const { user, signOut } = useAuth();
   const { width } = useWindowDimensions(); // 🍎 引入屏幕宽度检测

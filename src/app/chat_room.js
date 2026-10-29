@@ -1,13 +1,12 @@
 // --- START OF FILE src/app/chat_room.js ---
 import React from 'react';
-import { useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { getPalette } from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import ChatRoomInner from '../components/ChatRoomInner';
 
 export default function ChatRoomScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { targetId, targetName } = useLocalSearchParams();
 

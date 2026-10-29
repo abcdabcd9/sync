@@ -1,13 +1,13 @@
 // --- START OF FILE src/app/settings.js ---
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, useColorScheme, Keyboard, ScrollView, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, Keyboard, ScrollView, Modal, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 
-import { getPalette } from '../constants/colors';
 import { SIZES } from '../constants/theme';
+import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
@@ -41,7 +41,7 @@ const SettingRow = ({ title, value, icon, iconBg, onPress, isDestructive, hideAr
 );
 
 export default function SettingsScreen() {
-  const palette = getPalette(useColorScheme() === 'dark');
+  const { colors: palette, themeMode, setThemeMode } = useAppTheme();
   const router = useRouter();
   const { signOut } = useAuth();
   
@@ -72,6 +72,32 @@ export default function SettingsScreen() {
 
   const handleNotImplemented = (feature) => {
     Alert.alert('功能开发中', `[${feature}] 将在后续版本开放，敬请期待！`);
+  };
+
+  // 🎨 主题模式切换（跟随系统 / 浅色 / 深色）
+  const THEME_OPTIONS = [
+    { key: 'system', label: '跟随系统', icon: 'phone-portrait-outline' },
+    { key: 'light', label: '浅色', icon: 'sunny-outline' },
+    { key: 'dark', label: '深色', icon: 'moon-outline' },
+  ];
+  const currentThemeLabel = THEME_OPTIONS.find(o => o.key === themeMode)?.label || '跟随系统';
+
+  const handlePickTheme = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      '外观模式',
+      '选择 App 的显示主题',
+      [
+        ...THEME_OPTIONS.map(opt => ({
+          text: opt.label + (opt.key === themeMode ? '  ✓' : ''),
+          onPress: () => {
+            setThemeMode(opt.key);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          },
+        })),
+        { text: '取消', style: 'cancel' },
+      ]
+    );
   };
 
   // --- 健康设置相关方法 ---
@@ -106,7 +132,7 @@ export default function SettingsScreen() {
           <Text style={[styles.sectionTitle, { color: palette.textSecondary, marginTop: 24 }]}>通用</Text>
           <View style={styles.group}>
             <SettingRow title="通知" icon="notifications" iconBg="#FF3B30" onPress={() => handleNotImplemented('通知设置')} isFirst palette={palette} />
-            <SettingRow title="界面与显示" icon="color-palette" iconBg="#FF9F0A" onPress={() => handleNotImplemented('界面外观')} palette={palette} />
+            <SettingRow title="外观模式" icon="color-palette" iconBg="#FF9F0A" value={currentThemeLabel} onPress={handlePickTheme} palette={palette} />
             <SettingRow title="朋友权限" icon="people" iconBg="#32ADE6" onPress={() => handleNotImplemented('朋友圈与权限')} palette={palette} />
             <SettingRow title="存储空间" icon="server" iconBg="#8E8E93" value="1.2 GB" onPress={() => handleNotImplemented('存储管理')} palette={palette} />
             <SettingRow title="更多" icon="ellipsis-horizontal" iconBg="#BF5AF2" value="关怀模式" onPress={() => handleNotImplemented('更多通用设置')} isLast palette={palette} />
