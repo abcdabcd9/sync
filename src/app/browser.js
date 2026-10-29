@@ -10,6 +10,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useBrowserHistory } from '../hooks/browser/useBrowserHistory';
+import { useBrowserSniffer, FILTER_OPTIONS } from '../hooks/browser/useBrowserSniffer';
 
 // 🌐 常量与纯工具函数（阶段 1 抽离）
 import {
@@ -19,7 +20,6 @@ import {
   isAdUrl,
   ellipsisMiddle,
   formatHistoryTime,
-  mergeMediaList,
 } from '../constants/browser';
 
 // 🧩 注入脚本（阶段 1 抽离）
@@ -27,7 +27,6 @@ import {
   buildBeforeLoadScript,
   AD_DOM_WATCHER_SCRIPT,
   buildAdCleanupScript,
-  MANUAL_SNIFF_SCRIPT,
   REMOVE_AD_STYLE_SCRIPT,
 } from '../scripts/browser';
 
@@ -49,8 +48,6 @@ export default function BrowserScreen() {
   const [inputUrl, setInputUrl] = useState(startUrl); 
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [sniffedMediaList, setSniffedMediaList] = useState([]);
-  const [isSniffing, setIsSniffing] = useState(false);
 
   const [isDesktopMode, setIsDesktopMode] = useState(false);
 
@@ -65,6 +62,20 @@ export default function BrowserScreen() {
     removeBookmark,
     isBookmarked,
   } = useBrowserHistory();
+
+  // 🎬 视频嗅探核心（阶段 3 抽离至 useBrowserSniffer）
+  const {
+    sniffedMediaList,
+    filterFormat,
+    setFilterFormat,
+    isSniffing,
+    filteredMediaList,
+    formatCounts,
+    handleWebMessage,
+    removeMediaItem,
+    clearSniffedMedia,
+    triggerManualSniff,
+  } = useBrowserSniffer();
 
   // 🛡️ 广告拦截开关（默认开启）与累计拦截计数
   const [isAdBlockEnabled, setIsAdBlockEnabled] = useState(true);
@@ -104,13 +115,10 @@ export default function BrowserScreen() {
 
   const [menuTab, setMenuTab] = useState('bookmark'); // 'bookmark' | 'history'
 
-  // 🎚️ 嗅探弹窗格式筛选
-  const [filterFormat, setFilterFormat] = useState('ALL'); // 'ALL' | 'MP4' | 'M3U8' | 'MOV'
-
   const actualLoadedUrl = useRef(startUrl);
 
   // ⏱️ 定时器句柄（卸载时统一清理，避免 setState on unmounted component）
-  const sniffTimerRef = useRef(null);
+  //    sniffTimerRef 已随嗅探逻辑迁移至 useBrowserSniffer
   const submitTimerRef = useRef(null);
   const launchTimerRef = useRef(null);
 
@@ -123,7 +131,6 @@ export default function BrowserScreen() {
 
   // 🧹 组件卸载：清理全部定时器 + 停止动画
   useEffect(() => () => {
-    if (sniffTimerRef.current) { clearTimeout(sniffTimerRef.current); sniffTimerRef.current = null; }
     if (submitTimerRef.current) { clearTimeout(submitTimerRef.current); submitTimerRef.current = null; }
     if (launchTimerRef.current) { clearTimeout(launchTimerRef.current); launchTimerRef.current = null; }
     if (adCountTimerRef.current) { clearTimeout(adCountTimerRef.current); adCountTimerRef.current = null; }
@@ -192,11 +199,13 @@ export default function BrowserScreen() {
   // 👁️ 实时 DOM 监视器：MutationObserver 秒级销毁动态插入的广告元素
   //    ⚠️ 安全红线：命中保护名单（video / audio / 含 video 的容器）一律跳过
   // 🧩 注入脚本（阶段 1 抽离至 src/scripts/browser，原样引用）
+  //    manualSniffScript 已随嗅探逻辑迁移至 useBrowserSniffer（阶段 3）
   const adDomWatcherScript = AD_DOM_WATCHER_SCRIPT;
   const adCleanupScript = useMemo(() => buildAdCleanupScript(), []);
-  const manualSniffScript = MANUAL_SNIFF_SCRIPT;
 
-
+  // 📨 WebView 消息分流（阶段 3）
+  //    AD_BLOCKED 属于广告拦截域，留在编排层处理；
+  //    其余嗅探协议（VIDEO_FOUND / VIDEO_FOUND_LIST / MANUAL_SNIFF_DONE）交由 useBrowserSniffer
   const onMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
@@ -207,58 +216,10 @@ export default function BrowserScreen() {
         bumpBlockedAdCount(n);
         return;
       }
-
-      // 单条命中（被动嗅探，保留旧协议兼容）
-      if (data.type === 'VIDEO_FOUND' && data.url) {
-        setIsSniffing(false);
-        setSniffedMediaList((prev) => {
-          const next = mergeMediaList(prev, [data.url]);
-          if (next !== prev) {
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-          return next;
-        });
-        return;
-      }
-
-      // 多片源批量命中（手动扫描）
-      if (data.type === 'VIDEO_FOUND_LIST') {
-        setIsSniffing(false);
-        const urls = Array.isArray(data.urls) ? data.urls.filter(Boolean) : [];
-        if (urls.length === 0) {
-          setSniffedMediaList((prev) => {
-            if (prev.length === 0) {
-              Alert.alert('嗅探反馈', '未发现真实的视频地址。\n\n💡 提示：如果网页中出现了视频，请先点击一下网页里的“播放”按钮缓冲一秒钟，然后再点底部扫描图标！');
-            }
-            return prev;
-          });
-          return;
-        }
-        setSniffedMediaList((prev) => {
-          const next = mergeMediaList(prev, urls);
-          if (next !== prev) {
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-          return next;
-        });
-        return;
-      }
-
-      // 旧版手动扫描完成信号（兼容）
-      if (data.type === 'MANUAL_SNIFF_DONE') {
-        setIsSniffing(false);
-        if (!data.found) {
-          setSniffedMediaList((prev) => {
-            if (prev.length === 0) {
-              Alert.alert('嗅探反馈', '未发现真实的视频地址。\n\n💡 提示：如果网页中出现了视频，请先点击一下网页里的“播放”按钮缓冲一秒钟，然后再点底部扫描图标！');
-            }
-            return prev;
-          });
-        }
-      }
-    } catch (_) {}
+    } catch (_) {
+      return;
+    }
+    handleWebMessage(event);
   };
 
   // 🔙 统一返回入口：网页内还有历史 → 先回退网页；已到首页 → 退出浏览器
@@ -365,11 +326,9 @@ export default function BrowserScreen() {
     }
   };
 
-  // 🧹 清空嗅探列表
+  // 🧹 清空嗅探列表（数据操作在 Hook 内，这里只负责关闭弹窗）
   const handleClearSniffedMedia = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setSniffedMediaList([]);
+    clearSniffedMedia();
     closePicker();
   };
 
@@ -424,22 +383,14 @@ export default function BrowserScreen() {
     })
   );
 
-  // 🗑️ 移除单条嗅探源（卡片横滑触发）
+  // 🗑️ 移除单条嗅探源（卡片横滑触发，逻辑在 Hook 内）
   const handleRemoveSniffedMedia = (id) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setSniffedMediaList((prev) => prev.filter((m) => m.id !== id));
+    removeMediaItem(id);
   };
 
+  // 🔍 触发网页内手动嗅探（注入脚本 + 2s 兜底复位，逻辑在 Hook 内）
   const handleManualSniff = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    setIsSniffing(true);
-    if (webViewRef.current) webViewRef.current.injectJavaScript(manualSniffScript);
-    if (sniffTimerRef.current) clearTimeout(sniffTimerRef.current);
-    sniffTimerRef.current = setTimeout(() => {
-      sniffTimerRef.current = null;
-      setIsSniffing(false);
-    }, 2000);
+    triggerManualSniff(webViewRef);
   };
 
   // 🔍 嗅探按钮：有源直接开菜单；无源先深度扫描，再打开菜单展示结果
@@ -603,24 +554,8 @@ export default function BrowserScreen() {
     if (loadedUrl) addHistory(loadedUrl, nativeEvent?.title);
   };
 
-  // 🎚️ 嗅探弹窗筛选：计数 + 过滤列表
-  const formatCounts = sniffedMediaList.reduce(
-    (acc, item) => {
-      const ext = (item.ext || '').toUpperCase();
-      acc.ALL += 1;
-      if (ext === 'MP4') acc.MP4 += 1;
-      else if (ext === 'M3U8') acc.M3U8 += 1;
-      else if (ext === 'MOV') acc.MOV += 1;
-      return acc;
-    },
-    { ALL: 0, MP4: 0, M3U8: 0, MOV: 0 }
-  );
-
-  const filteredMediaList = filterFormat === 'ALL'
-    ? sniffedMediaList
-    : sniffedMediaList.filter((item) => (item.ext || '').toUpperCase() === filterFormat);
-
-  const FILTER_OPTIONS = ['ALL', 'MP4', 'M3U8', 'MOV'];
+  // 🎚️ 嗅探弹窗筛选的计数（formatCounts）与过滤列表（filteredMediaList）
+  //    以及 FILTER_OPTIONS 均已迁移至 useBrowserSniffer（阶段 3）
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]} edges={['top', 'bottom']}>
