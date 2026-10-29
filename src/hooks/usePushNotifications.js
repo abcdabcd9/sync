@@ -8,13 +8,15 @@ import { useRouter } from 'expo-router';
 import { supabase } from '../services/supabase';
 import { useAuth } from './useAuth';
 
-// 🍎 核心修复：使用最新的 shouldShowBanner 替代被废弃的 shouldShowAlert
+// 🍎 前台静默：应用在前台时不弹系统原生横幅/列表，仅靠 Realtime 刷新界面（微信式体验）
+// 说明：SDK 58 中 shouldShowAlert 已废弃，由 shouldShowBanner + shouldShowList 取代；
+//       两者同时为 false 才能彻底隐藏前台横幅与通知中心条目。
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
+    shouldShowBanner: false,
+    shouldShowList: false,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
   }),
 });
 
