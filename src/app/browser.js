@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/browser.js ---
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, TextInput, Keyboard, Platform, LayoutAnimation, UIManager, Modal, FlatList, Alert, Animated, BackHandler, PanResponder } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, TextInput, Keyboard, Platform, LayoutAnimation, UIManager, Alert, Animated, BackHandler } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,7 +10,11 @@ import * as Clipboard from 'expo-clipboard';
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useBrowserHistory } from '../hooks/browser/useBrowserHistory';
-import { useBrowserSniffer, FILTER_OPTIONS } from '../hooks/browser/useBrowserSniffer';
+import { useBrowserSniffer } from '../hooks/browser/useBrowserSniffer';
+
+// 🧩 UI 弹窗组件（阶段 4 抽离）
+import BrowserMenuModal from '../components/browser/BrowserMenuModal';
+import SniffedMediaModal from '../components/browser/SniffedMediaModal';
 
 // 🌐 常量与纯工具函数（阶段 1 抽离）
 import {
@@ -18,8 +22,6 @@ import {
   DESKTOP_USER_AGENT,
   isSafeUrl,
   isAdUrl,
-  ellipsisMiddle,
-  formatHistoryTime,
 } from '../constants/browser';
 
 // 🧩 注入脚本（阶段 1 抽离）
@@ -363,25 +365,8 @@ export default function BrowserScreen() {
 
   const togglePickerExpanded = () => setPickerExpandedState(!pickerExpandedRef.current);
 
-  // 🖐️ 顶部拖拽条手势：上滑展开 / 全屏下滑收起 / 半屏下滑关闭
-  //    PanResponder 实例只创建一次；回调内通过 ref 读取最新状态，避免闭包过期
-  const [pickerPanResponder] = useState(() =>
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
-      onPanResponderRelease: (_, g) => {
-        if (g.dy < -50) {
-          setPickerExpandedState(true);
-        } else if (g.dy > 50) {
-          if (pickerExpandedRef.current) {
-            setPickerExpandedState(false);
-          } else {
-            closePicker();
-          }
-        }
-      },
-    })
-  );
+  // 🖐️ 顶部拖拽条手势已随弹窗迁移至 SniffedMediaModal（阶段 4）
+  //    该组件内部用 useMemo 惰性创建 PanResponder，彻底消除 refs-during-render 告警
 
   // 🗑️ 移除单条嗅探源（卡片横滑触发，逻辑在 Hook 内）
   const handleRemoveSniffedMedia = (id) => {
@@ -482,9 +467,6 @@ export default function BrowserScreen() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     closeMenu();
   };
-
-  const overlayOpacity = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  const menuTranslateY = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] });
 
   // 📊 顶部加载进度条：progress(0~1) 驱动宽度，加载完成后淡出
   const progressWidth = progressAnim.interpolate({
@@ -649,321 +631,55 @@ export default function BrowserScreen() {
         </TouchableOpacity>
       </View>
 
-      <Modal visible={menuVisible} transparent animationType="none" onRequestClose={closeMenu}>
-        <View style={styles.modalWrapper}>
-          <Animated.View style={[styles.modalOverlay, { opacity: overlayOpacity }]} />
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeMenu} activeOpacity={1} />
-          
-          <Animated.View style={[styles.menuContainer, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', transform: [{ translateY: menuTranslateY }] }]}>
-            <View style={styles.menuDragHandle} />
-            <Text style={[styles.menuSectionTitle, { color: palette.textSecondary }]}>浏览器选项</Text>
-            
-            <View style={styles.menuActionRow}>
-              <TouchableOpacity style={[styles.menuActionBtn, { backgroundColor: palette.background }]} onPress={toggleDesktopMode} activeOpacity={0.7}>
-                <Ionicons name={isDesktopMode ? "phone-portrait" : "desktop"} size={24} color={palette.primary} />
-                <Text style={[styles.menuActionText, { color: palette.textPrimary }]}>{isDesktopMode ? '切回手机' : '电脑版'}</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={[styles.menuActionBtn, { backgroundColor: palette.background }]} onPress={handleSaveBookmark} activeOpacity={0.7}>
-                <Ionicons name="bookmark" size={24} color={palette.success} />
-                <Text style={[styles.menuActionText, { color: palette.textPrimary }]}>收藏本页</Text>
-              </TouchableOpacity>
+      {/* 🗂️ 浏览器主菜单（阶段 4 抽离至 BrowserMenuModal） */}
+      <BrowserMenuModal
+        visible={menuVisible}
+        onRequestClose={closeMenu}
+        isDark={isDark}
+        palette={palette}
+        menuAnim={menuAnim}
+        isDesktopMode={isDesktopMode}
+        onToggleDesktopMode={toggleDesktopMode}
+        onSaveBookmark={handleSaveBookmark}
+        onReload={() => { closeMenu(); webViewRef.current?.reload(); }}
+        isAdBlockEnabled={isAdBlockEnabled}
+        blockedAdCount={blockedAdCount}
+        onToggleAdBlock={toggleAdBlock}
+        menuTab={menuTab}
+        onMenuTabChange={setMenuTab}
+        bookmarksList={bookmarksList}
+        onLoadBookmark={handleLoadBookmark}
+        onDeleteBookmark={handleDeleteBookmark}
+        historyList={historyList}
+        onLoadHistory={handleLoadHistory}
+        onDeleteHistory={handleDeleteHistory}
+        onClearHistory={handleClearHistory}
+      />
 
-              <TouchableOpacity style={[styles.menuActionBtn, { backgroundColor: palette.background }]} onPress={() => { closeMenu(); webViewRef.current?.reload(); }} activeOpacity={0.7}>
-                <Ionicons name="refresh" size={24} color={palette.textSecondary} />
-                <Text style={[styles.menuActionText, { color: palette.textPrimary }]}>刷新</Text>
-              </TouchableOpacity>
-            </View>
+      {/* 🎬 多视频源选择 Bottom Sheet（阶段 4 抽离至 SniffedMediaModal） */}
+      <SniffedMediaModal
+        visible={pickerVisible}
+        onRequestClose={closePicker}
+        isDark={isDark}
+        palette={palette}
+        pickerAnim={pickerAnim}
+        sniffedMediaList={sniffedMediaList}
+        filteredMediaList={filteredMediaList}
+        filterFormat={filterFormat}
+        onFilterChange={setFilterFormat}
+        formatCounts={formatCounts}
+        pickerExpanded={pickerExpanded}
+        onToggleExpanded={togglePickerExpanded}
+        onExpand={() => setPickerExpandedState(true)}
+        onCollapse={() => setPickerExpandedState(false)}
+        onClear={handleClearSniffedMedia}
+        onPlay={handleLaunchCinema}
+        onCopy={handleCopyMediaUrl}
+        onRemove={handleRemoveSniffedMedia}
+      />
 
-            {/* 🛡️ 广告拦截开关 + 拦截计数 */}
-            <TouchableOpacity
-              style={[styles.adBlockRow, { backgroundColor: palette.background }]}
-              onPress={toggleAdBlock}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={isAdBlockEnabled ? 'shield-checkmark' : 'shield-outline'}
-                size={22}
-                color={isAdBlockEnabled ? palette.success : palette.textSecondary}
-              />
-              <View style={styles.adBlockTextGroup}>
-                <Text style={[styles.adBlockTitle, { color: palette.textPrimary }]}>广告拦截</Text>
-                <Text style={[styles.adBlockSubtitle, { color: palette.textSecondary }]}>
-                  已拦截 {blockedAdCount} 个广告
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.adBlockSwitch,
-                  { backgroundColor: isAdBlockEnabled ? palette.success : palette.separator },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.adBlockSwitchKnob,
-                    { transform: [{ translateX: isAdBlockEnabled ? 18 : 0 }] },
-                  ]}
-                />
-              </View>
-            </TouchableOpacity>
-
-            {/* �️ 书签 / 历史 双 Tab */}
-            <View style={[styles.menuTabBar, { backgroundColor: palette.background }]}>
-              <TouchableOpacity
-                style={[styles.menuTabBtn, menuTab === 'bookmark' && { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF' }]}
-                onPress={() => setMenuTab('bookmark')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.menuTabText, { color: menuTab === 'bookmark' ? palette.primary : palette.textSecondary }]}>
-                  影院书签 ({bookmarksList.length})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.menuTabBtn, menuTab === 'history' && { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF' }]}
-                onPress={() => setMenuTab('history')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.menuTabText, { color: menuTab === 'history' ? palette.primary : palette.textSecondary }]}>
-                  历史记录 ({historyList.length})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {menuTab === 'bookmark' ? (
-              <FlatList
-                data={bookmarksList}
-                keyExtractor={(item) => item}
-                style={styles.bookmarkList}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <Text style={[styles.listEmptyText, { color: palette.textSecondary }]}>暂无收藏的网址</Text>
-                }
-                renderItem={({ item }) => (
-                  <View style={[styles.bookmarkItem, { borderBottomColor: palette.separator }]}>
-                    <TouchableOpacity style={styles.bookmarkContent} onPress={() => handleLoadBookmark(item)}>
-                      <Ionicons name="globe-outline" size={20} color={palette.textSecondary} style={{ marginRight: 12 }} />
-                      <Text style={[styles.bookmarkText, { color: palette.textPrimary }]} numberOfLines={1}>{item}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.bookmarkDeleteBtn} onPress={() => handleDeleteBookmark(item)}>
-                      <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              />
-            ) : (
-              <View style={styles.historySection}>
-                <View style={styles.historyToolbar}>
-                  <Text style={[styles.historyCountText, { color: palette.textSecondary }]}>
-                    最近 {historyList.length} 条记录
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.historyClearBtn}
-                    onPress={handleClearHistory}
-                    disabled={historyList.length === 0}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="trash-bin-outline" size={15} color={historyList.length === 0 ? palette.separator : '#FF3B30'} />
-                    <Text style={[styles.historyClearText, { color: historyList.length === 0 ? palette.separator : '#FF3B30' }]}>
-                      清空历史
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <FlatList
-                  data={historyList}
-                  keyExtractor={(item) => item.id}
-                  style={styles.bookmarkList}
-                  showsVerticalScrollIndicator={false}
-                  ListEmptyComponent={
-                    <Text style={[styles.listEmptyText, { color: palette.textSecondary }]}>暂无浏览历史</Text>
-                  }
-                  renderItem={({ item }) => (
-                    <View style={[styles.bookmarkItem, { borderBottomColor: palette.separator }]}>
-                      <TouchableOpacity style={styles.historyContent} onPress={() => handleLoadHistory(item.url)} activeOpacity={0.7}>
-                        <View style={styles.historyTextGroup}>
-                          <Text style={[styles.historyTitle, { color: palette.textPrimary }]} numberOfLines={1}>
-                            {item.title}
-                          </Text>
-                          <Text style={[styles.historyUrl, { color: palette.textSecondary }]} numberOfLines={1}>
-                            {ellipsisMiddle(item.url, 28, 14)}
-                          </Text>
-                        </View>
-                        <Text style={[styles.historyTime, { color: palette.textSecondary }]}>
-                          {formatHistoryTime(item.timestamp)}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.bookmarkDeleteBtn} onPress={() => handleDeleteHistory(item.id)}>
-                        <Ionicons name="close-circle-outline" size={20} color={palette.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                />
-              </View>
-            )}
-          </Animated.View>
-        </View>
-      </Modal>
-
-      {/* 🎬 多视频源选择 Bottom Sheet */}
-      <Modal visible={pickerVisible} transparent animationType="none" onRequestClose={closePicker}>
-        <View style={styles.modalWrapper}>
-          <Animated.View style={[styles.modalOverlay, { opacity: pickerAnim }]} />
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closePicker} activeOpacity={1} />
-
-          <Animated.View
-            style={[
-              styles.pickerContainer,
-              {
-                backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
-                height: pickerExpanded ? '92%' : '50%',
-                transform: [{
-                  translateY: pickerAnim.interpolate({ inputRange: [0, 1], outputRange: [420, 0] }),
-                }],
-              },
-            ]}
-          >
-            {/* 🖐️ 拖拽条：上滑展开 / 全屏下滑收起 / 半屏下滑关闭 */}
-            <View style={styles.pickerDragZone} {...pickerPanResponder.panHandlers}>
-              <View style={styles.menuDragHandle} />
-            </View>
-
-            <View style={styles.pickerHeader}>
-              <Text style={[styles.pickerTitle, { color: palette.textPrimary }]} numberOfLines={1}>
-                选择要播放的视频源 ({sniffedMediaList.length})
-              </Text>
-              <View style={styles.pickerHeaderActions}>
-                <TouchableOpacity
-                  style={styles.pickerHeaderBtn}
-                  onPress={togglePickerExpanded}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons
-                    name={pickerExpanded ? 'chevron-down' : 'chevron-up'}
-                    size={20}
-                    color={palette.primary}
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.pickerHeaderBtn} onPress={handleClearSniffedMedia} activeOpacity={0.7}>
-                  <Text style={[styles.pickerHeaderBtnText, { color: '#FF3B30' }]}>清空</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.pickerHeaderBtn} onPress={closePicker} activeOpacity={0.7}>
-                  <Text style={[styles.pickerHeaderBtnText, { color: palette.primary }]}>关闭</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* 🎚️ 格式筛选切片栏 */}
-            <View style={styles.filterChipRow}>
-              {FILTER_OPTIONS.map((opt) => {
-                const active = filterFormat === opt;
-                const label = opt === 'ALL' ? '全部' : opt;
-                return (
-                  <TouchableOpacity
-                    key={opt}
-                    style={[
-                      styles.filterChip,
-                      { borderColor: active ? '#FF2D55' : palette.cardBorder },
-                      active && { backgroundColor: '#FF2D55' },
-                    ]}
-                    onPress={() => {
-                      Haptics.selectionAsync();
-                      setFilterFormat(opt);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.filterChipText, { color: active ? '#FFFFFF' : palette.textSecondary }]}>
-                      {label} ({formatCounts[opt]})
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <FlatList
-              data={filteredMediaList}
-              keyExtractor={(item) => item.id}
-              style={styles.pickerList}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <Text style={[styles.pickerEmpty, { color: palette.textSecondary }]}>
-                  {sniffedMediaList.length === 0
-                    ? '暂无嗅探到的视频源'
-                    : `未找到 ${filterFormat} 格式的视频源`}
-                </Text>
-              }
-              renderItem={({ item }) => (
-                <MediaCard
-                  item={item}
-                  palette={palette}
-                  onPlay={() => handleLaunchCinema(item.url)}
-                  onCopy={() => handleCopyMediaUrl(item.url)}
-                  onRemove={() => handleRemoveSniffedMedia(item.id)}
-                />
-              )}
-            />
-          </Animated.View>
-        </View>
-      </Modal>
 
     </SafeAreaView>
-  );
-}
-
-// 🎴 视频源卡片
-function MediaCard({ item, palette, onPlay, onCopy, onRemove }) {
-  return (
-    <View
-      style={[
-        styles.mediaCard,
-        {
-          backgroundColor: palette.background,
-          borderColor: palette.cardBorder,
-        },
-      ]}
-    >
-      <View style={styles.mediaCardTop}>
-        <View style={[styles.mediaBadge, { backgroundColor: palette.primary }]}>
-          <Text style={styles.mediaBadgeText}>.{item.ext}</Text>
-        </View>
-        <Text style={[styles.mediaDomain, { color: palette.textSecondary }]} numberOfLines={1}>
-          {item.domain || '未知域名'}
-        </Text>
-      </View>
-
-      <Text style={[styles.mediaUrl, { color: palette.textPrimary }]} numberOfLines={1}>
-        {ellipsisMiddle(item.url)}
-      </Text>
-
-      <View style={styles.mediaCardActions}>
-        <TouchableOpacity
-          style={[styles.mediaActionBtn, { backgroundColor: palette.primary }]}
-          onPress={onPlay}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="play" size={15} color="#FFFFFF" />
-          <Text style={styles.mediaActionPrimaryText}>播放</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.mediaActionBtn, styles.mediaActionGhost, { borderColor: palette.cardBorder }]}
-          onPress={onCopy}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="copy-outline" size={15} color={palette.textPrimary} />
-          <Text style={[styles.mediaActionGhostText, { color: palette.textPrimary }]}>复制</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.mediaRemoveBtn}
-          onPress={onRemove}
-          activeOpacity={0.7}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="trash-outline" size={16} color="#FF3B30" />
-        </TouchableOpacity>
-      </View>
-    </View>
   );
 }
 
@@ -983,76 +699,5 @@ const styles = StyleSheet.create({
   // 🔢 嗅探按钮角标（静默提示数量，不挡屏）
   sniffBadge: { position: 'absolute', top: 2, right: 0, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: '#FF2D55', alignItems: 'center', justifyContent: 'center' },
   sniffBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
-  
-  modalWrapper: { flex: 1, justifyContent: 'flex-end' },
-  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.1)' },
-  menuContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
-  menuDragHandle: { width: 40, height: 5, backgroundColor: 'rgba(150,150,150,0.3)', borderRadius: 3, alignSelf: 'center', marginBottom: 16 },
-  menuSectionTitle: { fontSize: 13, fontWeight: '600', marginBottom: 12, marginLeft: 4 },
-  menuActionRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 }, 
-  menuActionBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: 16 },
-  menuActionText: { fontSize: 12, fontWeight: '500', marginTop: 8 },
-
-  // 🛡️ 广告拦截开关行
-  adBlockRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14 },
-  adBlockTextGroup: { flex: 1, marginLeft: 10 },
-  adBlockTitle: { fontSize: 14, fontWeight: '600' },
-  adBlockSubtitle: { fontSize: 11, marginTop: 3 },
-  adBlockSwitch: { width: 42, height: 24, borderRadius: 12, padding: 3, justifyContent: 'center' },
-  adBlockSwitchKnob: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FFFFFF' },
-
-  bookmarkList: { marginTop: 8, maxHeight: 250 },
-  bookmarkItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  bookmarkContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  bookmarkText: { fontSize: 15, flex: 1 },
-  bookmarkDeleteBtn: { padding: 8, marginLeft: 8 },
-  listEmptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 28 },
-
-  // 🗂️ 书签 / 历史 双 Tab
-  menuTabBar: { flexDirection: 'row', marginTop: 16, marginBottom: 4, padding: 4, borderRadius: 12 },
-  menuTabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 9 },
-  menuTabText: { fontSize: 13, fontWeight: '600' },
-
-  // 🕘 历史记录
-  historySection: { marginTop: 4 },
-  historyToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-  historyCountText: { fontSize: 12 },
-  historyClearBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 6 },
-  historyClearText: { fontSize: 12, fontWeight: '600' },
-  historyContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  historyTextGroup: { flex: 1, marginRight: 10 },
-  historyTitle: { fontSize: 14, fontWeight: '500' },
-  historyUrl: { fontSize: 11, marginTop: 3 },
-  historyTime: { fontSize: 11, fontVariant: ['tabular-nums'] },
-
-  // 🎬 多视频源选择弹窗
-  pickerContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, maxHeight: '78%', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
-  pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  pickerTitle: { flex: 1, fontSize: 16, fontWeight: '700', marginRight: 8 },
-  pickerHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  pickerHeaderBtn: { paddingHorizontal: 8, paddingVertical: 4 },
-  pickerHeaderBtnText: { fontSize: 14, fontWeight: '600' },
-  pickerList: { flexGrow: 0 },
-  pickerEmpty: { fontSize: 14, textAlign: 'center', paddingVertical: 32 },
-
-  // 🎚️ 格式筛选切片
-  filterChipRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  filterChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, borderWidth: 1 },
-  filterChipText: { fontSize: 12, fontWeight: '600' },
-  mediaCard: { borderRadius: 14, borderWidth: 1, padding: 12, marginBottom: 10 },
-  mediaCardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  mediaBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginRight: 8 },
-  mediaBadgeText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.3 },
-  mediaDomain: { flex: 1, fontSize: 12 },
-  mediaUrl: { fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginBottom: 10 },
-  mediaCardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  mediaActionBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10, gap: 5 },
-  mediaActionPrimaryText: { fontSize: 13, fontWeight: '600', color: '#FFFFFF' },
-  mediaActionGhost: { backgroundColor: 'transparent', borderWidth: 1 },
-  mediaActionGhostText: { fontSize: 13, fontWeight: '600' },
-  mediaRemoveBtn: { marginLeft: 'auto', padding: 6 },
-
-  // 🖐️ 嗅探弹窗拖拽区
-  pickerDragZone: { paddingTop: 4, paddingBottom: 4 }
 });
 // --- END OF FILE src/app/browser.js ---
