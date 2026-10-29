@@ -1,16 +1,17 @@
 // --- START OF FILE src/app/(tabs)/profile.js ---
 import React, { useState } from 'react';
-import { 
+import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, Alert, ActivityIndicator, useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { useAppTheme } from '../../context/ThemeContext';
-import { SIZES, TYPOGRAPHY } from '../../constants/theme'; 
+import { SIZES, TYPOGRAPHY } from '../../constants/theme';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../services/supabase';
 
@@ -57,22 +58,62 @@ export default function ProfileScreen() {
     ]);
   };
 
+  // 🔒 安全审计 #9：真正的注销执行体（仅在二次确认通过后调用）
+  const performAccountDeletion = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setLoadingProfile(true);
+
+    const { error } = await supabase.rpc('delete_my_account');
+
+    // 🔒 安全审计 #12：不再透传 error.message，避免泄露数据库函数/表结构
+    if (error) {
+      Alert.alert('注销失败', '注销失败，请稍后重试。');
+      setLoadingProfile(false);
+      return;
+    }
+
+    // 🔒 安全审计 #9：注销成功后彻底清除本地缓存，防止残留数据被下一个账号读到
+    try {
+      await AsyncStorage.clear();
+    } catch (_) {
+      // 清缓存失败不阻断注销流程
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // 先结束会话（signOut 内部会抹除云端 expo_push_token），再强制跳转登录页
+    try {
+      await signOut();
+    } catch (_) {}
+
+    Alert.alert('账号已注销', '您在云端的所有数据已被彻底抹除。', [
+      { text: '好的', onPress: () => router.replace('/auth') },
+    ]);
+  };
+
+  // 🔒 安全审计 #9：二次确认 —— 第一次弹窗说明后果，第二次弹窗再次明确「不可逆」
   const handleDeleteAccount = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     Alert.alert(
-      '永久注销账号', 
-      '您的账号、所有聊天记录、图片、健康数据及好友关系将被永久删除且无法恢复！\n\n您确定要进行此操作吗？', 
+      '永久注销账号',
+      '您的账号、所有聊天记录、图片、健康数据及好友关系将被永久删除且无法恢复！\n\n您确定要进行此操作吗？',
       [
         { text: '手滑了', style: 'cancel' },
-        { text: '确认粉碎', style: 'destructive', onPress: async () => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            setLoadingProfile(true);
-            const { error } = await supabase.rpc('delete_my_account');
-            // 🔒 安全审计 #12：不再透传 error.message，避免泄露数据库函数/表结构
-            if (error) { Alert.alert('注销失败', '注销失败，请稍后重试。'); setLoadingProfile(false); }
-            else { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); Alert.alert('账号已注销', '您在云端的所有数据已被彻底抹除。'); await signOut(); }
-          }
-        }
+        {
+          text: '继续',
+          style: 'destructive',
+          onPress: () => {
+            // 第二次确认：明确警示不可逆，用户再次确认后才真正执行
+            Alert.alert(
+              '⚠️ 最后确认',
+              '此操作不可逆，将永久删除所有聊天与打卡数据，且无法通过任何方式找回。\n\n确认永久注销？',
+              [
+                { text: '取消', style: 'cancel' },
+                { text: '确认永久注销', style: 'destructive', onPress: performAccountDeletion },
+              ]
+            );
+          },
+        },
       ]
     );
   };

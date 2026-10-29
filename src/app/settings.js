@@ -10,7 +10,6 @@ import { SIZES } from '../constants/theme';
 import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
 import { useAuth } from '../hooks/useAuth';
-import { supabase } from '../services/supabase';
 
 // --- 原生风格的设置项组件 ---
 const SettingRow = ({ title, value, icon, iconBg, onPress, isDestructive, hideArrow, isFirst, isLast, palette }) => (
@@ -49,8 +48,11 @@ export default function SettingsScreen() {
   const { maxWater, updateMaxWater, motto, updateMotto, mealGuides, updateMealGuide, resetToday } = useHealthData();
   const [localMotto, setLocalMotto] = useState(motto);
   const [showHealthModal, setShowHealthModal] = useState(false);
-  const [editingMeal, setEditingMeal] = useState(null); 
+  const [editingMeal, setEditingMeal] = useState(null);
   const [tempMealText, setTempMealText] = useState('');
+
+  // 🔒 安全审计 #29：合规弹窗（隐私政策 / 账号安全），App Store 审核必查项
+  const [legalModal, setLegalModal] = useState(null); // 'privacy' | 'security' | null
 
   const isGoingBack = useRef(false);
   useEffect(() => { setLocalMotto(motto); }, [motto]);
@@ -73,6 +75,50 @@ export default function SettingsScreen() {
   const handleNotImplemented = (feature) => {
     Alert.alert('功能开发中', `[${feature}] 将在后续版本开放，敬请期待！`);
   };
+
+  // 🔒 安全审计 #29：隐私政策与数据使用说明（健康数据 + 聊天信息的合规使用）
+  const PRIVACY_SECTIONS = [
+    {
+      title: '我们收集哪些数据',
+      body: '· 账号信息：邮箱、昵称、Sync ID\n· 健康数据：饮水目标、三餐打卡记录、连续打卡天数\n· 聊天数据：文字、语音、图片、视频消息及发送时间\n· 设备信息：推送令牌（仅用于消息通知）',
+    },
+    {
+      title: '健康数据如何使用',
+      body: '健康与打卡数据仅用于为你生成每日进度、连续打卡统计，并在你绑定「健康搭子」后与对方同步打卡状态。我们不会将健康数据用于广告投放，也不会出售给任何第三方。',
+    },
+    {
+      title: '聊天信息如何使用',
+      body: '聊天消息通过 Supabase 加密传输并存储，仅你与对话双方可见。消息内容不会用于训练模型或人工审阅，除非依据法律法规要求配合调查。',
+    },
+    {
+      title: '数据存储与保留',
+      body: '数据存储于 Supabase 云端数据库。你随时可以在「账号安全」中注销账号，注销后所有聊天记录、图片、健康数据及好友关系将被永久删除且不可恢复。',
+    },
+    {
+      title: '你的权利',
+      body: '你有权访问、更正、导出及删除自己的全部数据。如需行使上述权利，可通过「个人资料」页面修改信息，或直接注销账号完成彻底删除。',
+    },
+  ];
+
+  // 🔒 安全审计 #29：账号安全说明
+  const SECURITY_SECTIONS = [
+    {
+      title: '登录与会话安全',
+      body: '账号使用邮箱 + 密码登录，密码要求至少 8 位且包含字母与数字。登录凭证由 Supabase Auth 托管，本地仅保存加密后的会话令牌。',
+    },
+    {
+      title: '推送通知安全',
+      body: '推送令牌仅存储在服务端，客户端无法读取他人令牌。所有推送请求必须携带有效登录凭证，并由服务端校验双方社交关系后才允许发送。',
+    },
+    {
+      title: '数据清除',
+      body: '如需清除本机缓存数据，可在「健康与打卡偏好」中重置今日打卡数据；如需彻底删除云端全部数据，请前往「我的 → 注销账号」，该操作需二次确认且不可逆。',
+    },
+    {
+      title: '注销账号',
+      body: '注销将永久删除账号、聊天记录、媒体文件、健康数据与好友关系。为防误触，注销流程包含两次确认弹窗，确认后立即执行且无法撤销。',
+    },
+  ];
 
   // 🎨 主题模式切换（跟随系统 / 浅色 / 深色）
   const THEME_OPTIONS = [
@@ -124,8 +170,10 @@ export default function SettingsScreen() {
           <Text style={[styles.sectionTitle, { color: palette.textSecondary }]}>账号与安全</Text>
           <View style={styles.group}>
             <SettingRow title="个人资料" icon="person" iconBg="#0A84FF" onPress={() => router.push('/account_info')} isFirst palette={palette} />
-            <SettingRow title="个人信息与权限" icon="shield-checkmark" iconBg="#34C759" onPress={() => handleNotImplemented('权限管理')} palette={palette} />
-            <SettingRow title="账号安全" icon="lock-closed" iconBg="#5E5CE6" onPress={() => handleNotImplemented('账号安全与注销')} isLast palette={palette} />
+            {/* 🔒 安全审计 #29：真实交互，弹出隐私政策与数据使用说明 */}
+            <SettingRow title="个人信息与权限" icon="shield-checkmark" iconBg="#34C759" onPress={() => setLegalModal('privacy')} palette={palette} />
+            {/* 🔒 安全审计 #29：真实交互，弹出账号安全与数据清除说明 */}
+            <SettingRow title="账号安全" icon="lock-closed" iconBg="#5E5CE6" onPress={() => setLegalModal('security')} isLast palette={palette} />
           </View>
 
           {/* 2. 通用栏 */}
@@ -154,6 +202,55 @@ export default function SettingsScreen() {
 
         </ScrollView>
       </SafeAreaView>
+
+      {/* --- 🔒 安全审计 #29：隐私政策 / 账号安全 合规弹窗（App Store 审核必查） --- */}
+      <Modal
+        visible={!!legalModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setLegalModal(null)}
+      >
+        <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]} edges={['top']}>
+          <View style={[styles.navBar, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separator }]}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => setLegalModal(null)} activeOpacity={0.6}>
+              <Text style={[styles.backText, { color: palette.primary, marginLeft: 16 }]}>关闭</Text>
+            </TouchableOpacity>
+            <Text style={[styles.navTitle, { color: palette.textPrimary }]}>
+              {legalModal === 'security' ? '账号安全' : '隐私政策与数据使用说明'}
+            </Text>
+            <View style={styles.rightPlaceholder} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+            <Text style={[styles.legalIntro, { color: palette.textSecondary }]}>
+              {legalModal === 'security'
+                ? '我们采用业界通行的安全措施保护你的账号与数据。以下说明帮助你了解账号安全机制与数据清除方式。'
+                : '我们深知个人信息对你的重要性，并会尽全力保护你的个人信息安全。本说明将帮助你了解我们如何收集、使用、存储与保护你的信息。'}
+            </Text>
+
+            {(legalModal === 'security' ? SECURITY_SECTIONS : PRIVACY_SECTIONS).map((section, index, arr) => (
+              <View
+                key={section.title}
+                style={[
+                  styles.legalCard,
+                  { backgroundColor: palette.card, borderColor: palette.cardBorder },
+                  index === arr.length - 1 && { marginBottom: 32 },
+                ]}
+              >
+                <View style={styles.legalCardHeader}>
+                  <View style={[styles.legalDot, { backgroundColor: legalModal === 'security' ? '#5E5CE6' : '#34C759' }]} />
+                  <Text style={[styles.legalCardTitle, { color: palette.textPrimary }]}>{section.title}</Text>
+                </View>
+                <Text style={[styles.legalCardBody, { color: palette.textSecondary }]}>{section.body}</Text>
+              </View>
+            ))}
+
+            <Text style={[styles.legalFooter, { color: palette.textSecondary }]}>
+              最后更新：2026 年 10 月{'\n'}如对本说明有任何疑问，可通过「个人资料」页面联系我们。
+            </Text>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       {/* --- 健康打卡偏好专属面板 (整合原 settings.js 的功能) --- */}
       <Modal visible={showHealthModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowHealthModal(false)}>
@@ -248,6 +345,15 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 16, fontWeight: '400' },
   rowRight: { flexDirection: 'row', alignItems: 'center' },
   rowValue: { fontSize: 15 },
+
+  // 🔒 安全审计 #29：合规弹窗样式
+  legalIntro: { fontSize: 13, lineHeight: 20, marginBottom: 16, paddingHorizontal: 4 },
+  legalCard: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 16, marginBottom: 12 },
+  legalCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  legalDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
+  legalCardTitle: { fontSize: 15, fontWeight: '600' },
+  legalCardBody: { fontSize: 13, lineHeight: 21 },
+  legalFooter: { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 8, marginBottom: 40, paddingHorizontal: 8 },
 
   // 健康偏好面板样式
   customRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 48, paddingHorizontal: 16 },

@@ -23,7 +23,7 @@ const mapAuthError = (error, isLoginMode) => {
     return '该邮箱已被注册，请直接登录';
   }
   if (code === 'weak_password' || raw.includes('password should be at least')) {
-    return '密码强度不足，请设置至少 6 位密码';
+    return '密码强度不足，请设置至少 8 位密码';
   }
   if (code === 'over_email_send_rate_limit' || raw.includes('rate limit')) {
     return '操作过于频繁，请稍后再试';
@@ -59,9 +59,30 @@ export default function AuthScreen() {
     ]).start();
   };
 
+  // 🔒 安全审计 #11：密码强度校验（至少 8 位），返回 null 表示通过
+  const validatePassword = (pwd) => {
+    if (!pwd) return '请输入密码';
+    if (pwd.length < 8) return '密码至少需要 8 位字符';
+    if (!/[a-zA-Z]/.test(pwd)) return '密码需包含至少一个字母';
+    if (!/\d/.test(pwd)) return '密码需包含至少一个数字';
+    return null;
+  };
+
   const handleAuth = async () => {
-    if (!email.includes('@') || password.length < 6) {
-      triggerErrorShake('请输入有效的邮箱和至少6位密码');
+    if (!email.includes('@')) {
+      triggerErrorShake('请输入有效的邮箱地址');
+      return;
+    }
+
+    // 🔒 安全审计 #11：注册时强制 8 位以上强密码；登录时仅做非空校验（老账号兼容）
+    if (!isLoginMode) {
+      const pwdError = validatePassword(password);
+      if (pwdError) {
+        triggerErrorShake(pwdError);
+        return;
+      }
+    } else if (!password) {
+      triggerErrorShake('请输入密码');
       return;
     }
 
@@ -145,13 +166,20 @@ export default function AuthScreen() {
               <Ionicons name="lock-closed" size={20} color={palette.textSecondary} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: palette.textPrimary }]}
-                placeholder="密码"
+                placeholder={isLoginMode ? '密码' : '密码（至少 8 位，含字母与数字）'}
                 placeholderTextColor={palette.textSecondary}
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
               />
             </View>
+
+            {/* 🔒 安全审计 #11：注册态实时密码强度提示 */}
+            {!isLoginMode && password.length > 0 && (
+              <Text style={[styles.hintText, { color: validatePassword(password) ? '#FF3B30' : '#34C759' }]}>
+                {validatePassword(password) || '✓ 密码强度符合要求'}
+              </Text>
+            )}
           </View>
 
           {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
@@ -194,6 +222,7 @@ const styles = StyleSheet.create({
   inputWrapper: { flexDirection: 'row', alignItems: 'center', height: 56, borderRadius: 16, paddingHorizontal: 16, borderWidth: 1 },
   inputIcon: { marginRight: 12 },
   input: { flex: 1, fontSize: 16, height: '100%' },
+  hintText: { fontSize: 12, fontWeight: '500', marginTop: -8, marginBottom: 8, paddingHorizontal: 4 },
   errorText: { color: '#FF3B30', fontSize: 13, textAlign: 'center', marginBottom: 20, fontWeight: '500' },
   mainBtn: { height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 8, marginBottom: 24 },
   mainBtnText: { color: '#FFFFFF', fontSize: 18, fontWeight: '600', letterSpacing: 2 },
