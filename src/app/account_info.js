@@ -15,6 +15,38 @@ import { SIZES } from '../constants/theme';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
 
+// 🔒 安全审计 #18：输入长度与格式的硬性约束（与数据库 CHECK 约束保持一致）
+// 注：motto（首页寄语）的编辑入口在 settings.js，其长度校验在那边实现。
+const NICKNAME_MAX = 20;
+const SYNC_ID_MIN = 3;
+const SYNC_ID_MAX = 15;
+const SYNC_ID_PATTERN = /^[A-Za-z0-9_]+$/;
+
+/**
+ * 校验昵称：非空、≤20 字符
+ * @returns {string|null} 错误提示，null 表示通过
+ */
+const validateNickname = (value) => {
+  const v = (value || '').trim();
+  if (!v) return '昵称不能为空。';
+  if (v.length > NICKNAME_MAX) return `昵称最多 ${NICKNAME_MAX} 个字符，当前 ${v.length} 个。`;
+  return null;
+};
+
+/**
+ * 校验 Sync ID：3-15 字符，仅限字母、数字、下划线
+ * @returns {string|null} 错误提示，null 表示通过
+ */
+const validateSyncId = (value) => {
+  const v = (value || '').trim();
+  if (!v) return 'Sync ID 不能为空。';
+  if (v.length < SYNC_ID_MIN || v.length > SYNC_ID_MAX) {
+    return `Sync ID 长度需为 ${SYNC_ID_MIN}-${SYNC_ID_MAX} 个字符，当前 ${v.length} 个。`;
+  }
+  if (!SYNC_ID_PATTERN.test(v)) return 'Sync ID 仅支持字母、数字与下划线（_），不能包含空格或特殊符号。';
+  return null;
+};
+
 export default function AccountInfoScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter(); 
@@ -101,13 +133,24 @@ export default function AccountInfoScreen() {
 
   const handleSaveEdit = async () => {
     const newValue = editValue.trim();
-    if (!newValue) return;
-    
-    if (activeModal === 'syncId') {
-      if (newValue.includes(' ') || newValue.length < 3) { 
-        Alert.alert('格式错误', 'Sync ID 不能包含空格，且至少需要 3 个字符。'); 
-        return; 
+
+    // 🔒 安全审计 #18：保存前硬校验（长度 + 格式），非法直接拦截并给出清晰提示
+    if (activeModal === 'nickname') {
+      const err = validateNickname(newValue);
+      if (err) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('昵称格式错误', err);
+        return;
       }
+    } else if (activeModal === 'syncId') {
+      const err = validateSyncId(newValue);
+      if (err) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Sync ID 格式错误', err);
+        return;
+      }
+    } else {
+      return;
     }
 
     setIsSaving(true);
@@ -211,14 +254,22 @@ export default function AccountInfoScreen() {
               {activeModal === 'nickname' ? '设置个性昵称' : '设置 Sync ID'}
             </Text>
             
-            <TextInput 
-              style={[styles.modalInput, { backgroundColor: palette.background, color: palette.textPrimary, borderColor: palette.chatBorder }]} 
-              value={editValue} 
-              onChangeText={setEditValue} 
-              placeholderTextColor={palette.textSecondary} 
-              autoCapitalize="none" 
-              maxLength={activeModal === 'nickname' ? 30 : 20} 
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: palette.background, color: palette.textPrimary, borderColor: palette.chatBorder }]}
+              value={editValue}
+              onChangeText={setEditValue}
+              placeholderTextColor={palette.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={activeModal === 'nickname' ? NICKNAME_MAX : SYNC_ID_MAX}
             />
+
+            {/* 🔒 安全审计 #18：实时字符计数 + 格式提示 */}
+            <Text style={{ color: palette.textSecondary, fontSize: 12, textAlign: 'center', marginBottom: 12, paddingHorizontal: 24 }}>
+              {activeModal === 'nickname'
+                ? `${editValue.trim().length}/${NICKNAME_MAX} 字符`
+                : `${editValue.trim().length}/${SYNC_ID_MAX} 字符 · 仅限字母、数字与下划线`}
+            </Text>
 
             {activeModal === 'syncId' && (
               <Text style={{ color: palette.textSecondary, fontSize: 12, textAlign: 'center', marginBottom: 16, paddingHorizontal: 24 }}>

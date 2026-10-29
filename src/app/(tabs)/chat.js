@@ -208,13 +208,57 @@ export default function ChatMainScreen() {
     return () => supabase.removeChannel(channel);
   }, [user]);
 
+  // 🔒 安全审计 #16：搜索防抖节流
+  // 用户每敲一个字符都会触发 onChangeText，若直接查询 Supabase 的 sync_id，
+  // 会形成高频碰撞查询（可被用于枚举 Sync ID）。这里用 500ms 防抖 + 在途请求去重，
+  // 保证同一时间最多只有一个查询，且只在用户停止输入后才真正发起。
+  const searchTimerRef = useRef(null);
+  const searchInFlightRef = useRef(false);
+  const lastQueriedRef = useRef('');
+
+  // 组件卸载时清理定时器，避免内存泄漏与卸载后 setState
+  useEffect(() => () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+  }, []);
+
   const handleSearchAdd = async () => {
-    if (!searchQuery.trim()) return;
+    const keyword = searchQuery.trim();
+    if (!keyword) return;
+
+    // 输入长度不足 3 位（与 sync_id 最小长度一致）时不发起查询，进一步降低碰撞面
+    if (keyword.length < 3) {
+      Alert.alert('提示', 'Sync ID 至少 3 个字符，请继续输入。');
+      return;
+    }
+
+    // 在途请求去重：上一次查询尚未返回时直接忽略，防止连点/连敲造成并发查询
+    if (searchInFlightRef.current) return;
+    // 同一关键词不重复查询
+    if (keyword === lastQueriedRef.current) return;
+
     Keyboard.dismiss(); setIsSearching(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const { data: foundUsers } = await supabase.from('profiles').select('id, username, nickname').eq('sync_id', searchQuery.trim());
-    setIsSearching(false);
-    
-    if (!foundUsers || foundUsers.length === 0) { Alert.alert('未找到用户', '请确认对方的 Sync ID 是否正确'); return; }
+    searchInFlightRef.current = true;
+    lastQueriedRef.current = keyword;
+
+    let foundUsers = null;
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, username, nickname')
+        .eq('sync_id', keyword)
+        .limit(1);
+      foundUsers = data;
+    } finally {
+      searchInFlightRef.current = false;
+      setIsSearching(false);
+    }
+
+    if (!foundUsers || foundUsers.length === 0) {
+      // 查询失败/无结果时允许用户用同一关键词重试
+      lastQueriedRef.current = '';
+      Alert.alert('未找到用户', '请确认对方的 Sync ID 是否正确');
+      return;
+    }
     const targetUser = foundUsers[0];
     if (targetUser.id === user.id) { Alert.alert('提示', '不能添加自己哦'); return; }
     if (friends.find(f => f.id === targetUser.id)) { Alert.alert('提示', '已经是好友了'); return; }
@@ -229,9 +273,22 @@ export default function ChatMainScreen() {
           const { error } = await supabase.from('friend_requests').insert({ sender_id: user.id, receiver_id: targetUser.id });
           if (error && error.code === '23505') Alert.alert('提示', '请求已发送，等待对方通过。');
           else if (error) Alert.alert('发送失败', '好友请求发送失败，请稍后重试。');
-          else { Alert.alert('发送成功', '好友请求已发送，等待对方通过。'); setSearchQuery(''); fetchFriendsAndData(); }
+          else { Alert.alert('发送成功', '好友请求已发送，等待对方通过。'); setSearchQuery(''); lastQueriedRef.current = ''; fetchFriendsAndData(); }
       }}
     ]);
+  };
+
+  // 🔒 安全审计 #16：输入监听走 500ms 防抖，避免逐字符触发 Supabase 查询
+  const handleSearchChange = (text) => {
+    setSearchQuery(text);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    // 关键词变化后允许重新查询同一 Sync ID
+    if (text.trim() !== lastQueriedRef.current) lastQueriedRef.current = '';
+    if (!text.trim()) return;
+    searchTimerRef.current = setTimeout(() => {
+      searchTimerRef.current = null;
+      handleSearchAdd();
+    }, 500);
   };
 
   const handleAcceptRequest = async (request) => {
@@ -368,7 +425,8 @@ export default function ChatMainScreen() {
     <ScrollView contentContainerStyle={{ paddingHorizontal: 0, paddingTop: 8, paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
       <View style={[styles.searchContainer, { backgroundColor: palette.card, borderColor: palette.cardBorder, marginBottom: 24, marginHorizontal: 16 }]}>
         <Ionicons name="search" size={20} color={palette.textSecondary} style={{ marginRight: 8 }} />
-        <TextInput style={[styles.searchInput, { color: palette.textPrimary }]} placeholder="通过 Sync ID 搜索添加好友" placeholderTextColor={palette.textSecondary} value={searchQuery} onChangeText={setSearchQuery} onSubmitEditing={handleSearchAdd} returnKeyType="search" autoCapitalize="none" />
+        <TextInput style={[styles.searchInput, { color: palette.textPrimary }]} placeholder="通过 Sync ID 搜索添加好友" placeholderTextColor={palette.textSecondary} value={searchQuery} onChangeText={handleSearchChange} onSubmitEditing={handleSearchAdd} returnKeyType="search" autoCapitalize="none" autoCorrect={false} maxLength={15} />
+        {isSearching && <ActivityIndicator size="small" color={palette.textSecondary} />}
       </View>
 
       {requests.length > 0 && (
@@ -520,16 +578,18 @@ const styles = StyleSheet.create({
   avatarContact: { width: 41, height: 41, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }, 
   avatarTextContact: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' }, 
   contentAreaContact: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 60, borderBottomWidth: StyleSheet.hairlineWidth },
-  contactNameList: { fontSize: 16, fontWeight: '500' },
-  textContainer: { flex: 1, justifyContent: 'center' },
-  contactName: { fontSize: 16, fontWeight: '500', marginBottom: 4 }, 
-  contactSub: { fontSize: 13 },
-  rightInfo: { alignItems: 'flex-end', marginLeft: 8 },
+  contactNameList: { fontSize: 16, fontWeight: '500', flexShrink: 1 },
+  // 🔒 安全审计 #18：minWidth: 0 + flexShrink 让超长昵称在 flex 布局中真正被压缩，
+  //    配合 numberOfLines={1} 实现弹性截断，防止长文本撑爆布局
+  textContainer: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  contactName: { fontSize: 16, fontWeight: '500', marginBottom: 4, flexShrink: 1 },
+  contactSub: { fontSize: 13, flexShrink: 1 },
+  rightInfo: { alignItems: 'flex-end', marginLeft: 8, flexShrink: 0 },
   requestCard: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 10, borderWidth: 1 },
-  actionBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
-  avatarRound: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  actionBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, flexShrink: 0 },
+  avatarRound: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 12, flexShrink: 0 },
   avatarTextRound: { color: '#FFFFFF', fontSize: 15, fontWeight: 'bold' },
-  contactNameReq: { fontSize: 16, fontWeight: '600', marginBottom: 2 }, 
+  contactNameReq: { fontSize: 16, fontWeight: '600', marginBottom: 2, flexShrink: 1, minWidth: 0 },
   badgeContainer: { position: 'absolute', top: -5, right: -5, backgroundColor: '#FF3B30', minWidth: 18, height: 18, borderRadius: 9, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFFFFF', paddingHorizontal: 4 },
   badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
   mutedBadgeContainer: { position: 'absolute', top: -2, right: -2, backgroundColor: '#FF3B30', width: 8, height: 8, borderRadius: 4, borderWidth: 1, borderColor: '#FFFFFF' },

@@ -11,6 +11,9 @@ import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
 import { useAuth } from '../hooks/useAuth';
 
+// 🔒 安全审计 #18：首页寄语长度上限（与数据库 profiles_motto_length_check 保持一致）
+const MOTTO_MAX = 50;
+
 // --- 原生风格的设置项组件 ---
 const SettingRow = ({ title, value, icon, iconBg, onPress, isDestructive, hideArrow, isFirst, isLast, palette }) => (
   <TouchableOpacity 
@@ -147,7 +150,18 @@ export default function SettingsScreen() {
   };
 
   // --- 健康设置相关方法 ---
-  const handleSaveMotto = () => { if (localMotto.trim() !== motto) updateMotto(localMotto.trim() || '今日概览'); };
+  // 🔒 安全审计 #18：寄语长度硬校验（与数据库 profiles_motto_length_check 保持一致）
+  const handleSaveMotto = () => {
+    const next = localMotto.trim();
+    if (next.length > MOTTO_MAX) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('寄语过长', `首页寄语最多 ${MOTTO_MAX} 个字符，当前 ${next.length} 个。`);
+      // 回滚到已保存的值，避免超长文本被写入本地与云端
+      setLocalMotto(motto);
+      return;
+    }
+    if (next !== motto) updateMotto(next || '今日概览');
+  };
   const handleAdjustWater = (delta) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); updateMaxWater(Math.max(500, Math.min(5000, maxWater + delta))); };
   const openMealEditor = (meal) => { setTempMealText(mealGuides[meal]); setEditingMeal(meal); };
   const saveMealEditor = () => { updateMealGuide(editingMeal, tempMealText); setEditingMeal(null); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); };
@@ -281,8 +295,12 @@ export default function SettingsScreen() {
               <View style={[styles.group, { backgroundColor: palette.card }]}>
                 <View style={[styles.customRow, { borderBottomWidth: 0, paddingBottom: 4 }]}><Text style={[styles.customRowLabel, { color: palette.textPrimary }]}>首页寄语</Text></View>
                 <View style={styles.inputRow}>
-                  <TextInput style={[styles.input, { color: palette.primary }]} value={localMotto} onChangeText={setLocalMotto} onBlur={handleSaveMotto} returnKeyType="done" maxLength={15} placeholder="输入首页短句..." placeholderTextColor={palette.textSecondary} />
+                  <TextInput style={[styles.input, { color: palette.primary }]} value={localMotto} onChangeText={setLocalMotto} onBlur={handleSaveMotto} returnKeyType="done" maxLength={MOTTO_MAX} placeholder="输入首页短句..." placeholderTextColor={palette.textSecondary} />
                 </View>
+                {/* 🔒 安全审计 #18：实时字符计数，接近上限时给出提示 */}
+                <Text style={{ color: localMotto.trim().length > MOTTO_MAX ? '#FF3B30' : palette.textSecondary, fontSize: 12, textAlign: 'right', paddingHorizontal: 16, paddingBottom: 10 }}>
+                  {localMotto.trim().length}/{MOTTO_MAX}
+                </Text>
               </View>
 
               <Text style={[styles.sectionTitle, { color: palette.textSecondary, marginTop: 24 }]}>自定义食谱</Text>
