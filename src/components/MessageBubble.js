@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image'; 
+import { Image } from 'expo-image';
+import { useSignedMediaUrl } from '../hooks/chat/useSignedMediaUrl';
 
 export default React.memo(function MessageBubble({ 
   item, palette, onPreviewMedia, isPlaying, onToggleAudio, onLongPressMessage, onJoinCinema, onAcceptPartner, onRejectPartner 
@@ -49,6 +50,13 @@ export default React.memo(function MessageBubble({
   const bubbleRef = useRef(null);
   const [waveStep, setWaveStep] = useState(3);
 
+  // 🔐 P0-2 / P0-3：数据库只存相对对象路径，渲染时按需换取签名 URL。
+  //    历史数据若是完整签名 URL，Hook 内部会直接透传，保证不崩。
+  //    注意：必须在本组件内部调用（组件是 React.memo），
+  //    不能由父层批量解析，否则会破坏 memo 并导致全列表重渲染。
+  const { url: signedMediaUrl } = useSignedMediaUrl(item.mediaUrl);
+  const { url: signedThumbUrl } = useSignedMediaUrl(item.thumbnailUrl);
+
   useEffect(() => {
     let animInterval;
     if (isPlaying && msgType === 'audio') {
@@ -64,7 +72,12 @@ export default React.memo(function MessageBubble({
     return () => clearInterval(animInterval);
   }, [isPlaying, msgType]);
 
-  const handlePlayAudio = () => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onToggleAudio(item.id, item.mediaUrl); };
+  // 🎙️ 语音播放：把「已签名 URL」传给父层播放器，绝不传相对路径
+  const handlePlayAudio = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (!signedMediaUrl) return;
+    onToggleAudio(item.id, signedMediaUrl);
+  };
   const getAudioIcon = () => {
     if (waveStep === 1) return isMe ? "volume-off-outline" : "volume-off";
     if (waveStep === 2) return isMe ? "volume-low-outline" : "volume-low";
@@ -139,14 +152,21 @@ export default React.memo(function MessageBubble({
           {msgType === 'audio' && (
             <View style={[styles.audioBubble, { flexDirection: isMe ? 'row-reverse' : 'row', width: Math.min(60 + (item.duration || 1) * 8, 220) }]}>
               <Ionicons name={getAudioIcon()} size={22} color={isMe ? '#FFFFFF' : palette.textPrimary} style={isMe ? { transform: [{ rotate: '180deg' }] } : {}} />
-              <Text style={[styles.audioDurationText, { color: isMe ? '#FFFFFF' : palette.textPrimary }]}>{item.duration || 0}"</Text>
+              <Text style={[styles.audioDurationText, { color: isMe ? '#FFFFFF' : palette.textPrimary }]}>{`${item.duration || 0}"`}</Text>
             </View>
           )}
           {(msgType === 'image' || msgType === 'video') && (
             <View style={styles.mediaWrapper}>
-              {msgType === 'image' && <Image source={{ uri: item.mediaUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} />}
+              {msgType === 'image' && signedMediaUrl && (
+                <Image source={{ uri: signedMediaUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} />
+              )}
               {msgType === 'video' && (
-                <><Image source={{ uri: item.thumbnailUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} /><View style={styles.playIconOverlay}><Ionicons name="play-circle" size={54} color="rgba(255, 255, 255, 0.85)" /></View></>
+                <>
+                  {(signedThumbUrl || signedMediaUrl) && (
+                    <Image source={{ uri: signedThumbUrl || signedMediaUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} />
+                  )}
+                  <View style={styles.playIconOverlay}><Ionicons name="play-circle" size={54} color="rgba(255, 255, 255, 0.85)" /></View>
+                </>
               )}
             </View>
           )}

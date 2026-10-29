@@ -1,5 +1,5 @@
 // --- START OF FILE src/components/InteractiveMediaViewer.js ---
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { 
   View, StyleSheet, Dimensions, Animated, PanResponder, ScrollView, 
   TouchableWithoutFeedback, Image, FlatList, TouchableOpacity, Platform, Text, Pressable, StatusBar 
@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
+import { useSignedMediaUrl } from '../hooks/chat/useSignedMediaUrl';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -76,7 +77,7 @@ const handleDownloadMedia = async (url, onSuccess, onError) => {
 const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
   const [isPlaying, setIsPlaying] = useState(isActive);
   const [showControls, setShowControls] = useState(false);
-  const controlsOpacity = useRef(new Animated.Value(0)).current;
+  const [controlsOpacity] = useState(() => new Animated.Value(0));
   
   const [progress, setProgress] = useState(0);
   const [timeStr, setTimeStr] = useState({ current: '00:00', duration: '00:00' });
@@ -94,14 +95,11 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
   useEffect(() => {
     if (isActive) {
       player.play();
-      setIsPlaying(true);
-      hideControlsImmediate(); 
     } else {
       player.pause();
-      setIsPlaying(false);
-      hideControlsImmediate();
     }
-  }, [isActive, player]);
+    Animated.timing(controlsOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => setShowControls(false));
+  }, [isActive, player, controlsOpacity]);
 
   useEffect(() => {
     let interval;
@@ -157,14 +155,15 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
     resetControlsTimer();
   };
 
-  const seekPanResponder = useRef(
-    PanResponder.create({
+  const seekPanResponder = useMemo(() => {
+    // eslint-disable-next-line react-hooks/refs
+    const panResponder = PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponderCapture: () => true,
       onPanResponderGrant: (e) => {
-        onSeekingChange(true); 
+        onSeekingChange(true);
         isSeeking.current = true;
         player.pause();
         if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -174,6 +173,7 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
         p = Math.max(0, Math.min(1, p));
         seekStartProgress.current = p;
         setProgress(p);
+        // eslint-disable-next-line react-hooks/immutability
         player.currentTime = p * (player.duration || 0);
       },
       onPanResponderMove: (e, gestureState) => {
@@ -183,7 +183,8 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
       },
       onPanResponderRelease: () => {
         isSeeking.current = false;
-        onSeekingChange(false); 
+        onSeekingChange(false);
+        // eslint-disable-next-line react-hooks/immutability
         player.currentTime = progress * (player.duration || 0);
         if (isPlaying) player.play();
         resetControlsTimer();
@@ -193,9 +194,11 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
         onSeekingChange(false);
         if (isPlaying) player.play();
         resetControlsTimer();
-      }
-    })
-  ).current;
+      },
+    });
+    return panResponder;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player]);
 
   return (
     <View style={styles.mediaContainer}>
@@ -298,17 +301,34 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
   );
 };
 
-const GalleryItem = React.memo(({ item, isActive, isZoomed, setIsZoomed, onClose, showToast, onSeekingChange }) => {
+const GalleryItem = React.memo(function GalleryItem({ item, isActive, isZoomed, setIsZoomed, onClose, showToast, onSeekingChange }) {
+  // 🔐 P0-2 / P0-3：数据库只存相对对象路径，渲染时按需换取签名 URL。
+  //    必须在本组件内部解析（组件是 React.memo），不能由父层批量解析，
+  //    否则会破坏 memo 并导致整个画廊重渲染。
+  //    历史数据若是完整签名 URL，Hook 内部会直接透传，保证不崩。
+  const { url: signedMediaUrl } = useSignedMediaUrl(item.mediaUrl);
+  const { url: signedThumbUrl } = useSignedMediaUrl(item.thumbnailUrl);
+
   return (
     <View style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
       {item.type === 'image' ? (
-        <CustomImagePlayer url={item.mediaUrl} isZoomed={isZoomed} setIsZoomed={setIsZoomed} showToast={showToast} onClose={onClose} />
+        signedMediaUrl ? (
+          <CustomImagePlayer url={signedMediaUrl} isZoomed={isZoomed} setIsZoomed={setIsZoomed} showToast={showToast} onClose={onClose} />
+        ) : (
+          <View style={styles.mediaContainer} />
+        )
       ) : (
         isActive ? (
-          <CustomVideoPlayer url={item.mediaUrl} isActive={isActive} showToast={showToast} onSeekingChange={onSeekingChange} />
+          signedMediaUrl ? (
+            <CustomVideoPlayer url={signedMediaUrl} isActive={isActive} showToast={showToast} onSeekingChange={onSeekingChange} />
+          ) : (
+            <View style={styles.mediaContainer} />
+          )
         ) : (
           <View style={styles.mediaContainer}>
-            <Image source={{ uri: item.thumbnailUrl || item.mediaUrl }} style={styles.fullScreenMedia} resizeMode="contain" />
+            {(signedThumbUrl || signedMediaUrl) && (
+              <Image source={{ uri: signedThumbUrl || signedMediaUrl }} style={styles.fullScreenMedia} resizeMode="contain" />
+            )}
             <View style={styles.purePlayIcon}>
               <Ionicons name="play" size={42} color="rgba(255,255,255,0.8)" style={{ marginLeft: 6 }} />
             </View>
@@ -317,7 +337,7 @@ const GalleryItem = React.memo(({ item, isActive, isZoomed, setIsZoomed, onClose
       )}
     </View>
   );
-}, (prev, next) => prev.isActive === next.isActive && prev.isZoomed === next.isZoomed); 
+}, (prev, next) => prev.isActive === next.isActive && prev.isZoomed === next.isZoomed);
 
 export default function InteractiveMediaViewer({ mediaList, initialIndex, onClose }) {
   useEffect(() => {
@@ -325,12 +345,12 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
     return () => StatusBar.setHidden(false, 'fade');
   }, []);
 
-  const pan = useRef(new Animated.ValueXY()).current;
-  const entryAnim = useRef(new Animated.Value(0)).current;
+  const [pan] = useState(() => new Animated.ValueXY());
+  const [entryAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     Animated.spring(entryAnim, { toValue: 1, friction: 9, tension: 80, useNativeDriver: true }).start();
-  }, []);
+  }, [entryAnim]);
 
   const bgOpacity = Animated.multiply(
     pan.y.interpolate({ inputRange: [-SCREEN_HEIGHT/2, 0, SCREEN_HEIGHT/2], outputRange: [0, 1, 0], extrapolate: 'clamp' }),
@@ -349,7 +369,7 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
   const handleSeekingChange = (seeking) => { setIsScrubbing(seeking); isScrubbingRef.current = seeking; };
   
   const [toastMsg, setToastMsg] = useState('');
-  const toastAnim = useRef(new Animated.Value(0)).current;
+  const [toastAnim] = useState(() => new Animated.Value(0));
 
   const smoothClose = (dy, dx, vy) => {
     Animated.parallel([
@@ -362,7 +382,8 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
     ]).start(() => onClose());
   };
 
-  const panResponder = useRef(
+  // eslint-disable-next-line react-hooks/refs
+  const [panResponder] = useState(() =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: () => false,
@@ -372,25 +393,27 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
         if (isZoomed) return false;
 
         const isVerticalDrag = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 1.5;
-        const triggerThreshold = Platform.OS === 'android' ? 35 : 15; 
+        const triggerThreshold = Platform.OS === 'android' ? 35 : 15;
 
         return isVerticalDrag && Math.abs(gestureState.dy) > triggerThreshold;
       },
       onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
       onPanResponderRelease: (evt, gestureState) => {
         if (Math.abs(gestureState.dy) > 100 || Math.abs(gestureState.vy) > 1.2) {
-          smoothClose(gestureState.dy, gestureState.dx, gestureState.vy); 
-        } else { 
-          Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: true }).start(); 
+          smoothClose(gestureState.dy, gestureState.dx, gestureState.vy);
+        } else {
+          Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: true }).start();
         }
-      }
+      },
     })
-  ).current;
+  );
 
-  const onViewableItemsChanged = useRef(({ viewableItems }) => {
-    if (viewableItems.length > 0) setCurrentIndex(viewableItems[0].index);
-  }).current;
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  const [onViewableItemsChanged] = useState(
+    () => ({ viewableItems }) => {
+      if (viewableItems.length > 0) setCurrentIndex(viewableItems[0].index);
+    }
+  );
+  const [viewabilityConfig] = useState(() => ({ itemVisiblePercentThreshold: 50 }));
 
   const showToast = (msg) => {
     setToastMsg(msg);

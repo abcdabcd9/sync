@@ -15,6 +15,7 @@ import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
 import { useMediaUpload } from '../hooks/chat/useMediaUpload';
 import { useAudioRecorder } from '../hooks/chat/useAudioRecorder';
+import { getSignedUrl, toStoragePath } from '../hooks/chat/useSignedMediaUrl';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -56,7 +57,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   }, [globalAudioPlayer]);
 
   useEffect(() => {
-    setIsTransitioning(true);
     const timer = setTimeout(() => setIsTransitioning(false), 300);
     return () => clearTimeout(timer);
   }, [targetId]);
@@ -146,17 +146,26 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     setActionMessage(null);
   };
 
-  const handleSaveToAlbum = async (url) => {
+  const handleSaveToAlbum = async (rawValue) => {
     try {
-      if (!url) return;
+      if (!rawValue) return;
       const { status } = await requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('无法保存', '请在系统设置中允许访问相册。');
         return;
       }
 
-      // 🔒 安全审计 #14：media_url 现在是私有桶的签名 URL（带 ?token=...），
-      //    Asset.create 只接受本地文件路径，必须先把远程签名 URL 下载到缓存再入库。
+      // 🔒 P0-2 / P0-3：数据库只存相对对象路径，保存前必须先换取签名 URL。
+      //    - 历史数据若已是完整签名 URL，toStoragePath 会提取路径后重新签名，
+      //      避免使用可能已过期的旧 token。
+      //    - Asset.create 只接受本地文件路径，必须先把远程签名 URL 下载到缓存再入库。
+      const storagePath = toStoragePath(rawValue);
+      const url = storagePath ? await getSignedUrl(storagePath) : null;
+      if (!url) {
+        Alert.alert('保存失败', '媒体地址无效或已失效，请稍后重试。');
+        return;
+      }
+
       let localUri = url;
       let tempFile = null;
       if (url.startsWith('http')) {

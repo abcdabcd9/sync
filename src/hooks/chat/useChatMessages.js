@@ -122,30 +122,46 @@ export function useChatMessages(targetId, user) {
     const channel = supabase.channel(channelName);
 
     // ✅ 所有 .on() 必须在 .subscribe() 之前链式完成
+    //
+    // 🔒 P0-1：Realtime 全表广播泄漏修复
+    //   旧实现未加 filter，所有在线客户端都会收到全表 INSERT/UPDATE 事件，
+    //   再靠 JS 里的 isRelevant 丢弃 —— 若 RLS 配置不严，payload 中完整的
+    //   new 行（含消息正文）会泄露给无关用户，且造成全量流量浪费。
+    //   现在由服务端按 receiver_id 过滤，只推送「发给我」的消息。
+    //   （自己发出的消息由 saveAndSend 乐观插入，不依赖 Realtime 回环。）
+    //   isRelevant 判断保留作为二次防御，filter 生效后恒为 true，无副作用。
     channel
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload) => {
-        const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
-          || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
-        if (!isRelevant) return;
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
+        async (payload) => {
+          const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
+            || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
+          if (!isRelevant) return;
 
-        const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
-        const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-        if (deletedIds.includes(payload.new.id)) return;
+          const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
+          const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
+          if (deletedIds.includes(payload.new.id)) return;
 
-        const newMsg = formatDbMsg(payload.new, user.id);
-        setMessages(prev => {
-          if (prev.find(m => m.id === newMsg.id)) return prev;
-          if (!newMsg.isMe) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          return [newMsg, ...prev];
-        });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
-        const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
-          || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
-        if (!isRelevant) return;
-        const updatedMsg = formatDbMsg(payload.new, user.id);
-        setMessages(prev => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
-      })
+          const newMsg = formatDbMsg(payload.new, user.id);
+          setMessages(prev => {
+            if (prev.find(m => m.id === newMsg.id)) return prev;
+            if (!newMsg.isMe) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            return [newMsg, ...prev];
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
+        (payload) => {
+          const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
+            || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
+          if (!isRelevant) return;
+          const updatedMsg = formatDbMsg(payload.new, user.id);
+          setMessages(prev => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
+        }
+      )
       .subscribe();
 
     return () => {

@@ -32,6 +32,11 @@ const STORAGE_BUCKET = 'chat_media';
 /**
  * 🔒 安全审计 #14：私密媒体签名有效期（7 天）
  * chat_media 桶已私有化，任何公开 URL 都无法访问，必须使用带 token 的签名 URL。
+ *
+ * 📌 P0-2 / P0-3：签名 URL 只用于「即时渲染」，绝不写入数据库。
+ *    数据库 messages.media_url / thumbnail_url 只存相对对象路径
+ *    （形如 `${user.id}/img_1699999999_123.jpg`），渲染时由
+ *    useSignedMediaUrl 按需换取临时签名 URL，因此历史照片永不失效。
  */
 export const SIGNED_URL_TTL = 60 * 60 * 24 * 7;
 
@@ -63,17 +68,27 @@ export async function createSignedMediaUrl(fileName, expiresIn = SIGNED_URL_TTL)
 }
 
 /**
- * 上传本地文件到 Supabase Storage，返回「7 天有效期的签名 URL」（失败返回 null）
+ * 上传本地文件到 Supabase Storage。
  *
- * 🔒 安全审计 #14：chat_media 桶已设为私有，getPublicUrl 生成的链接将永久 403。
- *    因此上传成功后必须调用 createSignedUrl 换取带 token 的临时链接，
- *    该链接会写入 messages.media_url / thumbnail_url，并在聊天室中直接渲染。
+ * 🔒 安全审计 #14 + P0-2 / P0-3：
+ *   - chat_media 桶已私有，getPublicUrl 生成的链接将永久 403。
+ *   - 对象路径统一为 `${userId}/${prefix}_${ts}_${rand}.${ext}`，
+ *     首段必须是上传者 user_id，供 RLS 用 storage.foldername(name)[1] 精确校验。
+ *   - 返回 { path, signedUrl }：
+ *       path      → 写入 messages.media_url / thumbnail_url（永久有效）
+ *       signedUrl → 仅供「本次会话即时渲染」使用，绝不入库
  *
  * @param {string} uri 本地文件 URI
  * @param {'img'|'vid'|'thumb'|'audio'} prefix 文件名前缀
+ * @param {string} userId 上传者 ID（作为对象路径首段）
+ * @returns {Promise<{path: string, signedUrl: string|null}|null>} 失败返回 null
  */
-export async function uploadToSupabase(uri, prefix) {
+export async function uploadToSupabase(uri, prefix, userId) {
   if (!uri) return null;
+  if (!userId) {
+    console.warn('媒体上传失败: 缺少 userId，无法生成带用户命名空间的对象路径');
+    return null;
+  }
   try {
     let safeUri = uri;
     if (Platform.OS === 'ios' && !safeUri.startsWith('file://')) {
@@ -90,16 +105,16 @@ export async function uploadToSupabase(uri, prefix) {
       else ext = 'jpg';
     }
 
-    const fileName = `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+    // 🔒 P0-3：对象路径首段 = user_id，供 RLS 精确匹配
+    const fileName = `${userId}/${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
     const { error } = await supabase.storage
       .from(STORAGE_BUCKET)
       .upload(fileName, blob, { contentType: blob.type || 'application/octet-stream' });
     if (error) throw error;
 
-    // 🔒 安全审计 #14：私有桶 → 必须换取签名 URL（7 天有效）
+    // 签名 URL 仅用于即时渲染，失败不阻断上传（path 已可用，渲染层会重试签名）
     const signedUrl = await createSignedMediaUrl(fileName, SIGNED_URL_TTL);
-    if (!signedUrl) throw new Error('createSignedUrl failed');
-    return signedUrl;
+    return { path: fileName, signedUrl };
   } catch (e) {
     console.warn('媒体上传失败:', e);
     return null;
@@ -189,28 +204,29 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
 
       // ④ 上传主媒体（0% → 60%）
       setUploadProgress(0.3);
-      const cloudMediaUrl = await uploadToSupabase(asset.uri, prefix);
+      const mediaResult = await uploadToSupabase(asset.uri, prefix, user.id);
       setUploadProgress(0.6);
 
       // ⑤ 上传缩略图（60% → 90%）
-      let cloudThumbUrl = null;
+      let thumbResult = null;
       if (localThumbUri) {
-        cloudThumbUrl = await uploadToSupabase(localThumbUri, 'thumb');
+        thumbResult = await uploadToSupabase(localThumbUri, 'thumb', user.id);
       }
       setUploadProgress(0.9);
 
       // ⑥ 落库
-      // 🔒 安全审计 #14：media_url / thumbnail_url 存的都是 7 天签名 URL，
-      //    桶私有化后公开链接已不可访问，签名链接是唯一可渲染的地址。
-      if (!cloudMediaUrl) throw new Error('media upload failed');
+      // 🔒 P0-2 / P0-3：media_url / thumbnail_url 只存「相对对象路径」，
+      //    绝不存 7 天签名 URL。渲染时由 useSignedMediaUrl 按需签名，
+      //    因此历史照片永不失效。
+      if (!mediaResult?.path) throw new Error('media upload failed');
 
       await supabase.from('messages').insert({
         id: msgId,
         user_id: user.id,
         receiver_id: targetId,
         type: msgType,
-        media_url: cloudMediaUrl,
-        thumbnail_url: cloudThumbUrl,
+        media_url: mediaResult.path,
+        thumbnail_url: thumbResult?.path ?? null,
       });
 
       // ⑦ 推送通知

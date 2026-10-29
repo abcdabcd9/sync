@@ -189,16 +189,17 @@ export function useAudioRecorder({ targetId, user, saveAndSend }) {
         });
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        // 🔒 安全审计 #14：uploadToSupabase 内部已改为 createSignedUrl（7 天有效），
-        //    因此 cloudUrl 是带 token 的私有签名链接，可直接写入 media_url 并用于播放。
-        const cloudUrl = await uploadToSupabase(tempUri, 'audio');
-        if (cloudUrl) {
+        // 🔒 P0-2 / P0-3：uploadToSupabase 返回 { path, signedUrl }。
+        //    数据库只存相对对象路径（永久有效），签名 URL 仅供即时播放，
+        //    渲染时由 useSignedMediaUrl 按需重新签名，因此历史语音永不失效。
+        const audioResult = await uploadToSupabase(tempUri, 'audio', user.id);
+        if (audioResult?.path) {
           await supabase.from('messages').insert({
             id: msgId,
             user_id: user.id,
             receiver_id: targetId,
             type: 'audio',
-            media_url: cloudUrl,
+            media_url: audioResult.path,
             duration: durationSec,
           });
           // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
