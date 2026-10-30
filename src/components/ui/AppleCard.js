@@ -6,6 +6,8 @@ import { haptic } from '../../constants/haptics';
 
 // 苹果风卡片：圆角 + 液态玻璃背景 + 按压缩放 + 触感
 // 色值全部来自 useAppTheme().colors，禁止硬编码
+// 动画走 RN 内置 Animated + useNativeDriver，跑在原生线程，
+// 不依赖 Reanimated 原生模块（本项目原生工程未包含该模块）
 export default function AppleCard({
   children,
   onPress,
@@ -16,7 +18,6 @@ export default function AppleCard({
   accessibilityLabel,
 }) {
   const { colors } = useAppTheme();
-  // useState 惰性初始化：实例只创建一次，且不是 ref，渲染期可安全读取
   const [scale] = useState(() => new Animated.Value(1));
 
   const animateTo = (to) => {

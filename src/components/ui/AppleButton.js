@@ -5,6 +5,7 @@ import { DURATION, SCALE } from '../../constants/motion';
 import { haptic } from '../../constants/haptics';
 
 // 苹果风按钮：主色填充 / 描边 / 文字三种变体
+// 动画走 RN 内置 Animated + useNativeDriver，不依赖 Reanimated
 export default function AppleButton({
   title,
   onPress,
@@ -15,15 +16,15 @@ export default function AppleButton({
   textStyle,
 }) {
   const { colors } = useAppTheme();
-  // useState 惰性初始化：实例只创建一次，且不是 ref，渲染期可安全读取
   const [scale] = useState(() => new Animated.Value(1));
 
-  const animateTo = (to) =>
+  const animateTo = (to) => {
     Animated.timing(scale, {
       toValue: to,
       duration: DURATION.instant,
       useNativeDriver: true,
     }).start();
+  };
 
   const handlePress = () => {
     haptic.medium();

@@ -1,21 +1,22 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableHighlight, Animated } from 'react-native';
+import { Animated, View, Text, StyleSheet, TouchableHighlight } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppTheme } from '../context/ThemeContext';
 import { DURATION, SCALE } from '../constants/motion';
 import { haptic } from '../constants/haptics';
 
+// 动画走 RN 内置 Animated + useNativeDriver，不依赖 Reanimated
 export default function MealListItem({ meal, checked, onPress }) {
   const { isDark, colors: palette } = useAppTheme();
-  // useState 惰性初始化：实例只创建一次，且不是 ref，渲染期可安全读取
   const [scale] = useState(() => new Animated.Value(1));
 
-  const animateTo = (to) =>
+  const animateTo = (to) => {
     Animated.timing(scale, {
       toValue: to,
       duration: DURATION.instant,
       useNativeDriver: true,
     }).start();
+  };
 
   const handlePress = () => {
     if (checked) haptic.success();
