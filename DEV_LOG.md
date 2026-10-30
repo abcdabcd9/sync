@@ -208,6 +208,49 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 4：弹窗去图标 + 宽度自适应 + 长按跟随手指 + 缩短触发）
+
+用户实测反馈四点，均已处理。
+
+**1. 两个弹窗都去掉图标**
+
+「+」菜单（联系人 / 添加好友）和长按会话菜单（标为已读 / 置顶 / 不显示 / 删除）全部移除 `Ionicons`，只保留纯文字。行布局从 `flexDirection: 'row' + gap: 10` 改为 `alignItems: 'center' + justifyContent: 'center'`，文字居中。
+
+**2. 宽度自适应文字，不留白**
+
+- 「+」菜单：删除固定 `width: 180`，改为由内容撑开（`paddingHorizontal: 20`）。最长文案「添加好友」4 字 → 实际宽度约 104px，不再有 76px 空白。
+- 长按菜单：删除固定 `width: 180`，改为由内容撑开。最长文案「不显示该聊天」6 字 → 实际宽度约 136px。
+
+**3. 长按弹窗位置跟随手指，出现在手指下方**
+
+`handleLongPress(item, evt)` 恢复接收事件对象，从 `evt.nativeEvent` 取 `pageX / pageY`：
+
+```js
+const MENU_W = 148;   // 按最长文案估算
+const MENU_H = 4 * 46 + 3 * hairline;  // 4 行 + 3 条分隔线
+const GAP = 8;        // 手指与弹窗间距
+
+let left = pageX;                                  // 水平对齐触点
+if (left + MENU_W > SCREEN_W - 8) left = SCREEN_W - MENU_W - 8;  // 右侧越界左翻
+if (left < 8) left = 8;
+
+let top = pageY + GAP;                             // 默认在手指下方
+if (top + MENU_H > SCREEN_H - 8) top = pageY - MENU_H - GAP;     // 下方不足则上翻
+if (top < 8) top = 8;
+```
+
+`menuConfig` 恢复为 `{ visible, top, left, chat }`。新增 `contextMenu` 样式（`position: 'absolute'`，圆角 14、hairline 边框、阴影与「+」一致），与 `plusMenu` 视觉同源但定位方式不同（一个贴右上角、一个跟手指）。
+
+**4. 长按触发时间缩短 50%**
+
+[`ConversationRow.js`](src/components/chat/ConversationRow.js:31) 的 `TouchableOpacity` 加 `delayLongPress={250}`（RN 默认 500ms → 250ms）。
+
+**震动反馈**：`handleLongPress` 首行已有 `haptic.heavy()`（iOS `ImpactFeedbackStyle.Heavy`），长按瞬间即触发，无需新增。
+
+**验收**：`npx tsc --noEmit` → 0；`npx eslint "src/app/(tabs)/chat.js" src/components/chat/ConversationRow.js` → 0；`npx expo lint` → 139（119e/20w），持平。
+
+---
+
 ## 2026-10-30（阶段 4 修复 3：长按菜单改「+」同款 + 移除边缘返回手势）
 
 用户实测反馈两点，均已处理。

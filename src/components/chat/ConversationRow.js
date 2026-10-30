@@ -29,6 +29,8 @@ export default function ConversationRow({
       style={[styles.row, isSelected && { backgroundColor: isDark ? '#1C1C1E' : '#F2F2F7' }]}
       onPress={onPress}
       onLongPress={onLongPress}
+      // 长按触发时间缩短 50%（RN 默认 500ms → 250ms）
+      delayLongPress={250}
       activeOpacity={0.6}
       accessibilityRole="button"
       accessibilityLabel={`${displayName}${unreadNum > 0 ? `，${unreadNum} 条未读` : ''}`}

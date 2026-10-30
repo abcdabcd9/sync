@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   ActivityIndicator,
   ScrollView,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,9 +41,9 @@ export default function ChatMainScreen() {
     useChatList(user);
 
   const [selectedChat, setSelectedChat] = useState(null);
-  // 会话长按菜单：与右上角「+」同款小弹窗（贴右上角、圆角卡片、图标+文字行）
-  // 只保留 visible + chat，不再需要按触点计算 top（统一锚定右上角）
-  const [menuConfig, setMenuConfig] = useState({ visible: false, chat: null });
+  // 会话长按菜单：与右上角「+」同款视觉（圆角卡片 + 纯文字行，无图标）
+  // top 由触点 pageY 计算，弹窗出现在手指下方；left 由触点 pageX 计算，自动贴边
+  const [menuConfig, setMenuConfig] = useState({ visible: false, top: 0, left: 0, chat: null });
   // 右上角「+」的小弹窗（联系人 / 添加好友）
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
@@ -75,13 +76,30 @@ export default function ChatMainScreen() {
     }
   };
 
-  // 长按会话：打开与「+」同款的小弹窗（不再按触点定位）
-  const handleLongPress = (item) => {
+  // 长按会话：弹窗出现在手指下方（跟随触点），并自动贴边不超出屏幕
+  const handleLongPress = (item, evt) => {
     haptic.heavy();
-    setMenuConfig({ visible: true, chat: item });
+    const { pageX, pageY } = evt.nativeEvent;
+    const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+    // 菜单宽度按最长文案「不显示该聊天」自适应（6 字 × 16px + 左右内边距 32 + 边框）
+    const MENU_W = 148;
+    const MENU_H = 4 * 46 + 3 * StyleSheet.hairlineWidth; // 4 行 × 行高 + 3 条分隔线
+    const GAP = 8; // 手指与弹窗的间距
+
+    // 水平：默认左边缘对齐触点，右侧越界则向左翻转
+    let left = pageX;
+    if (left + MENU_W > SCREEN_W - 8) left = SCREEN_W - MENU_W - 8;
+    if (left < 8) left = 8;
+
+    // 垂直：默认出现在手指下方；下方空间不足则上移到手指上方
+    let top = pageY + GAP;
+    if (top + MENU_H > SCREEN_H - 8) top = pageY - MENU_H - GAP;
+    if (top < 8) top = 8;
+
+    setMenuConfig({ visible: true, top, left, chat: item });
   };
 
-  const closeActionMenu = () => setMenuConfig({ visible: false, chat: null });
+  const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, left: 0, chat: null });
 
   if (!isAuthLoading && !user) {
     return (
@@ -120,7 +138,7 @@ export default function ChatMainScreen() {
               isMuted={!!friendsMap[item.id]?.is_muted}
               isSelected={isTablet && selectedChat?.id === item.id}
               onPress={() => openChatRoom(item)}
-              onLongPress={() => handleLongPress(item)}
+              onLongPress={(e) => handleLongPress(item, e)}
             />
           );
         })
@@ -195,8 +213,8 @@ export default function ChatMainScreen() {
         MasterColumn
       )}
 
-      {/* 会话长按菜单：与右上角「+」完全同款的小弹窗（贴右上角 / 圆角卡片 / 图标+文字行）
-          功能项仍为占位，与原实现保持一致 */}
+      {/* 会话长按菜单：与「+」同款视觉（圆角卡片 + 纯文字行，无图标）
+          位置跟随手指（出现在手指下方，越界自动翻转）；功能项仍为占位 */}
       <Modal
         visible={menuConfig.visible}
         transparent
@@ -206,12 +224,17 @@ export default function ChatMainScreen() {
         <Pressable style={styles.plusOverlay} onPress={closeActionMenu}>
           <View
             style={[
-              styles.plusMenu,
-              { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: palette.cardBorder },
+              styles.contextMenu,
+              {
+                backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+                borderColor: palette.cardBorder,
+                top: menuConfig.top,
+                left: menuConfig.left,
+              },
             ]}
           >
             <TouchableOpacity
-              style={styles.plusMenuItem}
+              style={styles.contextMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('已读开发中');
@@ -220,14 +243,13 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="标为已读"
             >
-              <Ionicons name="checkmark-done-outline" size={20} color={palette.primary} />
-              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>标为已读</Text>
+              <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>标为已读</Text>
             </TouchableOpacity>
 
             <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
 
             <TouchableOpacity
-              style={styles.plusMenuItem}
+              style={styles.contextMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('置顶开发中');
@@ -236,14 +258,13 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="置顶该聊天"
             >
-              <Ionicons name="arrow-up-circle-outline" size={20} color={palette.primary} />
-              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>置顶该聊天</Text>
+              <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>置顶该聊天</Text>
             </TouchableOpacity>
 
             <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
 
             <TouchableOpacity
-              style={styles.plusMenuItem}
+              style={styles.contextMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('隐藏开发中');
@@ -252,14 +273,13 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="不显示该聊天"
             >
-              <Ionicons name="eye-off-outline" size={20} color={palette.primary} />
-              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>不显示该聊天</Text>
+              <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>不显示该聊天</Text>
             </TouchableOpacity>
 
             <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
 
             <TouchableOpacity
-              style={styles.plusMenuItem}
+              style={styles.contextMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('删除开发中');
@@ -268,8 +288,7 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="删除该聊天"
             >
-              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-              <Text style={[styles.plusMenuText, { color: '#FF3B30' }]}>删除该聊天</Text>
+              <Text style={[styles.contextMenuText, styles.contextMenuTextDanger]}>删除该聊天</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -300,7 +319,6 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="联系人"
             >
-              <Ionicons name="people-outline" size={20} color={palette.primary} />
               <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>联系人</Text>
             </TouchableOpacity>
 
@@ -317,7 +335,6 @@ export default function ChatMainScreen() {
               accessibilityRole="button"
               accessibilityLabel="添加好友"
             >
-              <Ionicons name="person-add-outline" size={20} color={palette.primary} />
               <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>添加好友</Text>
             </TouchableOpacity>
           </View>
@@ -348,13 +365,12 @@ const styles = StyleSheet.create({
   centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
   emptyText: { marginTop: 16 },
   tabletHint: { marginTop: 16, fontSize: 18 },
-  // 右上角小弹窗（「+」菜单 与 会话长按菜单 共用同一套样式）
+  // 右上角「+」小弹窗：贴右上角，宽度按最长文案「添加好友」自适应（不留白）
   plusOverlay: { flex: 1, backgroundColor: 'transparent' },
   plusMenu: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 96 : 72,
     right: 16,
-    width: 180,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
@@ -364,8 +380,23 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 10,
   },
-  plusMenuItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 16 },
+  plusMenuItem: { paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
   plusMenuText: { fontSize: 16, fontWeight: '500' },
   plusMenuLine: { height: StyleSheet.hairlineWidth },
+  // 会话长按菜单：与「+」同款视觉，位置由触点计算（跟随手指）
+  contextMenu: {
+    position: 'absolute',
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  contextMenuItem: { paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
+  contextMenuText: { fontSize: 16, fontWeight: '500', textAlign: 'center' },
+  contextMenuTextDanger: { color: '#FF3B30' },
 });
 // --- END OF FILE src/app/(tabs)/chat.js ---
