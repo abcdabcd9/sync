@@ -208,6 +208,115 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（设置页入口统一为 L3 页面）
+
+上一轮补完 5 个占位项后，设置页还剩 4 个「弹窗型」入口：个人信息与权限、账号安全、健康与打卡偏好、通知、外观模式。它们分别走 `legalModal` Modal、`showHealthModal` Modal、`Alert.alert` 单选，跟其他页面的 `router.push` 不一致。这次全部改成独立 L3 页面。
+
+**做了啥**：
+
+1. **新建 `settings/privacy-policy.js`** —— 隐私政策与数据使用说明。`PRIVACY_SECTIONS`（5 条）从 `settings.js` 原样搬过来，改成 `SettingsPage` + 卡片列表，绿色圆点 `#34C759`。
+
+2. **新建 `settings/security.js`** —— 账号安全。`SECURITY_SECTIONS`（4 条 + `...DEVICE_DATA_PROTECTION_NOTES`）原样搬过来，紫色圆点 `#5E5CE6`。
+
+3. **新建 `settings/health.js`** —— 健康与打卡偏好。整个 `showHealthModal` 的内容搬过来：饮水目标 stepper（±100，500–5000 夹紧）、首页寄语（`MOTTO_MAX = 50` 硬校验 + 实时计数）、自定义食谱三餐编辑、重置今日打卡数据。饮食编辑弹窗从 `Modal` 改成页内绝对定位浮层（`position: absolute` 铺满），避免嵌套 Modal。重置今日打卡加了二次确认 Alert（原来点了直接重置）。
+
+4. **新建 `settings/appearance.js`** —— 外观模式。原来是 `Alert.alert` 三选一，现在是独立页面：3 行单选，选中行右侧打 `checkmark`，图标 `phone-portrait-outline` / `sunny-outline` / `moon-outline`。
+
+5. **新建 `settings/notifications.js`** —— 通知。分两块：
+   - **系统权限**：`Notifications.getPermissionsAsync()` 读真实状态（`granted` / `denied` / `undetermined`），未授权时点击调 `requestPermissionsAsync()`，已授权时点击跳 `Linking.openSettings()`。
+   - **消息提醒**：3 个开关（新消息通知 / 健康搭子打卡提醒 / 声音与振动），走 `useAppSettings`。
+
+6. **`useAppSettings.js` 加 3 个字段**：`notifyMessage` / `notifyPartner` / `notifySound`，默认全 `true`。
+
+7. **`settings.js` 大瘦身**：
+   - 4 个入口改 `router.push('/settings/xxx')`
+   - 删掉 `legalModal` Modal（约 48 行）、`showHealthModal` Modal（约 62 行）、饮食编辑 Modal（约 15 行）
+   - 删掉 `PRIVACY_SECTIONS` / `SECURITY_SECTIONS` / `handlePickTheme` / `handleSaveMotto` / `handleAdjustWater` / `openMealEditor` / `saveMealEditor`
+   - 删掉状态 `localMotto` / `showHealthModal` / `editingMeal` / `tempMealText` / `legalModal`
+   - 删掉 `useHealthData()` 整个调用（`maxWater` / `motto` / `mealGuides` / `resetToday` 等 7 个字段）
+   - 删掉 import：`useState` / `useEffect` / `TextInput` / `KeyboardAvoidingView` / `Platform` / `Modal` / `DEVICE_DATA_PROTECTION_NOTES` / `useHealthData`
+   - 删掉样式：`legalIntro` / `legalCard` / `legalCardHeader` / `legalDot` / `legalCardTitle` / `legalCardBody` / `legalFooter` / `customRow` / `customRowLabel` / `rowSeparator` / `stepper` / `stepBtn` / `stepValue` / `inputRow` / `input` / `modalOverlay` / `editorCard` / `editorHeader` / `editorInput`
+   - `THEME_OPTIONS` 保留但精简成 `{ key, label }`（只用于「外观模式」行右侧的值展示）
+
+**踩的坑**：
+
+1. **嵌套 Modal 会崩**。`health.js` 里原本想保留 `Modal` 做饮食编辑，但 `SettingsPage` 本身在路由栈里，再套 `Modal` 在 iOS 上 `presentationStyle="pageSheet"` 会跟路由动画打架。改成页内 `position: absolute` 浮层，视觉一样但无原生 Modal 层级问题。
+
+2. **`settings.js` 删完 `useHealthData()` 后 `themeMode` 还在用**。`currentThemeLabel` 依赖 `themeMode`，所以 `useAppTheme()` 的解构只去掉 `setThemeMode`，保留 `themeMode`。
+
+3. **`notifications.js` 的 `set-state-in-effect`**。`refreshPermission()` 内部 `setPermission` 是异步回调里调用的（`await getPermissionsAsync()` 之后），不是同步 setState，规则不报。但为了保险，effect 里还是包了 `let cancelled` + 异步 IIFE。
+
+**数字**：
+
+- 新增 5 个文件：`settings/privacy-policy.js`、`settings/security.js`、`settings/health.js`、`settings/appearance.js`、`settings/notifications.js`
+- 修改 2 个文件：`src/app/settings.js`（394 行 → 145 行，**-249 行**）、`src/hooks/useAppSettings.js`（+3 字段）
+- `tsc --noEmit` → 0 错误
+- `eslint src/app/settings.js src/app/settings src/components/settings src/hooks/useAppSettings.js` → 0 problems
+- `expo lint` → **163 problems（140 errors / 23 warnings）**，比基线 164 **少 1 个 error**
+
+**为什么少 1 个 error**：`settings.js` 原来有一行 `useEffect(() => { setLocalMotto(motto); }, [motto])`，触发 `react-hooks/set-state-in-effect`。这次把 `localMotto` 状态整个搬到 `health.js` 并用 `useState(motto)` 初始化（不再需要同步 effect），那条 error 自然消失。**这是净改善，不是回归。**
+
+**现在设置页的入口全貌**（全部 `router.push`，无 Modal、无 Alert 单选）：
+
+| 分组 | 入口 | 路由 |
+|---|---|---|
+| 账号与安全 | 个人资料 | `/account_info` |
+| | 个人信息与权限 | `/settings/privacy-policy` |
+| | 账号安全 | `/settings/security` |
+| 通用 | 通知 | `/settings/notifications` |
+| | 外观模式 | `/settings/appearance` |
+| | 朋友权限 | `/settings/privacy` |
+| | 存储空间 | `/settings/storage` |
+| | 更多 | `/settings/more` |
+| 功能 | 聊天设置 | `/settings/chat` |
+| | 健康与打卡偏好 | `/settings/health` |
+| | 自动下载设置 | `/settings/download` |
+| 底部 | 切换账号 | 仍是 `handleNotImplemented` |
+| | 退出登录 | `handleSignOut` |
+
+**下次接着干**：`切换账号` 是设置页最后一个占位项，需要先定「多账号」的产品形态（本地多 profile？还是纯登出再登录？）再动手。
+
+---
+
+## 2026-10-30（账号操作下沉到设置页 + 跳转动画统一）
+
+用户反馈两件事：①「我的」页一级界面点「通用设置」的跳转动画，跟二级界面点「通知」「外观模式」不一样；②「退出登录」「注销账号」应该从「我的」页挪到「通用设置」最下方。
+
+**做了啥**：
+
+1. **`profile.js` 瘦身** —— 删掉「退出登录 / 注销账号」整个分组，连带删掉 `handleSignOut` / `performAccountDeletion` / `handleDeleteAccount` 三个方法、`Alert` / `AsyncStorage` 两个 import、`useAuth()` 里的 `signOut` 解构。文件从 186 行降到约 100 行。
+
+2. **`profile.js` 的「通用设置」入口统一跳转方式** —— 新增 `handleOpenSettings()`：`Haptics.impactAsync(Light)` + `router.push('/settings')`，跟 `SettingRow` 的轻触感一致（原来只有 `router.push`，无触感）。
+
+3. **`settings.js` 接管注销逻辑** —— 底部操作栏变成三行：`切换账号`（占位）/ `注销账号` / `退出登录`。`performAccountDeletion` 与 `handleDeleteAccount` 原样搬过来（保留安全审计 #9 的二次确认、#12 的不透传 error.message、注销后 `AsyncStorage.clear()` + `signOut()` + `router.replace('/auth')`）。新增 `isDeleting` 状态做防重入（`handleDeleteAccount` 开头 `if (isDeleting) return;`）。
+
+4. **`_layout.js` 修跳转动画不一致** —— 根因：`<Stack.Screen name="settings" options={{ animation: Platform.OS === 'ios' ? 'slide_from_right' : 'fade' }} />` 给 `settings` 单独指定了动画，而 `settings/notifications` 等子路由没有对应 `Stack.Screen` 声明，走的是 Stack 默认动画。Android 上一个是 `fade`、一个是默认 `slide_from_right`，观感明显不同。**修法：把 `settings` 的 `options` 整个去掉**，让它和子路由一样走 Stack 默认动画。顺带删掉因此不再使用的 `Platform` import。
+
+**踩的坑**：
+
+1. **`apply_diff` 行号漂移**。`settings.js` 加了约 70 行注销逻辑后，底部操作栏从 117 行漂到 184 行，第一次按旧行号改直接 33% 匹配失败。**教训：同一文件连续多次 `apply_diff` 时，第二次起必须先 `read_file` 确认新行号。**
+
+2. **`Platform` 变成死导入**。去掉 `settings` 的 `options` 后 `Platform.OS` 不再被引用，`no-unused-vars` 立刻报 warning。删掉即可。
+
+**数字**：
+
+- 修改 3 个文件：`src/app/(tabs)/profile.js`（186 → 约 100 行）、`src/app/settings.js`（145 → 214 行）、`src/app/_layout.js`（-1 行 import，`settings` 的 options 清空）
+- `tsc --noEmit` → 0 错误
+- `eslint src/app/_layout.js src/app/settings.js "src/app/(tabs)/profile.js"` → 0 problems
+- `expo lint` → **163 problems（140 errors / 23 warnings）**，与上一轮持平，无回归
+
+**现在「我的」页只剩**：头像卡（点击进 `/account_info` 或 `/auth`）+「通用设置」一行 + 版本号页脚。
+
+**现在设置页底部操作栏**：
+
+| 顺序 | 入口 | 行为 |
+|---|---|---|
+| 1 | 切换账号 | `handleNotImplemented`（占位） |
+| 2 | 注销账号 | 二次确认 → `delete_my_account` RPC → 清缓存 → `signOut` → `/auth` |
+| 3 | 退出登录 | 一次确认 → `signOut` → `/auth` |
+
+---
+
 ## 2026-10-30（设置页占位项补全）
 
 设置页里 7 个「功能开发中」占位项，这次补 5 个（通知、切换账号先不动）。

@@ -22,6 +22,11 @@ const STORAGE_KEY = '@app_settings';
 
 // 全部默认值集中在此，新增设置项只需在这里加一行
 export const DEFAULT_SETTINGS = {
+  // —— 通知 ——
+  notifyMessage: true,
+  notifyPartner: true,
+  notifySound: true,
+
   // —— 朋友权限 ——
   momentsVisibility: 'friends', // 'all' | 'friends' | 'self'
   allowFriendRequest: true,

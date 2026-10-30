@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/_layout.js ---
 import React, { useEffect } from 'react';
-import { View, Platform } from 'react-native';
+import { View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { HealthProvider, useHealthData } from '../hooks/useHealthData';
 import { CinemaProvider } from '../hooks/useCinema';
@@ -47,7 +47,8 @@ function RootNavigation() {
       <Stack screenOptions={{ headerShown: false, gestureEnabled: true, gestureDirection: 'horizontal', contentStyle: { backgroundColor: 'transparent' } }}>
         <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
         <Stack.Screen name="auth" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="settings" options={{ animation: Platform.OS === 'ios' ? 'slide_from_right' : 'fade' }} />
+        {/* settings 及其子路由（settings/notifications 等）统一走 Stack 默认动画，保证一级/二级跳转观感一致 */}
+        <Stack.Screen name="settings" />
         <Stack.Screen name="browser" options={{ animation: 'slide_from_bottom' }} />
         <Stack.Screen name="cinema" options={{ animation: 'slide_from_bottom' }} />
       </Stack>
