@@ -119,7 +119,12 @@ export default function FloatingPlayer() {
         panX.setValue(gestureState.dx + offset);
       },
       onPanResponderRelease: (evt, gestureState) => {
-        const currentX = panX._value;
+        // 🚨 P2-20：禁止读取 Animated.Value 私有属性 `panX._value`（RN 升级即崩）。
+        //   手势结束时的位移 = 起始停靠偏移 + 本次手势 dx，直接用 gestureState 计算。
+        let offset = 0;
+        if (dockSideRef.current === 'left') offset = -DOCK_OFFSET;
+        if (dockSideRef.current === 'right') offset = DOCK_OFFSET;
+        const currentX = offset + gestureState.dx;
         if (currentX < -60) snapToDock('left');
         else if (currentX > 60) snapToDock('right');
         else snapToCenter();

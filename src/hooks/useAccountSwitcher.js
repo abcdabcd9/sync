@@ -48,6 +48,9 @@ function normalize(list) {
       avatarColor: typeof item.avatarColor === 'string' ? item.avatarColor : pickAvatarColor(item.id),
       lastUsedAt: typeof item.lastUsedAt === 'number' ? item.lastUsedAt : 0,
     }))
+    // 当账号数量超过 MAX_ACCOUNTS 时，根据 lastUsedAt 时间戳进行 LRU（最近最少使用）淘汰策略，优先移除最久未登录的账号存档。
+    // 实现方式：先按 lastUsedAt 降序排序（最近使用的在前），再 slice 截断到 MAX_ACCOUNTS，
+    // 被截断的尾部即「最久未登录」的账号，其本机档案会被丢弃（云端账号本身不受影响）。
     .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
     .slice(0, MAX_ACCOUNTS);
 }

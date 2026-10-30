@@ -86,6 +86,14 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
   const trackWidthRef = useRef(1);
   const isSeeking = useRef(false);
   const seekStartProgress = useRef(0);
+  // 🚨 P3-27 修复（拖动进度条闭包陷阱）：
+  //   seekPanResponder 由 useMemo 创建且依赖仅 [player]，回调闭包捕获的是创建时的
+  //   progress / isPlaying 值（恒为初始值 0 / 初始播放态），松手时会把播放器 seek 回 0。
+  //   这里用 ref 镜像最新值，回调内只读 ref，彻底消除过时闭包。
+  const progressRef = useRef(0);
+  const isPlayingRef = useRef(isPlaying);
+  useEffect(() => { progressRef.current = progress; }, [progress]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
   const player = useVideoPlayer(url, (p) => { 
     p.loop = true; 
@@ -172,6 +180,7 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
         let p = touchX / trackWidthRef.current;
         p = Math.max(0, Math.min(1, p));
         seekStartProgress.current = p;
+        progressRef.current = p;
         setProgress(p);
         // eslint-disable-next-line react-hooks/immutability
         player.currentTime = p * (player.duration || 0);
@@ -179,20 +188,24 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
       onPanResponderMove: (e, gestureState) => {
         let p = seekStartProgress.current + (gestureState.dx / trackWidthRef.current);
         p = Math.max(0, Math.min(1, p));
+        progressRef.current = p;
         setProgress(p);
       },
       onPanResponderRelease: () => {
         isSeeking.current = false;
         onSeekingChange(false);
+        // 🚨 P3-27：不读取闭包中的 progress，改用始终最新的 progressRef.current
+        //    （onPanResponderMove 已把最终比例写入 ref），避免松手时 seek 回旧值。
+        const finalProgress = Math.max(0, Math.min(1, progressRef.current));
         // eslint-disable-next-line react-hooks/immutability
-        player.currentTime = progress * (player.duration || 0);
-        if (isPlaying) player.play();
+        player.currentTime = finalProgress * (player.duration || 0);
+        if (isPlayingRef.current) player.play();
         resetControlsTimer();
       },
       onPanResponderTerminate: () => {
         isSeeking.current = false;
         onSeekingChange(false);
-        if (isPlaying) player.play();
+        if (isPlayingRef.current) player.play();
         resetControlsTimer();
       },
     });

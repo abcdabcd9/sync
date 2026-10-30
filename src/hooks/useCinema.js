@@ -204,7 +204,46 @@ export function CinemaProvider({ children }) {
     if(player) { player.pause(); player.replaceAsync(null); }
     setCurrentUrl(null); setIsMinimized(false); setIsPlaying(false);
     if (cinemaRoomId) {
-      try { await supabase.from('messages').update({ subtype: 'SYNC_CINEMA_ENDED' }).eq('type', 'cinema_invite').eq('text', cinemaRoomId); } catch(e) {}
+      // 🍎 P2-16 修复：邀请卡片的 type 固定为 'cinema_invite'（见 invite_friend.js），
+      //    但 text 字段可能被清空/撤回，仅靠 .eq('text', roomId) 强匹配会失效。
+      //    策略：
+      //      1) 优先用 type + text 精确匹配（最准确）；
+      //      2) 若未命中（卡片被撤回/文本被清空），回退到 type + 当前用户最近一条邀请卡片；
+      //      3) 全程 try/catch，任何异常都不向外抛出，避免未捕获异常导致后续状态更新中断。
+      try {
+        const { data: matched, error: matchErr } = await supabase
+          .from('messages')
+          .update({ subtype: 'SYNC_CINEMA_ENDED' })
+          .eq('type', 'cinema_invite')
+          .eq('text', cinemaRoomId)
+          .select('id');
+
+        if (matchErr) throw matchErr;
+
+        // 精确匹配未命中 → 回退方案：按 type + 发送者定位最近一条邀请卡片
+        if (!matched || matched.length === 0) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user?.id) {
+            const { data: fallback } = await supabase
+              .from('messages')
+              .select('id')
+              .eq('type', 'cinema_invite')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            const fallbackId = fallback?.[0]?.id;
+            if (fallbackId) {
+              await supabase
+                .from('messages')
+                .update({ subtype: 'SYNC_CINEMA_ENDED' })
+                .eq('id', fallbackId);
+            }
+          }
+        }
+      } catch (e) {
+        // 静默降级：关闭房间的本地状态清理不应因数据库匹配失败而中断
+        console.warn('⚠️ closePlayer 更新邀请卡片状态失败（已忽略）:', e?.message ?? e);
+      }
     }
     setCinemaRoomId(null);
   }, [player, cinemaRoomId]);

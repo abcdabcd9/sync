@@ -176,7 +176,16 @@ export default function AccountInfoScreen() {
 
     if (error) {
       // 🔒 安全审计 #12：不再透传 error.message，避免泄露表名/约束名/SQL 细节
-      if (error.code === '23505' && activeModal === 'syncId') {
+      // 🍎 P2-18：后端触发器拦截「未满一年修改 Sync ID」时抛出 23514，需单独给出明确提示
+      const isSyncIdLimitError =
+        activeModal === 'syncId' &&
+        (error.code === '23514' || /sync.?id|一年|year/i.test(error.message || ''));
+
+      if (isSyncIdLimitError) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('修改失败', 'Sync ID 每年仅可修改一次');
+        return;
+      } else if (error.code === '23505' && activeModal === 'syncId') {
         Alert.alert('修改失败', '该 ID 已被其他用户占用！');
       } else if (error.code === '23514' || error.code === '23502') {
         Alert.alert('修改失败', '内容格式不符合要求，请检查后重试。');
@@ -185,6 +194,7 @@ export default function AccountInfoScreen() {
       } else {
         Alert.alert('修改失败', '修改失败，请稍后重试。');
       }
+      return;
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setProfile({ ...profile, ...updatePayload });

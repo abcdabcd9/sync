@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Platform, useWindowDimensions
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams } from 'expo-router'; 
 import { VideoView } from 'expo-video';
@@ -40,6 +41,12 @@ export default function CinemaScreen() {
   const insets = useSafeAreaInsets();
   
   const { player, partnerStatus, emitCommand, setIsMinimized, cinemaRoomId, setCinemaRoomId, danmakuList, emitDanmaku } = useCinema();
+
+  // 🍎 P2-15 修复：房间号使用 useState 惰性初始化，仅在组件首次挂载时生成一次。
+  //    旧实现把 roomId 放在 useEffect 里用 Date.now() 生成，任何重渲染/依赖变化
+  //    都会重新生成新房间号，导致用户被踢出原房间（异常掉线）。
+  //    现在整个组件生命周期内 roomId 绝对唯一且不变。
+  const [roomId] = useState(() => Crypto.randomUUID());
   const [activeRoomId, setActiveRoomId] = useState(null);
 
   const [isImmersive, setIsImmersive] = useState(false);
@@ -74,18 +81,15 @@ export default function CinemaScreen() {
   const lastBrightnessTime = useRef(0); // 🍎 硬件节流专用 Ref
 
   useEffect(() => {
-    if (params.roomId && params.roomId !== cinemaRoomId) {
-      setActiveRoomId(params.roomId);
-      setCinemaRoomId(params.roomId);
-    } else if (!cinemaRoomId) {
-      const newRoom = `room_${user?.id}_${Date.now().toString().slice(-6)}`;
-      setActiveRoomId(newRoom);
-      setCinemaRoomId(newRoom);
-    } else {
-      setActiveRoomId(cinemaRoomId);
+    // 优先使用邀请链接带入的 roomId；否则使用本组件惰性生成的稳定 roomId。
+    // 一旦确定，不再因重渲染而改变，避免意外掉线。
+    const targetRoom = params.roomId || roomId;
+    if (targetRoom !== cinemaRoomId) {
+      setCinemaRoomId(targetRoom);
     }
+    setActiveRoomId(targetRoom);
     (async () => { await Brightness.requestPermissionsAsync(); })();
-  }, [params.roomId, user]);
+  }, [params.roomId, roomId, cinemaRoomId, setCinemaRoomId]);
 
   useEffect(() => {
     if (isImmersive) {

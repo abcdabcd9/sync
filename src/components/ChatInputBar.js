@@ -114,38 +114,63 @@ const PILLS_BOTTOM_OFFSET = isIOS ? 150 : 120;
 const BUBBLE_BOTTOM_OFFSET = isIOS ? 260 : 210; 
 const TRIGGER_DY_THRESHOLD = isIOS ? -140 : -126; 
 
+/**
+ * 单根波形柱（独立组件）
+ *
+ * ⚠️ 修复 P0-1：原实现把 useRef / useEffect 写在 VoiceWaveform 的 bars.map() 回调里，
+ *    属于「在循环中调用 Hooks」，严重违反 Rules of Hooks，并发渲染下行为不可预测。
+ *    现抽离为独立组件，Hook 全部在组件顶层调用，数量恒定（每个 WaveBar 实例各一套）。
+ */
+const WaveBar = ({ index, isHardwareRecording, recordState, micVolume, barColor }) => {
+  // ⚠️ 必须用 useState 惰性初始化：useRef(new Animated.Value()).current 会在渲染期读 ref，
+  //    违反 react-hooks/refs 规则（React 19）。与 auth.js / chat.js 的既有写法保持一致。
+  const [anim] = useState(() => new Animated.Value(0.15));
+  const distanceToCenter = Math.abs(index - 7);
+  const maxHeight = 1 - (distanceToCenter * 0.12);
+
+  useEffect(() => {
+    if (isHardwareRecording && recordState === 'normal') {
+      const isSpeaking = micVolume > -45;
+      if (isSpeaking) {
+        const val = Math.random() * 0.6 + 0.3;
+        Animated.timing(anim, { toValue: val * maxHeight, duration: 100, useNativeDriver: true }).start();
+      } else {
+        Animated.timing(anim, { toValue: 0.15, duration: 100, useNativeDriver: true }).start();
+      }
+    } else {
+      Animated.spring(anim, { toValue: 0.15, friction: 7, tension: 60, useNativeDriver: true }).start();
+    }
+    // 依赖补全：anim / maxHeight 也参与闭包，必须纳入 deps
+  }, [isHardwareRecording, recordState, micVolume, anim, maxHeight]);
+
+  return (
+    <Animated.View
+      style={[styles.waveBar, { backgroundColor: barColor, transform: [{ scaleY: anim }] }]}
+    />
+  );
+};
+
 const VoiceWaveform = ({ recordState, palette, isDark, audioRecorder }) => {
   const recorderState = useAudioRecorderState(audioRecorder, 100);
   const micVolume = recorderState?.metering ?? -160;
   const isHardwareRecording = recorderState?.isRecording ?? false;
   const bars = Array.from({ length: 15 });
-  
+
+  const mutedColor = isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.25)';
+  const barColor = recordState === 'normal' ? (palette.primary || '#0A84FF') : mutedColor;
+
   return (
     <View style={styles.waveformContainer}>
-      {bars.map((_, index) => {
-        const anim = useRef(new Animated.Value(0.15)).current;
-        const distanceToCenter = Math.abs(index - 7);
-        const maxHeight = 1 - (distanceToCenter * 0.12); 
-
-        useEffect(() => {
-          if (isHardwareRecording && recordState === 'normal') {
-            const isSpeaking = micVolume > -45; 
-            if (isSpeaking) {
-              const val = Math.random() * 0.6 + 0.3;
-              Animated.timing(anim, { toValue: val * maxHeight, duration: 100, useNativeDriver: true }).start();
-            } else {
-              Animated.timing(anim, { toValue: 0.15, duration: 100, useNativeDriver: true }).start();
-            }
-          } else {
-            Animated.spring(anim, { toValue: 0.15, friction: 7, tension: 60, useNativeDriver: true }).start();
-          }
-        }, [isHardwareRecording, recordState, micVolume]); 
-
-        const mutedColor = isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.25)';
-        const barColor = recordState === 'normal' ? (palette.primary || '#0A84FF') : mutedColor;
-
-        return <Animated.View key={index} style={[styles.waveBar, { backgroundColor: barColor, transform: [{ scaleY: anim }] }]} />;
-      })}
+      {bars.map((_, index) => (
+        <WaveBar
+          key={index}
+          index={index}
+          isHardwareRecording={isHardwareRecording}
+          recordState={recordState}
+          micVolume={micVolume}
+          barColor={barColor}
+        />
+      ))}
     </View>
   );
 };

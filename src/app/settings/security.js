@@ -33,15 +33,80 @@ const SECURITY_SECTIONS = [
   ...DEVICE_DATA_PROTECTION_NOTES,
 ];
 
+// 🧹 P2-19：仅属于「当前用户」的本地存储 key 前缀（以 user.id 结尾）
+const USER_SCOPED_KEY_PREFIXES = [
+  'sync_chat_favorites_v1_', // 聊天收藏（useChatFavorites）
+  'sync_chat_prefs_v1_',     // 会话级偏好：置顶/隐藏/免打扰/星标/拉黑/背景（useChatPrefs）
+];
+
+// 🚫 绝对不能删除的「全局 / 设备级」key（多账号共享或与账号无关）
+const GLOBAL_KEY_PREFIXES = [
+  '@app_known_accounts', // 本机多账号档案
+  '@app_theme_mode',     // 全局主题
+  '@app_settings',       // 全局偏好设置
+  '@sync_device_id',     // 放映室设备 ID
+  '@water', '@meals', '@maxWater', '@motto', '@mealGuides', // 健康数据
+  '@streak', '@lastCheckIn', '@lastActive',
+  '@browser_bookmarks', '@browser_history', // 浏览器书签/历史
+];
+
+// 🚫 按「对方 ID」而非「当前用户 ID」命名的聊天缓存：
+//    这些 key 属于会话双方共享的本地缓存，删除会误伤其他账号的聊天记录
+const PEER_SCOPED_KEY_PREFIXES = [
+  '@chatMessages_',
+  '@deletedMsgIds_',
+];
+
+const isGlobalKey = (key) => GLOBAL_KEY_PREFIXES.some((p) => key.startsWith(p));
+const isPeerScopedKey = (key) => PEER_SCOPED_KEY_PREFIXES.some((p) => key.startsWith(p));
+
+/**
+ * 精准清理「当前用户」相关的本地状态，绝不误删全盘数据。
+ *
+ * 策略：
+ *   1. 显式移除已知的用户级 key（收藏 / 会话偏好）
+ *   2. 扫描全部 key，移除「包含当前 user.id」的 key（覆盖未来新增的用户级 key）
+ *   3. 始终跳过全局 key 与按对方 ID 命名的聊天缓存，保证其他账号数据不受影响
+ *
+ * @param {string} userId 当前登录用户 ID（必须在 signOut 之前取得）
+ */
+const clearCurrentUserLocalState = async (userId) => {
+  if (!userId) return;
+
+  const keysToRemove = new Set();
+
+  // ① 显式用户级 key
+  USER_SCOPED_KEY_PREFIXES.forEach((prefix) => keysToRemove.add(`${prefix}${userId}`));
+
+  // ② 扫描全部 key，过滤出包含当前 user.id 的 key
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    allKeys.forEach((key) => {
+      if (!key.includes(userId)) return;
+      if (isGlobalKey(key)) return;      // 全局 key 绝不删除
+      if (isPeerScopedKey(key)) return;  // 对方维度的聊天缓存绝不删除
+      keysToRemove.add(key);
+    });
+  } catch {
+    // 扫描失败时仍保留 ① 中的显式 key，继续执行移除
+  }
+
+  if (keysToRemove.size === 0) return;
+  await AsyncStorage.multiRemove([...keysToRemove]);
+};
+
 export default function SecurityScreen() {
   const { colors } = useAppTheme();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const [isDeleting, setIsDeleting] = useState(false);
 
   // 🔒 安全审计 #9：真正的注销执行体（仅在二次确认通过后调用）
   const performAccountDeletion = async () => {
     haptic.heavy();
     setIsDeleting(true);
+
+    // 必须在 signOut 之前捕获 user.id，否则会话清除后无法定位用户级 key
+    const currentUserId = user?.id ?? null;
 
     const { error } = await supabase.rpc('delete_my_account');
 
@@ -52,9 +117,10 @@ export default function SecurityScreen() {
       return;
     }
 
-    // 🔒 安全审计 #9：注销成功后彻底清除本地缓存，防止残留数据被下一个账号读到
+    // 🔒 P2-19：注销成功后仅清除「当前用户」的本地状态，
+    //    不再使用 AsyncStorage.clear() 误删全盘数据（其他账号的聊天记录与全局偏好必须保留）
     try {
-      await AsyncStorage.clear();
+      await clearCurrentUserLocalState(currentUserId);
     } catch {
       // 清缓存失败不阻断注销流程
     }

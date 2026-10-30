@@ -53,7 +53,8 @@ export function useChatList(user) {
   }, [user]);
 
   const fetchAll = useCallback(async () => {
-    const currentUserId = userIdRef.current;
+    // 直接读取 user?.id（而非 ref），使依赖数组真正生效：切换账号时自动重新拉取
+    const currentUserId = user?.id ?? null;
     if (!currentUserId) {
       setLoading(false);
       return;
@@ -163,7 +164,8 @@ export function useChatList(user) {
     } finally {
       setLoading(false);
     }
-  }, []);
+    // ⚠️ 依赖 user?.id：切换账号时必须重新全量拉取，否则会残留上一个账号的列表
+  }, [user?.id]);
 
   // 每次页面获得焦点都刷新（从聊天室返回时未读数需要更新）
   useFocusEffect(
@@ -184,28 +186,43 @@ export function useChatList(user) {
       .filter((ch) => ch.topic === `realtime:${channelName}`)
       .forEach((ch) => supabase.removeChannel(ch));
 
+    // 🔒 服务端过滤：只订阅"发给我的消息"，避免全表广播导致的数据泄露与性能浪费。
+    //    注意：filter 只能作用于单列，因此这里用 receiver_id 而非 (user_id OR receiver_id)。
+    //    自己发出的消息由发送方本地乐观更新（saveAndSend）负责，无需依赖 Realtime 回环。
+    const receiverFilter = `receiver_id=eq.${user.id}`;
+
     // ✅ 所有 .on() 必须在 .subscribe() 之前链式完成
     const channel = supabase
       .channel(channelName)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        const msg = payload.new;
-        if (msg.user_id === user.id || msg.receiver_id === user.id) {
-          const partnerId = msg.user_id === user.id ? msg.receiver_id : msg.user_id;
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: receiverFilter },
+        (payload) => {
+          const msg = payload.new;
+          // 底层已按 receiver_id 过滤，此处无需再做归属判断
+          const partnerId = msg.user_id;
           setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
           setLastMsgTimes((prev) => ({ ...prev, [partnerId]: new Date(msg.created_at).getTime() }));
-          if (msg.receiver_id === user.id) {
-            setUnreadCounts((prev) => ({ ...prev, [partnerId]: (prev[partnerId] || 0) + 1 }));
+          setUnreadCounts((prev) => ({ ...prev, [partnerId]: (prev[partnerId] || 0) + 1 }));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: receiverFilter },
+        (payload) => {
+          const msg = payload.new;
+          // 对方撤回/编辑消息时，预览也要跟着变
+          const partnerId = msg.user_id;
+          setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
+          // 已读回执：未读数递减（进入聊天室后对方消息被标记 is_read=true）
+          if (msg.is_read) {
+            setUnreadCounts((prev) => ({
+              ...prev,
+              [partnerId]: Math.max(0, (prev[partnerId] || 0) - 1),
+            }));
           }
         }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, (payload) => {
-        const msg = payload.new;
-        // 对方撤回消息时，预览也要跟着变
-        if (msg.user_id === user.id || msg.receiver_id === user.id) {
-          const partnerId = msg.user_id === user.id ? msg.receiver_id : msg.user_id;
-          setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
-        }
-      })
+      )
       .subscribe();
 
     return () => supabase.removeChannel(channel);

@@ -1,4 +1,3 @@
--- --- START OF FILE supabase/migrations/20261029_sync_id_limit_trigger.sql ---
 -- ============================================================================
 -- 🔒 安全审计 #17：Sync ID 修改频率限制下沉到服务端 Trigger
 -- ============================================================================
@@ -102,6 +101,10 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 4. 数据完整性兜底：nickname / motto 长度约束（与前端 #18 校验保持一致）
 -- ---------------------------------------------------------------------------
+-- 【新增】：确保列存在，防止下方添加约束时因找不到列而报错
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS nickname text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS motto text;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -134,4 +137,3 @@ $$;
 --   ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_nickname_length_check;
 --   ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_motto_length_check;
 -- ============================================================================
--- --- END OF FILE supabase/migrations/20261029_sync_id_limit_trigger.sql ---

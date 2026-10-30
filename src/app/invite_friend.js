@@ -5,20 +5,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
-
-// 🍎 修复核心：加入标准的 UUID 生成器，完美契合数据库的 uuid 类型！
-const generateUUID = () => {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-};
 
 export default function InviteFriendScreen() {
   const { colors: palette } = useAppTheme();
@@ -59,7 +52,7 @@ export default function InviteFriendScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     
     // 🍎 使用标准 UUID，数据库绝对不会再报错拦截了！
-    const msgId = generateUUID();
+    const msgId = Crypto.randomUUID();
     
     // 🚨 修复「消息删不掉 / 顺序错乱」：
     //   旧实现直接 [newMsg, ...msgs] 覆盖缓存，既不过滤「已删除 ID 黑名单」，
@@ -77,6 +70,18 @@ export default function InviteFriendScreen() {
       isMe: true,
       timestamp: Date.now(),
     };
+    // ☁️ 先写云端：失败则直接中断，绝不落本地，避免产生无法撤销的"幽灵消息"
+    const { error } = await supabase.from('messages').insert({
+      id: msgId, user_id: user.id, receiver_id: friend.id, type: 'cinema_invite', text: roomId || 'error_room'
+    });
+
+    if (error) {
+      console.error("发送影院卡片失败:", error);
+      Alert.alert('发送失败', '请检查网络后重试');
+      return;
+    }
+
+    // ✅ 云端成功后才写本地缓存
     const cacheKey = `@chatMessages_${friend.id}`;
     const delKey = `@deletedMsgIds_${friend.id}`;
     const [cached, deletedStr] = await Promise.all([
@@ -91,13 +96,6 @@ export default function InviteFriendScreen() {
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
       .slice(0, 300);
     await AsyncStorage.setItem(cacheKey, JSON.stringify(merged));
-
-    // 存入云端
-    const { error } = await supabase.from('messages').insert({
-      id: msgId, user_id: user.id, receiver_id: friend.id, type: 'cinema_invite', text: roomId || 'error_room'
-    });
-    
-    if (error) console.error("发送影院卡片失败:", error);
 
     // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
     sendPushNotification(friend.id, '', '邀请你加入同步放映室，快来！', { type: 'chat', targetId: user.id });

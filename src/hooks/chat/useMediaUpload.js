@@ -7,6 +7,7 @@ import { File } from 'expo-file-system';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import { decode as base64ToArrayBuffer } from 'base64-arraybuffer';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 
 import { supabase } from '../../services/supabase';
 import { sendPushNotification } from '../../services/pushService';
@@ -41,13 +42,6 @@ const STORAGE_BUCKET = 'chat_media';
  *    useSignedMediaUrl 按需换取临时签名 URL，因此历史照片永不失效。
  */
 export const SIGNED_URL_TTL = 60 * 60 * 24 * 7;
-
-const generateUUID = () =>
-  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 
 /**
  * 🔒 安全审计 #14：为已上传的私有对象生成临时签名 URL
@@ -120,7 +114,7 @@ export async function uploadToSupabase(uri, prefix, userId) {
     }
 
     // 🔒 P0-3：对象路径首段 = user_id，供 RLS 精确匹配
-    const fileName = `${userId}/${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+    const fileName = `${userId}/${prefix}_${Date.now()}_${Crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage
       .from(STORAGE_BUCKET)
       .upload(fileName, arrayBuffer, { contentType: guessContentType(ext) });
@@ -194,8 +188,9 @@ function getLocalFileSize(uri) {
  * @param {object} params.user 当前登录用户
  * @param {Function} params.saveAndSend useChatMessages 暴露的乐观发送
  * @param {Function} [params.patchMessage] useChatMessages 暴露的乐观消息回填
+ * @param {Function} [params.deleteMessage] useChatMessages 暴露的本地删除（P2-17 失败回滚用）
  */
-export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
+export function useMediaUpload({ targetId, user, saveAndSend, patchMessage, deleteMessage }) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const uploadingRef = useRef(false);
@@ -250,6 +245,11 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
     setUploading(true);
     setUploadProgress(0);
 
+    // 🚨 P2-17：msgId / 乐观插入标记必须在 try 外声明，
+    //    否则 catch 块无法访问，失败时无法回滚「幽灵预发送气泡」。
+    const msgId = Crypto.randomUUID();
+    let optimisticInserted = false;
+
     try {
       // ② 视频首帧缩略图
       let localThumbUri = null;
@@ -264,7 +264,6 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
       // 🖼️ 同时带上真实宽高：MessageBubble 用它一次性算出正确气泡比例，
       //    避免「先按 4:3 渲染 → 图片加载完再跳变」的抖动，
       //    也彻底解决横屏照片被 220×300 竖框裁切的问题。
-      const msgId = generateUUID();
       const assetW = Number(asset.width) || 0;
       const assetH = Number(asset.height) || 0;
       saveAndSend({
@@ -277,6 +276,7 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
         isMe: true,
         timestamp: Date.now(),
       });
+      optimisticInserted = true;
 
       // ④ 上传主媒体（0% → 60%）
       setUploadProgress(0.3);
@@ -325,6 +325,23 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.warn('媒体发送失败:', e?.message || e);
+      // 🚨 P2-17 修复：上传 / 落库失败时必须回滚乐观消息。
+      //   旧实现只在本地插入了 file:// 气泡，失败后既不落库也不移除，
+      //   导致这条「幽灵预发送气泡」永久卡在列表里（退出重进才消失）。
+      //   优先直接从列表移除（MessageBubble 不渲染 status 失败态，
+      //   仅打标记会让气泡继续以「已发送」外观残留）；无 deleteMessage 时
+      //   退化为标记 status: 'failed'，保证不会无限期卡住。
+      if (optimisticInserted) {
+        try {
+          if (deleteMessage) {
+            await deleteMessage(msgId);
+          } else {
+            patchMessage?.(msgId, { status: 'failed' });
+          }
+        } catch (rollbackErr) {
+          console.warn('媒体失败回滚异常:', rollbackErr?.message || rollbackErr);
+        }
+      }
       Alert.alert('发送失败', '媒体上传未完成，请检查网络后重试。');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -332,7 +349,7 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
       setUploading(false);
       setUploadProgress(0);
     }
-  }, [user, targetId, saveAndSend, patchMessage]);
+  }, [user, targetId, saveAndSend, patchMessage, deleteMessage]);
 
   return {
     uploading,

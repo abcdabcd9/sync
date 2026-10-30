@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Platform, Alert } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import {
   useAudioRecorder as useExpoAudioRecorder,
   RecordingPresets,
@@ -51,13 +52,6 @@ export const buildAudioMode = (allowsRecording) => ({
   interruptionMode: 'mixWithOthers',
   shouldRouteThroughEarpiece: false,
 });
-
-const generateUUID = () =>
-  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 
 /**
  * @param {object} params
@@ -179,7 +173,7 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
       }
 
       setTimeout(async () => {
-        const msgId = generateUUID();
+        const msgId = Crypto.randomUUID();
         saveAndSend({
           id: msgId,
           type: 'audio',

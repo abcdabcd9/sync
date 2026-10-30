@@ -117,11 +117,33 @@ export function useHealthCloud(user, getDateStr) {
     });
   }, []);
 
+  /**
+   * 解绑后清空伴侣相关状态。
+   * ⚠️ 仅清空 partnerId 不够：partnerData 仍残留旧伴侣的进度，
+   *    首页 PartnerStatusCard 会继续显示已解绑的人，直到下次冷启动。
+   */
+  const clearPartner = useCallback(() => {
+    setPartnerId(null);
+    setPartnerData({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
+  }, []);
+
   /** 订阅伴侣的 health_records 变更 */
   const subscribePartner = useCallback((pId, date) => {
     if (!pId) return () => {};
+
+    // ⚠️ 频道名必须唯一：effect 依赖 (partnerId, todayStr) 会在跨天或切换伴侣时变化，
+    //    若复用固定名，旧频道尚未回收时 supabase.channel() 会返回已 subscribe 的实例，
+    //    再次 .on() 会直接抛错（通道复用冲突）。加时间戳确保每次订阅都是全新实例。
+    const channelName = `partner_health_${pId}_${Date.now()}`;
+
+    // 兜底清理：移除可能残留的同名前缀频道，避免极端情况下泄漏
+    supabase
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
     const channel = supabase
-      .channel('partner_health_channel')
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_records', filter: `user_id=eq.${pId}` },
@@ -135,18 +157,28 @@ export function useHealthCloud(user, getDateStr) {
         }
       )
       .subscribe();
+
+    // cleanup：effect 重跑或组件卸载时释放频道
     return () => supabase.removeChannel(channel);
   }, []);
 
-  // 卸载时清掉未触发的定时器，避免内存泄漏（不提交，交由上层 flushNow 负责）
+  // 卸载时清掉未触发的定时器，并立即提交队列中尚未写入的数据，
+  // 防止用户切换页面时丢失最后一笔防抖中的数据（P3-21）。
   useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const payload = pendingRef.current;
+    pendingRef.current = null;
+    if (payload) commit(payload);
+  }, [commit]);
 
   return useMemo(() => ({
     partnerData,
     partnerId,
     setPartnerId,
+    clearPartner,
     fetchMyRecord,
     fetchPartnerRecord,
     applyPartnerRecord,
@@ -154,7 +186,7 @@ export function useHealthCloud(user, getDateStr) {
     syncToCloud,
     flushNow,
   }), [
-    partnerData, partnerId, fetchMyRecord, fetchPartnerRecord,
+    partnerData, partnerId, clearPartner, fetchMyRecord, fetchPartnerRecord,
     applyPartnerRecord, subscribePartner, syncToCloud, flushNow,
   ]);
 }

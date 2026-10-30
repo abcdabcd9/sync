@@ -1,11 +1,11 @@
 // --- START OF FILE src/hooks/health/dateUtils.js ---
 
 /**
- * 将 Date 对象格式化为 UTC 的 YYYY-MM-DD 字符串。
- * 注意：使用 getUTC* 系列方法，与设备本地时区无关。
+ * 将 Date 对象格式化为本地时区的 YYYY-MM-DD 字符串。
+ * 注意：使用本地时间方法，避免东八区等时区在凌晨出现日期判定错位。
  */
 export const formatDateStr = (d) => {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 /**

@@ -66,7 +66,17 @@ export function useHealthStorage(todayStr) {
     // ---- 跨天清零：streak 断档检测 ----
     let currentStreak = savedStreak ? Number(savedStreak) : 0;
     if (savedCheckIn && savedCheckIn !== todayStr) {
-      if (calculateDiffDays(todayStr, savedCheckIn) > 1) {
+      // ⚠️ calculateDiffDays 取绝对值，无法区分"过去"与"未来"，
+      //    因此先用时间戳做方向判断，避免系统时间回拨造成的错乱。
+      const savedTime = new Date(savedCheckIn).getTime();
+      const todayTime = new Date(todayStr).getTime();
+
+      if (savedTime > todayTime) {
+        // 发现未来日期（系统时间被修改然后回拨），视为时间流异常，直接清零
+        currentStreak = 0;
+        AsyncStorage.setItem(KEYS.streak, '0');
+      } else if (calculateDiffDays(todayStr, savedCheckIn) > 1) {
+        // 正常断档超过 1 天，清零
         currentStreak = 0;
         AsyncStorage.setItem(KEYS.streak, '0');
       }
@@ -155,12 +165,22 @@ export function useHealthStorage(todayStr) {
 
   const setCheckInDate = useCallback((val) => {
     setLastCheckInDate(val);
-    AsyncStorage.setItem(KEYS.checkIn, val);
+    // ⚠️ AsyncStorage 不接受 null/undefined，撤销打卡归零时传 null 会抛错，
+    //    因此 null 语义等价于"无打卡记录"，直接删除该键。
+    if (val === null || val === undefined) {
+      AsyncStorage.removeItem(KEYS.checkIn);
+    } else {
+      AsyncStorage.setItem(KEYS.checkIn, String(val));
+    }
   }, []);
 
   const setActiveDate = useCallback((val) => {
     setLastActiveDate(val);
-    AsyncStorage.setItem(KEYS.active, val);
+    if (val === null || val === undefined) {
+      AsyncStorage.removeItem(KEYS.active);
+    } else {
+      AsyncStorage.setItem(KEYS.active, String(val));
+    }
   }, []);
 
   /** 重置今日饮水与三餐（纯本地，不推送云端） */

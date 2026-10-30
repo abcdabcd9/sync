@@ -32,8 +32,9 @@
  * 2. **私密媒体不暴露公网**：chat_media 桶已私有化，客户端只持有 7 天有效的
  *    签名 URL（见 useMediaUpload.js 的 createSignedMediaUrl）。
  * 3. **临时文件即用即删**：录音、下载到相册的中间文件在使用后立即 delete()。
- * 4. **退出登录即清空**：signOut 会清除本地会话；注销账号额外执行
- *    AsyncStorage.clear()，确保设备上不残留任何用户数据。
+ * 4. **退出登录即清空**：signOut 会清除本地会话；注销账号额外精准移除
+ *    「当前用户」相关的本地 key（收藏 / 会话偏好等），不再使用
+ *    AsyncStorage.clear() 误删全盘数据，其他账号的聊天记录与全局偏好得以保留。
  * 5. **传输全程 HTTPS**：Supabase 与推送服务均强制 TLS，禁止明文回退。
  *
  * ─────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ export const DEVICE_SECURITY_POLICY = {
   privateMediaOnly: true,
   /** 退出登录是否清除本地会话（已启用） */
   clearSessionOnSignOut: true,
-  /** 注销账号是否清空全部本地数据（已启用） */
+  /** 注销账号是否清除当前用户的本地数据（已启用，仅限当前用户，非全盘） */
   wipeLocalDataOnDelete: true,
   /** 是否启用端到端加密（当前未实现，诚实披露） */
   endToEndEncryption: false,
@@ -102,7 +103,7 @@ export const DEVICE_DATA_PROTECTION_NOTES = [
   },
   {
     title: '本地数据清除',
-    body: '退出登录会清除本机会话；注销账号会额外清空本机全部缓存数据，确保设备上不残留任何个人信息。',
+    body: '退出登录会清除本机会话；注销账号会额外清除当前账号在本机的缓存数据（如聊天收藏与会话偏好），其他账号的聊天记录与全局偏好不受影响。',
   },
   {
     title: '设备安全建议',

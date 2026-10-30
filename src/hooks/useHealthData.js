@@ -31,7 +31,7 @@ export function HealthProvider({ children }) {
   // ☁️ 所有 health_records 网络 IO 都收敛在 useHealthCloud 内部（不碰本地存储）
   const cloud = useHealthCloud(user, getDateStr);
   const {
-    partnerData, partnerId, setPartnerId,
+    partnerData, partnerId, setPartnerId, clearPartner,
     fetchMyRecord, fetchPartnerRecord, applyPartnerRecord,
     subscribePartner, syncToCloud, flushNow,
   } = cloud;
@@ -56,6 +56,10 @@ export function HealthProvider({ children }) {
   const userInteractedRef = useRef(false);
 
   const loadAllData = async () => {
+    // 🔓 每次强制刷新都解开"本地操作保护锁"：
+    //    否则用户交互过一次后锁永久为 true，跨天/切回前台时云端数据会被错误丢弃
+    userInteractedRef.current = false;
+
     // 🍎 先校准时空法则（失败时 useTimeSync 内部会保留旧 offset）
     await calibrate();
 
@@ -75,7 +79,14 @@ export function HealthProvider({ children }) {
           const { data: whoBoundMe } = await supabase.from('profiles').select('id').eq('bound_partner_id', user.id).limit(1);
           if (whoBoundMe && whoBoundMe.length > 0) {
             pId = whoBoundMe[0].id;
-            supabase.from('profiles').update({ bound_partner_id: pId }).eq('id', user.id).then();
+            // 🍎 P2-11：回写绑定关系不再 fire-and-forget，显式捕获 error 并记录日志
+            const { error: bindError } = await supabase
+              .from('profiles')
+              .update({ bound_partner_id: pId })
+              .eq('id', user.id);
+            if (bindError) {
+              console.error('更新失败:', bindError);
+            }
           }
         }
 
@@ -124,14 +135,16 @@ export function HealthProvider({ children }) {
   }, [partnerId, todayStr, subscribePartner]);
 
   // 饮水写入：本地 state 收敛 + 云端防抖同步（顺序：本地 → 云端）
+  // ⚠️ 副作用（syncToCloud）必须在 updater 之外执行：
+  //    React 18/19 的 StrictMode 会双调用 updater，若在内部发网络请求会重复提交；
+  //    且 updater 必须是纯函数，否则并发渲染下可能基于过期 prev 计算。
   const setWaterDirect = useCallback((val) => {
-    setWater(prev => {
-      const newVal = typeof val === 'function' ? val(prev) : val;
-      const nextVal = Math.min(maxWater, Math.max(0, Math.round(newVal)));
-      if (prev !== nextVal) syncToCloud(nextVal, mealsStatus);
-      return nextVal;
-    });
-  }, [maxWater, mealsStatus, syncToCloud, setWater]);
+    const newVal = typeof val === 'function' ? val(waterAmount) : val;
+    const nextVal = Math.min(maxWater, Math.max(0, Math.round(newVal)));
+    if (waterAmount === nextVal) return;
+    syncToCloud(nextVal, mealsStatus);
+    setWater(nextVal);
+  }, [waterAmount, maxWater, mealsStatus, syncToCloud, setWater]);
 
   // 顺序：① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
   const handleAddWater = useCallback(() => {
@@ -217,6 +230,27 @@ export function HealthProvider({ children }) {
     setSelectedMeal(null);
   }, [selectedMeal, mealsStatus, waterAmount, syncToCloud, setMeals]);
 
+  /**
+   * 解绑/绑定后强制刷新伴侣关系（供 bind_partner 等页面调用）。
+   * 直接查库而不是依赖本地缓存，确保 UI 立刻反映最新绑定状态。
+   * @param {string|null} nextPartnerId 已知的新伴侣 ID；传 null 表示解绑
+   */
+  const refreshPartner = useCallback(async (nextPartnerId = null) => {
+    if (!user) return;
+    try {
+      if (!nextPartnerId) {
+        // 解绑：清空 partnerId + partnerData，首页卡片立即消失
+        clearPartner();
+        return;
+      }
+      setPartnerId(nextPartnerId);
+      const pData = await fetchPartnerRecord(nextPartnerId, getDateStr());
+      if (pData) applyPartnerRecord(pData);
+    } catch (e) {
+      console.warn('⚠️ 刷新伴侣关系失败:', e?.message ?? e);
+    }
+  }, [user, clearPartner, setPartnerId, fetchPartnerRecord, applyPartnerRecord, getDateStr]);
+
   const updateMaxWater = useCallback((val) => { setMaxWater(val); }, [setMaxWater]);
   const updateMotto = useCallback((text) => { setMotto(text); }, [setMotto]);
   const updateMealGuide = useCallback((meal, text) => { setMealGuide(meal, text); }, [setMealGuide]);
@@ -234,10 +268,10 @@ export function HealthProvider({ children }) {
 
   const value = useMemo(() => ({
     isInitialized: isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
-    openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
+    openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   }), [
     isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
-    openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday
+    openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   ]);
 
   return <HealthContext.Provider value={value}>{children}</HealthContext.Provider>;

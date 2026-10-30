@@ -8,14 +8,16 @@ import { useRouter } from 'expo-router';
 import { supabase } from '../services/supabase';
 import { useAuth } from './useAuth';
 
-// 🍎 前台静默：应用在前台时不弹系统原生横幅/列表，仅靠 Realtime 刷新界面（微信式体验）
-// 说明：SDK 58 中 shouldShowAlert 已废弃，由 shouldShowBanner + shouldShowList 取代；
-//       两者同时为 false 才能彻底隐藏前台横幅与通知中心条目。
+// 🍎 前台通知展示（P3-24 修复）
+// 说明：SDK 58 中 shouldShowAlert 已废弃，由 shouldShowBanner + shouldShowList 取代。
+//   旧实现两者均为 false，导致应用在前台时通知被完全抑制 —— 用户停留在非聊天页面
+//   （如首页、健康、空间）时收不到任何横幅提示，容易错过消息。
+//   现在开启前台横幅 + 通知中心条目，保证前台也能及时感知新消息。
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: false,
-    shouldShowList: false,
-    shouldPlaySound: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });

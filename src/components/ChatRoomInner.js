@@ -3,6 +3,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
@@ -11,6 +12,7 @@ import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
+import { useHealthData } from '../hooks/useHealthData';
 import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
 import { useMediaUpload } from '../hooks/chat/useMediaUpload';
@@ -25,21 +27,18 @@ import InteractiveMediaViewer from './InteractiveMediaViewer';
 import ChatContextMenu from './ChatContextMenu';
 import { useCinema } from '../hooks/useCinema';
 
-const generateUUID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-  const r = (Math.random() * 16) | 0;
-  return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-});
-
 const formatDuration = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
+  // 🌐 全局健康上下文：同意搭子邀请后必须同步刷新，否则首页伴侣卡片不更新
+  const { refreshPartner } = useHealthData();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
   const { messages, loading, messagesRef, saveAndSend, patchMessage, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
-  const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend, patchMessage });
+  const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend, patchMessage, deleteMessage });
   const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend, patchMessage });
 
   // ===== 会话偏好（背景） + 收藏 =====
@@ -77,7 +76,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
   const handleSendText = useCallback(async (text) => {
     if (!user || !targetId) return;
-    const msgId = generateUUID();
+    const msgId = Crypto.randomUUID();
     saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
     await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
     sendPushNotification(targetId, '', text, { type: 'chat', targetId: user.id });
@@ -85,10 +84,18 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
 
   const handleAcceptPartner = async (msg) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await supabase.from('profiles').update({ bound_partner_id: targetId }).eq('id', user.id);
+    const { error: bindError } = await supabase.from('profiles').update({ bound_partner_id: targetId }).eq('id', user.id);
+    if (bindError) {
+      console.error('绑定健康搭子失败:', bindError);
+      Alert.alert('绑定失败', '请检查网络后重试');
+      return;
+    }
     await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！', subtype: 'SYNC_PARTNER_ACCEPTED' }).eq('id', msg.id);
-    await supabase.from('messages').insert({ id: generateUUID(), user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
+    await supabase.from('messages').insert({ id: Crypto.randomUUID(), user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
     sendPushNotification(targetId, '', '已同意成为你的健康搭子！', { type: 'chat', targetId: user.id });
+    // 🌐 同步刷新全局上下文：写入 partnerId 并拉取对方今日进度，
+    //    否则首页伴侣卡片要等冷启动才出现
+    await refreshPartner(targetId);
   };
 
   const handleRejectPartner = async (msg) => {

@@ -71,12 +71,14 @@ export function useStreak({
         setStreak(newStreak);
         setCheckInDate(todayStr);
       } else if (!isDoneToday && lastCheckInDate === todayStr) {
-        // ↩️ 撤销打卡：把 lastCheckInDate 回退到"昨天"
+        // ↩️ 撤销打卡：streak 回退 1
         // ⚠️ getDateStr 内部走 formatDateStr(date)，必须传 Date 对象而非时间戳
         const yStr = getDateStr(new Date(Date.now() - 86400000));
         const newStreak = Math.max(0, streakDays - 1);
         setStreak(newStreak);
-        setCheckInDate(yStr);
+        // 若回退后为 0，说明已无连续记录，必须清空打卡日期，
+        // 否则下次打卡会因"昨天打过卡"被误判为连续而污染 streak
+        setCheckInDate(newStreak === 0 ? null : yStr);
       }
     }
 

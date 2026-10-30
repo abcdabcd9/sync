@@ -231,7 +231,15 @@ export function useChatMessages(targetId, user) {
   }, [CACHE_MSG_KEY]);
 
   // 3️⃣ 撤回：本地立即改为 action，再同步云端
+  // 🔒 P1-6：云端更新必须附加归属者校验（user_id），避免 RLS 疏漏时越权撤回他人消息
+  //
+  // 🚨 P3-22 修复（撤回文案动态区分「你」与「对方」）：
+  //   云端只存中立文案「撤回了一条消息」，不写入任何第一/第二人称。
+  //   本地乐观更新写「你撤回了一条消息」（撤回者一定是当前用户）；
+  //   对方设备通过 Realtime 收到 UPDATE 后，由 formatDbMsg 按 user_id 判定，
+  //   渲染为「对方撤回了一条消息」。MessageBubble 再做一次兜底判断。
   const revokeMessage = useCallback(async (id) => {
+    if (!user?.id) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setMessages(prev => prev.map(m => m.id === id
       ? { ...m, type: 'action', text: '你撤回了一条消息', mediaUrl: null, thumbnailUrl: null }
@@ -239,8 +247,9 @@ export function useChatMessages(targetId, user) {
     await supabase
       .from('messages')
       .update({ type: 'action', text: '撤回了一条消息', media_url: null, thumbnail_url: null })
-      .eq('id', id);
-  }, []);
+      .eq('id', id)
+      .eq('user_id', user.id);
+  }, [user]);
 
   // 4️⃣ 本地删除：从列表移除并记入「已删除 ID」黑名单（防止 Realtime 重新拉回）
   //    🚨 修复「消息删不掉」：旧实现只更新内存 + 黑名单，没有同步清理
@@ -261,15 +270,22 @@ export function useChatMessages(targetId, user) {
 
     // 🚨 修复「删不掉」的根因：旧实现只删本地，云端记录仍在。
     //    换设备 / 清缓存 / 重装后 fetchMessages 会把它重新拉回来。
-    //    这里同步删除云端行；RLS 保证只能删自己发的消息。
+    //    这里同步删除云端行。
+    //    🔒 P1-6：删除链式调用必须附加归属者校验（user_id），
+    //    不能仅依赖 RLS —— 否则 RLS 配置疏漏时任何用户都能删除他人消息。
     //    失败不阻塞 UI（本地已移除 + 黑名单已落盘），仅开发期告警。
+    if (!user?.id) return;
     try {
-      const { error } = await supabase.from('messages').delete().eq('id', id);
+      const { error } = await supabase
+        .from('messages')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
       if (error && __DEV__) console.warn('[deleteMessage] 云端删除失败:', error.message);
     } catch (e) {
       if (__DEV__) console.warn('[deleteMessage] 云端删除异常:', e?.message);
     }
-  }, [CACHE_MSG_KEY, CACHE_DEL_KEY]);
+  }, [CACHE_MSG_KEY, CACHE_DEL_KEY, user]);
 
   return {
     messages,

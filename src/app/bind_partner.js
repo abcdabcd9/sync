@@ -5,24 +5,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
+import { useHealthData } from '../hooks/useHealthData';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
-
-const generateUUID = () => {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-};
 
 export default function BindPartnerScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
+  // 🌐 全局健康上下文：解绑/绑定后必须同步刷新，否则首页伴侣卡片要等冷启动才更新
+  const { refreshPartner } = useHealthData();
 
   const [friends, setFriends] = useState([]);
   const [boundPartnerId, setBoundPartnerId] = useState(null);
@@ -76,22 +73,30 @@ export default function BindPartnerScreen() {
       { text: '发送邀请', onPress: async () => {
           setLoading(true);
           
-          const msgId = generateUUID();
+          const msgId = Crypto.randomUUID();
           const secretText = '';
           const secretSubtype = 'SYNC_PARTNER_INVITE';
 
           const newMsg = { id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype, isMe: true, timestamp: Date.now() };
+
+          // ☁️ 先写云端：失败则直接中断，绝不落本地，避免产生无法撤销的"幽灵消息"
+          const { error } = await supabase.from('messages').insert({
+            id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype
+          });
+
+          if (error) {
+            console.error("发送搭子卡片失败:", error);
+            setLoading(false);
+            Alert.alert('发送失败', '请检查网络后重试');
+            return;
+          }
+
+          // ✅ 云端成功后才写本地缓存
           const cacheKey = `@chatMessages_${friendId}`;
           const cached = await AsyncStorage.getItem(cacheKey);
           const msgs = cached ? JSON.parse(cached) : [];
           await AsyncStorage.setItem(cacheKey, JSON.stringify([newMsg, ...msgs]));
 
-          const { error } = await supabase.from('messages').insert({
-            id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype
-          });
-          
-          if (error) console.error("发送搭子卡片失败:", error);
-          
           // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
           sendPushNotification(friendId, '', '向你发来了搭子邀请', { type: 'chat', targetId: user.id });
 
@@ -107,14 +112,27 @@ export default function BindPartnerScreen() {
       { text: '取消', style: 'cancel' },
       { text: '解除', style: 'destructive', onPress: async () => {
           setLoading(true);
-          await supabase.from('profiles').update({ bound_partner_id: null }).eq('id', user.id);
-          
-          await supabase.from('messages')
-            .update({ text: '', subtype: 'SYNC_PARTNER_UNBOUND' })
-            .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
-            .or(`user_id.eq.${user.id},receiver_id.eq.${user.id}`);
 
+          // 🔒 双向解绑必须走服务端 RPC（SECURITY DEFINER）：
+          //    客户端直连 UPDATE 只能改自己那行 profiles（对方行受 RLS 限制），
+          //    会造成"我解绑了但对方仍绑着我"的单向残留；
+          //    且原 .or() 条件会误伤两人之间的所有消息。
+          const { error: rpcError } = await supabase.rpc('unbind_partner', {
+            target_partner_id: boundPartnerId,
+          });
+
+          if (rpcError) {
+            console.error('双向解绑 RPC 失败', rpcError);
+            setLoading(false);
+            Alert.alert('解除失败', '网络异常，请稍后重试。');
+            return;
+          }
+
+          // ✅ RPC 成功后才更新本地状态，避免云端失败但本地已清空
           setBoundPartnerId(null);
+          // 🌐 同步刷新全局上下文：清空 partnerId + partnerData，
+          //    否则首页伴侣卡片仍显示已解绑的人，需要多次刷新才消失
+          await refreshPartner(null);
           setLoading(false);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }}

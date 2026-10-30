@@ -94,6 +94,14 @@ export default React.memo(function MessageBubble({
     }
   }
 
+  // 🚨 P3-22 修复（撤回文案动态区分「你」与「对方」）：
+  //   云端只存中立文案「撤回了一条消息」，本地乐观更新写「你撤回了一条消息」。
+  //   若渲染到的是中立文案且这条消息不是当前用户发出的（!isMe），
+  //   在 UI 上强制显示为「对方撤回了一条消息」，避免对方看到「你撤回了一条消息」。
+  if (msgType === 'action' && !item.subtype && displayText === '撤回了一条消息' && !isMe) {
+    displayText = '对方撤回了一条消息';
+  }
+
   const bubbleRef = useRef(null);
   const [waveStep, setWaveStep] = useState(3);
 
