@@ -208,13 +208,35 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
-## 2026-10-30（阶段 4 修复 2：移除一级页返回箭头）
+## 2026-10-30（阶段 4 修复 3：长按菜单改「+」同款 + 移除边缘返回手势）
 
-聊天是一级 tab 页，底栏常驻后左上角返回箭头已无意义（且与 iOS 惯例冲突：tab 页不放返回键）。移除箭头与 `headerBackBtn` 样式，标题居中不变。
+用户实测反馈两点，均已处理。
 
-iOS 边缘右滑返回首页的手势**保留**（不占视觉空间，属于额外快捷方式）。
+**1. 移除 iOS 边缘右滑返回首页手势**
 
-**验收**：`npx tsc --noEmit` → 0；`npx eslint` → 0；`npx expo lint` → 139（119e/20w），持平。
+一级 tab 页底栏常驻，用户直接点底栏切 tab 即可，边缘手势属于冗余，且会与列表横向滚动 / 长按抢手势。删除整个 `edgeSwipeResponder`（`PanResponder.create`）以及 `SafeAreaView` 上的 `{...edgeSwipeResponder.panHandlers}`，同时移除 `PanResponder`、`Dimensions` 两个 import。
+
+**2. 长按「近期联系人」的弹窗改为与右上角「+」完全同款**
+
+改造前是「伪 ActionSheet」：`Modal animationType="none"` + 透明全屏 `Pressable` + 绝对定位 `View`（`right: 24, width: 140`），且 `top` 由 `handleLongPress` 按触点 `pageY` 动态计算（上半屏贴手指下方，下半屏上移 180px）。
+
+改造后与「+」菜单共用同一套 UI：
+
+- `Modal animationType="fade"`（淡入，与「+」一致）
+- 复用 `styles.plusOverlay` / `plusMenu` / `plusMenuItem` / `plusMenuText` / `plusMenuLine`
+- 统一锚定右上角（`top: iOS 96 / Android 72, right: 16`），不再跟随触点
+- 每行改为「图标 + 文字」横向布局，与「+」菜单视觉一致：
+  - 标为已读 → `checkmark-done-outline`
+  - 置顶该聊天 → `arrow-up-circle-outline`
+  - 不显示该聊天 → `eye-off-outline`
+  - 删除该聊天 → `trash-outline` + 红色 `#FF3B30`
+- `menuConfig` 从 `{ visible, top, chat }` 简化为 `{ visible, chat }`；`handleLongPress(item)` 不再接收事件对象
+- 删除废弃样式 `invisibleOverlay` / `contextMenuContainer` / `contextMenuItem` / `contextText` / `contextTextDanger` / `menuLine`
+- `plusMenu` 宽度 160 → 180（容纳「不显示该聊天」6 字 + 图标不换行）
+
+功能项仍为 `alert('...开发中')` 占位，与原实现保持一致（本轮只改 UI，不动业务）。
+
+**验收**：`npx tsc --noEmit` → 0；`npx eslint "src/app/(tabs)/chat.js"` → 0；`npx expo lint` → 139（119e/20w），持平。
 
 ---
 

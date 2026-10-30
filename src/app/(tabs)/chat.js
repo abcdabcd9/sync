@@ -8,10 +8,8 @@ import {
   Platform,
   Modal,
   Pressable,
-  Dimensions,
   Animated,
   useWindowDimensions,
-  PanResponder,
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
@@ -42,7 +40,9 @@ export default function ChatMainScreen() {
     useChatList(user);
 
   const [selectedChat, setSelectedChat] = useState(null);
-  const [menuConfig, setMenuConfig] = useState({ visible: false, top: 0, chat: null });
+  // 会话长按菜单：与右上角「+」同款小弹窗（贴右上角、圆角卡片、图标+文字行）
+  // 只保留 visible + chat，不再需要按触点计算 top（统一锚定右上角）
+  const [menuConfig, setMenuConfig] = useState({ visible: false, chat: null });
   // 右上角「+」的小弹窗（联系人 / 添加好友）
   const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
@@ -62,28 +62,8 @@ export default function ChatMainScreen() {
     }, [listSlideAnim])
   );
 
-  // iOS 边缘右滑返回首页（原逻辑保留）
-  // ⚠️ 同样用 useState 惰性初始化，避免渲染期读取 ref
-  const [edgeSwipeResponder] = useState(() =>
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
-        const { pageX } = evt.nativeEvent;
-        return (
-          Platform.OS === 'ios' &&
-          pageX < 40 &&
-          gestureState.dx > 10 &&
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
-        );
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        if (gestureState.dx > 50 || gestureState.vx > 0.5) {
-          haptic.light();
-          router.navigate('/');
-        }
-      },
-      onPanResponderTerminationRequest: () => false,
-    })
-  );
+  // 一级 tab 页不再保留 iOS 边缘右滑返回首页手势：
+  // 底栏常驻，用户直接点底栏切换即可，避免与列表横向滚动/长按冲突。
 
   const openChatRoom = (item) => {
     haptic.light();
@@ -95,15 +75,13 @@ export default function ChatMainScreen() {
     }
   };
 
-  const handleLongPress = (item, evt) => {
+  // 长按会话：打开与「+」同款的小弹窗（不再按触点定位）
+  const handleLongPress = (item) => {
     haptic.heavy();
-    const touchY = evt.nativeEvent.pageY;
-    const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-    const topPosition = touchY < SCREEN_HEIGHT / 2 ? touchY : touchY - 180;
-    setMenuConfig({ visible: true, top: topPosition, chat: item });
+    setMenuConfig({ visible: true, chat: item });
   };
 
-  const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, chat: null });
+  const closeActionMenu = () => setMenuConfig({ visible: false, chat: null });
 
   if (!isAuthLoading && !user) {
     return (
@@ -142,7 +120,7 @@ export default function ChatMainScreen() {
               isMuted={!!friendsMap[item.id]?.is_muted}
               isSelected={isTablet && selectedChat?.id === item.id}
               onPress={() => openChatRoom(item)}
-              onLongPress={(e) => handleLongPress(item, e)}
+              onLongPress={() => handleLongPress(item)}
             />
           );
         })
@@ -192,7 +170,6 @@ export default function ChatMainScreen() {
     <SafeAreaView
       style={[styles.container, { backgroundColor: palette.background }]}
       edges={['top']}
-      {...edgeSwipeResponder.panHandlers}
     >
       {isTablet ? (
         <View style={styles.tabletRow}>
@@ -218,53 +195,81 @@ export default function ChatMainScreen() {
         MasterColumn
       )}
 
-      {/* 会话长按菜单（功能项仍为占位，与原实现保持一致） */}
-      <Modal visible={menuConfig.visible} transparent animationType="none" onRequestClose={closeActionMenu}>
-        <Pressable style={styles.invisibleOverlay} onPress={closeActionMenu}>
+      {/* 会话长按菜单：与右上角「+」完全同款的小弹窗（贴右上角 / 圆角卡片 / 图标+文字行）
+          功能项仍为占位，与原实现保持一致 */}
+      <Modal
+        visible={menuConfig.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeActionMenu}
+      >
+        <Pressable style={styles.plusOverlay} onPress={closeActionMenu}>
           <View
             style={[
-              styles.contextMenuContainer,
-              { backgroundColor: isDark ? '#1C1C1E' : '#F9F9F9', top: menuConfig.top },
+              styles.plusMenu,
+              { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: palette.cardBorder },
             ]}
           >
             <TouchableOpacity
-              style={styles.contextMenuItem}
+              style={styles.plusMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('已读开发中');
               }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="标为已读"
             >
-              <Text style={[styles.contextText, { color: palette.textPrimary }]}>标为已读</Text>
+              <Ionicons name="checkmark-done-outline" size={20} color={palette.primary} />
+              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>标为已读</Text>
             </TouchableOpacity>
-            <View style={[styles.menuLine, { backgroundColor: palette.separator }]} />
+
+            <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
+
             <TouchableOpacity
-              style={styles.contextMenuItem}
+              style={styles.plusMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('置顶开发中');
               }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="置顶该聊天"
             >
-              <Text style={[styles.contextText, { color: palette.textPrimary }]}>置顶该聊天</Text>
+              <Ionicons name="arrow-up-circle-outline" size={20} color={palette.primary} />
+              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>置顶该聊天</Text>
             </TouchableOpacity>
-            <View style={[styles.menuLine, { backgroundColor: palette.separator }]} />
+
+            <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
+
             <TouchableOpacity
-              style={styles.contextMenuItem}
+              style={styles.plusMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('隐藏开发中');
               }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="不显示该聊天"
             >
-              <Text style={[styles.contextText, { color: palette.textPrimary }]}>不显示该聊天</Text>
+              <Ionicons name="eye-off-outline" size={20} color={palette.primary} />
+              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>不显示该聊天</Text>
             </TouchableOpacity>
-            <View style={[styles.menuLine, { backgroundColor: palette.separator }]} />
+
+            <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
+
             <TouchableOpacity
-              style={styles.contextMenuItem}
+              style={styles.plusMenuItem}
               onPress={() => {
                 closeActionMenu();
                 alert('删除开发中');
               }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="删除该聊天"
             >
-              <Text style={[styles.contextText, styles.contextTextDanger]}>删除该聊天</Text>
+              <Ionicons name="trash-outline" size={20} color="#FF3B30" />
+              <Text style={[styles.plusMenuText, { color: '#FF3B30' }]}>删除该聊天</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -343,30 +348,13 @@ const styles = StyleSheet.create({
   centerBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
   emptyText: { marginTop: 16 },
   tabletHint: { marginTop: 16, fontSize: 18 },
-  invisibleOverlay: { flex: 1, backgroundColor: 'transparent' },
-  contextMenuContainer: {
-    position: 'absolute',
-    right: 24,
-    width: 140,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(150,150,150,0.3)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  contextMenuItem: { paddingVertical: 14, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
-  contextText: { fontSize: 15, fontWeight: '400', textAlign: 'center' },
-  contextTextDanger: { color: '#FF3B30' },
-  menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(150,150,150,0.1)' },
-  // 「+」小弹窗：贴右上角，宽度 160，圆角 14，带阴影
+  // 右上角小弹窗（「+」菜单 与 会话长按菜单 共用同一套样式）
   plusOverlay: { flex: 1, backgroundColor: 'transparent' },
   plusMenu: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 96 : 72,
     right: 16,
-    width: 160,
+    width: 180,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
