@@ -59,6 +59,14 @@ export function toStoragePath(value) {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
+  // 🚫 本地文件 URI（file:// / content:// / ph:// / assets-library://）不是桶内对象路径。
+  //    乐观发送阶段 mediaUrl 仍是本地 URI，若原样当作 path 去 createSignedUrl，
+  //    必然失败并返回 null —— 表现为「刚发出去的图片不显示 / 语音点不动」。
+  //    这里显式返回 null，让调用方走「本地直读」分支。
+  if (/^(file|content|ph|assets-library|data|blob):/i.test(trimmed)) {
+    return null;
+  }
+
   // 已是相对路径（不含协议头）
   if (!/^https?:\/\//i.test(trimmed)) {
     return trimmed;
@@ -78,6 +86,17 @@ export function toStoragePath(value) {
 /** 判断是否为「历史完整 URL」（需要直接透传渲染） */
 function isAbsoluteUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
+}
+
+/**
+ * 判断是否为「本地文件 URI」（需要直接透传渲染，不能拿去签名）。
+ *
+ * 乐观发送阶段 mediaUrl 是本地 URI（iOS: file:///...，Android: content:// 或 file://），
+ * 这些值必须原样交给 <Image> / 音频播放器读取，而不是当作桶内对象路径。
+ */
+function isLocalUri(value) {
+  return typeof value === 'string'
+    && /^(file|content|ph|assets-library|data|blob):/i.test(value.trim());
 }
 
 /** LRU 写入：命中则刷新顺序，超限则淘汰最旧 */
@@ -161,17 +180,20 @@ export function clearSignedUrlCache() {
 export function useSignedMediaUrl(value, ttlSeconds = SIGNED_URL_TTL) {
   const path = toStoragePath(value);
   const isAbsolute = isAbsoluteUrl(value);
+  // 🖼️ 本地 URI（刚发出去、尚未回填对象路径的乐观消息）：直接交给 Image / Audio 读取
+  const isLocal = isLocalUri(value);
 
-  // 初始值：历史完整 URL 直接透传；相对路径先查缓存
+  // 初始值：历史完整 URL / 本地 URI 直接透传；相对路径先查缓存
   const [url, setUrl] = useState(() => {
     if (isAbsolute) return value.trim();
+    if (isLocal) return value.trim();
     if (!path) return null;
     return cacheGet(path);
   });
 
   useEffect(() => {
-    // 历史完整 URL：直接透传，不发起签名请求
-    if (isAbsolute) return undefined;
+    // 历史完整 URL / 本地 URI：直接透传，不发起签名请求
+    if (isAbsolute || isLocal) return undefined;
     if (!path) return undefined;
 
     // 缓存命中：无需 setState（初始值已从缓存读取，且缓存不会在渲染间变化）
@@ -184,10 +206,12 @@ export function useSignedMediaUrl(value, ttlSeconds = SIGNED_URL_TTL) {
     });
 
     return () => { cancelled = true; };
-  }, [isAbsolute, path, ttlSeconds]);
+  }, [isAbsolute, isLocal, path, ttlSeconds]);
 
-  // 派生值：绝对 URL / 缓存命中 / 异步签名结果，统一在此收敛
-  const resolved = isAbsolute ? value.trim() : (url ?? (path ? cacheGet(path) : null));
+  // 派生值：绝对 URL / 本地 URI / 缓存命中 / 异步签名结果，统一在此收敛
+  const resolved = (isAbsolute || isLocal)
+    ? value.trim()
+    : (url ?? (path ? cacheGet(path) : null));
 
   return { url: resolved, loading: !resolved };
 }

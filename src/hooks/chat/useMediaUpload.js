@@ -4,6 +4,8 @@ import { Platform, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { File } from 'expo-file-system';
+import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+import { decode as base64ToArrayBuffer } from 'base64-arraybuffer';
 import * as Haptics from 'expo-haptics';
 
 import { supabase } from '../../services/supabase';
@@ -94,8 +96,6 @@ export async function uploadToSupabase(uri, prefix, userId) {
     if (Platform.OS === 'ios' && !safeUri.startsWith('file://')) {
       safeUri = 'file://' + safeUri;
     }
-    const response = await fetch(safeUri);
-    const blob = await response.blob();
 
     // 🍎 正确匹配视频和音频的容错后缀，绝不滥杀无辜全变 JPG
     let ext = uri.split('.').pop()?.split('?')[0];
@@ -105,19 +105,73 @@ export async function uploadToSupabase(uri, prefix, userId) {
       else ext = 'jpg';
     }
 
+    // ⚠️ 关键修复（RN 上传必须用 ArrayBuffer）：
+    //   Supabase 官方文档明确说明 —— 在 React Native 上 `Blob` / `File` / `FormData`
+    //   作为 upload body 都「不能按预期工作」（fetch(file://) 在 RN 新架构下会失败，
+    //   且 RN 的 Blob 实现无法被 storage-js 正确序列化）。
+    //   唯一可靠路径：本地文件 → base64 → ArrayBuffer → upload()。
+    //   旧实现用 `fetch(uri).blob()`，在真机上直接抛错并被 catch 吞掉返回 null，
+    //   导致图片 / 视频 / 语音全部「发不出去」或「退出重进就消失」。
+    const base64 = await readAsStringAsync(safeUri, { encoding: EncodingType.Base64 });
+    if (!base64) throw new Error('读取本地文件失败：内容为空');
+    const arrayBuffer = base64ToArrayBuffer(base64);
+    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+      throw new Error('读取本地文件失败：字节长度为 0');
+    }
+
     // 🔒 P0-3：对象路径首段 = user_id，供 RLS 精确匹配
     const fileName = `${userId}/${prefix}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
     const { error } = await supabase.storage
       .from(STORAGE_BUCKET)
-      .upload(fileName, blob, { contentType: blob.type || 'application/octet-stream' });
+      .upload(fileName, arrayBuffer, { contentType: guessContentType(ext) });
     if (error) throw error;
 
     // 签名 URL 仅用于即时渲染，失败不阻断上传（path 已可用，渲染层会重试签名）
     const signedUrl = await createSignedMediaUrl(fileName, SIGNED_URL_TTL);
     return { path: fileName, signedUrl };
   } catch (e) {
-    console.warn('媒体上传失败:', e);
+    console.warn('媒体上传失败:', e?.message || e);
     return null;
+  }
+}
+
+/**
+ * 按扩展名推断 MIME（ArrayBuffer 上传时 contentType 必须显式给出，
+ * 否则 storage 会默认存成 text/plain，导致图片 / 语音无法渲染或播放）。
+ */
+function guessContentType(ext) {
+  switch (String(ext || '').toLowerCase()) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'heic':
+      return 'image/heic';
+    case 'heif':
+      return 'image/heif';
+    case 'gif':
+      return 'image/gif';
+    case 'mp4':
+      return 'video/mp4';
+    case 'mov':
+      return 'video/quicktime';
+    case 'm4v':
+      return 'video/x-m4v';
+    case 'm4a':
+      return 'audio/mp4';
+    case 'aac':
+      return 'audio/aac';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'caf':
+      return 'audio/x-caf';
+    default:
+      return 'application/octet-stream';
   }
 }
 
@@ -139,8 +193,9 @@ function getLocalFileSize(uri) {
  * @param {string} params.targetId 聊天对象 ID
  * @param {object} params.user 当前登录用户
  * @param {Function} params.saveAndSend useChatMessages 暴露的乐观发送
+ * @param {Function} [params.patchMessage] useChatMessages 暴露的乐观消息回填
  */
-export function useMediaUpload({ targetId, user, saveAndSend }) {
+export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const uploadingRef = useRef(false);
@@ -150,6 +205,19 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
     // 防重入：上传中忽略重复点击
     if (uploadingRef.current) return;
 
+    // 📷 相册权限：iOS 14+ 为「受限访问」，Android 13+ 为 READ_MEDIA_IMAGES / VIDEO。
+    //    未申请直接 launchImageLibraryAsync 在部分机型上会静默返回 canceled，
+    //    表现为「点了媒体库什么都没发生」。
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('无法访问相册', '请在系统设置中允许 Sync 访问你的照片与视频。');
+        return;
+      }
+    } catch (e) {
+      console.warn('申请相册权限失败:', e?.message || e);
+    }
+
     let result;
     try {
       result = await ImagePicker.launchImageLibraryAsync({
@@ -158,7 +226,8 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
         videoMaxDuration: 120,
       });
     } catch (e) {
-      console.warn('打开相册失败:', e);
+      console.warn('打开相册失败:', e?.message || e);
+      Alert.alert('打开相册失败', '请稍后重试，或检查系统相册权限。');
       return;
     }
 
@@ -220,13 +289,21 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
       //    因此历史照片永不失效。
       if (!mediaResult?.path) throw new Error('media upload failed');
 
-      await supabase.from('messages').insert({
+      const { error: insertError } = await supabase.from('messages').insert({
         id: msgId,
         user_id: user.id,
         receiver_id: targetId,
         type: msgType,
         media_url: mediaResult.path,
         thumbnail_url: thumbResult?.path ?? null,
+      });
+      if (insertError) throw insertError;
+
+      // ⑥-b 回填乐观消息：把本地 file:// URI 换成真实对象路径，
+      //      否则本次会话内图片 / 视频无法渲染（必须退出重进才恢复）。
+      patchMessage?.(msgId, {
+        mediaUrl: mediaResult.path,
+        thumbnailUrl: thumbResult?.path ?? localThumbUri,
       });
 
       // ⑦ 推送通知
@@ -240,14 +317,15 @@ export function useMediaUpload({ targetId, user, saveAndSend }) {
       setUploadProgress(1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
-      console.warn('媒体发送失败:', e);
+      console.warn('媒体发送失败:', e?.message || e);
+      Alert.alert('发送失败', '媒体上传未完成，请检查网络后重试。');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       uploadingRef.current = false;
       setUploading(false);
       setUploadProgress(0);
     }
-  }, [user, targetId, saveAndSend]);
+  }, [user, targetId, saveAndSend, patchMessage]);
 
   return {
     uploading,

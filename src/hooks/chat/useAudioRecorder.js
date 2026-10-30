@@ -1,6 +1,6 @@
 // --- START OF FILE src/hooks/chat/useAudioRecorder.js ---
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import {
   useAudioRecorder as useExpoAudioRecorder,
@@ -64,8 +64,9 @@ const generateUUID = () =>
  * @param {string} params.targetId 聊天对象 ID
  * @param {object} params.user 当前登录用户
  * @param {Function} params.saveAndSend useChatMessages 暴露的乐观发送
+ * @param {Function} [params.patchMessage] useChatMessages 暴露的乐观消息回填
  */
-export function useAudioRecorder({ targetId, user, saveAndSend }) {
+export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
@@ -193,26 +194,41 @@ export function useAudioRecorder({ targetId, user, saveAndSend }) {
         //    数据库只存相对对象路径（永久有效），签名 URL 仅供即时播放，
         //    渲染时由 useSignedMediaUrl 按需重新签名，因此历史语音永不失效。
         const audioResult = await uploadToSupabase(tempUri, 'audio', user.id);
-        if (audioResult?.path) {
-          await supabase.from('messages').insert({
-            id: msgId,
-            user_id: user.id,
-            receiver_id: targetId,
-            type: 'audio',
-            media_url: audioResult.path,
-            duration: durationSec,
-          });
-          // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
-          sendPushNotification(targetId, '', '[语音消息]', {
-            type: 'chat',
-            targetId: user.id,
-          });
+        if (!audioResult?.path) {
+          // 上传失败：乐观消息里的本地 URI 无法签名 → 点不动、退出重进就消失。
+          // 明确告知用户，而不是静默留一条「幽灵消息」。
+          console.warn('语音上传失败，消息未落库');
+          Alert.alert('语音发送失败', '语音上传未完成，请检查网络后重试。');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          return;
         }
+
+        const { error: insertError } = await supabase.from('messages').insert({
+          id: msgId,
+          user_id: user.id,
+          receiver_id: targetId,
+          type: 'audio',
+          media_url: audioResult.path,
+          duration: durationSec,
+        });
+        if (insertError) {
+          console.warn('语音消息落库失败:', insertError.message);
+          return;
+        }
+
+        // 回填乐观消息：本地 file:// → 真实对象路径，保证本次会话内即可播放
+        patchMessage?.(msgId, { mediaUrl: audioResult.path });
+
+        // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
+        sendPushNotification(targetId, '', '[语音消息]', {
+          type: 'chat',
+          targetId: user.id,
+        });
       }, 150);
     } catch (e) {
       console.error('停止录音异常:', e);
     }
-  }, [recorder, user, targetId, saveAndSend, clearDurationTimer]);
+  }, [recorder, user, targetId, saveAndSend, patchMessage, clearDurationTimer]);
 
   /** ❌ 取消录音（丢弃，不发送） */
   const cancelRecord = useCallback(() => {

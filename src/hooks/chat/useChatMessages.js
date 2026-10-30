@@ -180,6 +180,25 @@ export function useChatMessages(targetId, user) {
     });
   }, [CACHE_MSG_KEY]);
 
+  // 2️⃣-b 乐观消息回填：媒体上传成功后，把本地 file:// URI 换成真实对象路径
+  //      （否则刚发出的图片 / 视频 / 语音在本次会话内无法渲染或播放，
+  //        必须退出重进才恢复正常 —— 因为重进时是从云端拉取的真实路径）
+  const patchMessage = useCallback((id, patch) => {
+    if (!id || !patch) return;
+    setMessages((prev) => {
+      let changed = false;
+      const updated = prev.map((m) => {
+        if (m.id !== id) return m;
+        changed = true;
+        return { ...m, ...patch };
+      });
+      if (changed) {
+        AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(updated.slice(0, CACHE_LIMIT)));
+      }
+      return changed ? updated : prev;
+    });
+  }, [CACHE_MSG_KEY]);
+
   // 3️⃣ 撤回：本地立即改为 action，再同步云端
   const revokeMessage = useCallback(async (id) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -207,6 +226,7 @@ export function useChatMessages(targetId, user) {
     loading,
     messagesRef,
     saveAndSend,
+    patchMessage,
     revokeMessage,
     deleteMessage,
     formatDbMsg,

@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-10-30（阶段 4 修复 11：语音发出去无法播放 / 退出重进消失 / 图片视频发不出去 —— 真根因）
+
+用户反馈：语音能录，但发出去点不动播放，退出到主界面再进聊天详情页就消失了；图片和视频完全发不出去。
+
+### 根因（不是权限，不是 RLS，是上传 body 类型）
+
+翻 `node_modules/@supabase/storage-js/dist/index.d.mts` 的 `upload()` 文档注释，里面写得很直白：
+
+> For React Native, using either `Blob`, `File` or `FormData` does not work as intended.
+> Upload file using `ArrayBuffer` from base64 file data instead.
+
+旧实现是 `fetch(fileUri)` → `response.blob()` → `upload(fileName, blob, ...)`。在 RN 0.88 新架构下这条链路会失败（或产出 0 字节对象），而 `catch` 里 `return null` 把错误吞了，于是：
+
+1. `uploadToSupabase` 返回 `null` → `if (!mediaResult?.path) throw` → **不落库** → 退出重进自然消失；
+2. 乐观消息里的 `mediaUrl` 一直是本地 `file://` URI → `useSignedMediaUrl` 把它当对象路径去 `createSignedUrl` → 必然失败 → `signedMediaUrl` 为 `null` → `MessageBubble.handlePlayAudio` 直接 `return` → **点不动**。
+
+### 修复
+
+1. **`useMediaUpload.uploadToSupabase` 重写**：`readAsStringAsync(uri, { encoding: EncodingType.Base64 })` → `base64-arraybuffer.decode()` → `upload(path, arrayBuffer, { contentType })`。
+   - `contentType` 必须显式给（ArrayBuffer body 不给会默认存成 `text/plain`），新增 `guessContentType(ext)` 按扩展名映射，且与 `chat_media` 桶的 `allowed_mime_types` 白名单对齐。
+   - `base64-arraybuffer@1.0.2` 本来就在 `package.json` 里但从未被使用，这次正好用上，零新增依赖。
+2. **`useSignedMediaUrl` 支持本地 URI**：新增 `isLocalUri()`，`file:// / content:// / ph:// / assets-library:// / data: / blob:` 直接透传渲染，不再拿去签名；`toStoragePath` 对这些协议显式返回 `null`。
+3. **`useChatMessages` 新增 `patchMessage(id, patch)`**：上传 + 落库成功后，把乐观消息的 `mediaUrl` / `thumbnailUrl` 从本地 URI 换成真实对象路径（同时刷新 AsyncStorage 缓存）。这样**本次会话内**就能立刻看到图、播语音，不必退出重进。
+4. **`useAudioRecorder.stopAndSendRecord`**：上传失败不再静默留幽灵消息，改为 `Alert` 明确提示；落库成功后 `patchMessage` 回填路径。
+5. **`useMediaUpload.pickAndSendMedia`**：补 `requestMediaLibraryPermissionsAsync()`（未授权时明确提示去系统设置），`insert` 检查 `error`，失败弹「发送失败」。
+6. 清掉临时诊断日志（`[pick] ...`）。
+
+### 验收
+
+- `npx tsc --noEmit` → 0
+- `npx expo lint` → 139 problems（119 errors / 20 warnings），与基线持平，无新增
+
+---
+
 ## 2026-10-30
 
 **密钥审计**，4 项扫描全过：

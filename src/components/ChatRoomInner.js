@@ -39,9 +39,9 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const routeParams = useLocalSearchParams();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
-  const { messages, loading, messagesRef, saveAndSend, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
-  const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend });
-  const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend });
+  const { messages, loading, messagesRef, saveAndSend, patchMessage, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
+  const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend, patchMessage });
+  const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend, patchMessage });
 
   // ===== 会话偏好（背景） + 收藏 =====
   const prefs = useChatPrefs(user);
