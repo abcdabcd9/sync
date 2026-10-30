@@ -198,17 +198,17 @@ export default function SettingsScreen() {
           <View style={styles.group}>
             <SettingRow title="通知" icon="notifications" iconBg="#FF3B30" onPress={() => handleNotImplemented('通知设置')} isFirst palette={palette} />
             <SettingRow title="外观模式" icon="color-palette" iconBg="#FF9F0A" value={currentThemeLabel} onPress={handlePickTheme} palette={palette} />
-            <SettingRow title="朋友权限" icon="people" iconBg="#32ADE6" onPress={() => handleNotImplemented('朋友圈与权限')} palette={palette} />
-            <SettingRow title="存储空间" icon="server" iconBg="#8E8E93" value="1.2 GB" onPress={() => handleNotImplemented('存储管理')} palette={palette} />
-            <SettingRow title="更多" icon="ellipsis-horizontal" iconBg="#BF5AF2" value="关怀模式" onPress={() => handleNotImplemented('更多通用设置')} isLast palette={palette} />
+            <SettingRow title="朋友权限" icon="people" iconBg="#32ADE6" onPress={() => router.push('/settings/privacy')} palette={palette} />
+            <SettingRow title="存储空间" icon="server" iconBg="#8E8E93" onPress={() => router.push('/settings/storage')} palette={palette} />
+            <SettingRow title="更多" icon="ellipsis-horizontal" iconBg="#BF5AF2" onPress={() => router.push('/settings/more')} isLast palette={palette} />
           </View>
 
           {/* 3. 功能栏 */}
           <Text style={[styles.sectionTitle, { color: palette.textSecondary, marginTop: 24 }]}>功能</Text>
           <View style={styles.group}>
-            <SettingRow title="聊天设置" icon="chatbubbles" iconBg="#34C759" onPress={() => handleNotImplemented('聊天背景与听筒模式')} isFirst palette={palette} />
+            <SettingRow title="聊天设置" icon="chatbubbles" iconBg="#34C759" onPress={() => router.push('/settings/chat')} isFirst palette={palette} />
             <SettingRow title="健康与打卡偏好" icon="fitness" iconBg="#FF2D55" onPress={() => setShowHealthModal(true)} palette={palette} />
-            <SettingRow title="自动下载设置" icon="cloud-download" iconBg="#0A84FF" onPress={() => handleNotImplemented('自动下载配置')} isLast palette={palette} />
+            <SettingRow title="自动下载设置" icon="cloud-download" iconBg="#0A84FF" onPress={() => router.push('/settings/download')} isLast palette={palette} />
           </View>
 
           {/* 4. 底部操作栏 */}

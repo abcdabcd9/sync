@@ -208,6 +208,55 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（设置页占位项补全）
+
+设置页里 7 个「功能开发中」占位项，这次补 5 个（通知、切换账号先不动）。
+
+**做了啥**：
+
+1. **新建 `src/hooks/useAppSettings.js`** —— 统一设置持久化中心。`DEFAULT_SETTINGS` 11 个字段（朋友圈可见范围 / 允许加好友 / 允许被搜索 / 聊天背景 / 听筒模式 / 消息预览 / 自动下载图片·视频·文件 / 关怀模式 / 语言），`STORAGE_KEY = '@app_settings'`。范式照抄 `ThemeContext`：内存优先 → 异步 `setItem` → 启动读盘带 `cancelled` 标志 → 失败只 `console.warn` 不抛。`updateSetting(key, value)` 带白名单校验，未知 key 直接忽略并告警。
+
+2. **新建 `src/constants/settings.js`** —— `MOMENTS_VISIBILITY`（3 项）、`CHAT_BACKGROUNDS`（3 项）、`LANGUAGES`（2 项）+ `labelOf(options, key, fallback)` 取值助手。
+
+3. **新建 `src/components/settings/SettingsPage.js`** —— L3 设置页通用外壳。导航栏跟 `settings.js` 完全一致（`chevron-back` 28 + 「返回」+ 居中 17/600 标题 + 80 宽占位），返回走 `router.canGoBack() ? back() : replace('/settings')`。同时导出 `Group`（`radiusList` 圆角 + `overflow: hidden`）和 `GroupTitle`（13px 大写灰字）。
+
+4. **新建 `src/components/settings/SwitchRow.js`** —— 开关行。`minHeight: 52`、`paddingHorizontal: 16`、`gap: 12`，RN 原生 `Switch`，`trackColor={{ false: colors.separator, true: colors.primary }}`，切换时 `haptic.selection()`。首尾行 14 圆角，非末行 hairline 分隔线。
+
+5. **新建 5 个 L3 页面**：
+   - `settings/privacy.js` 朋友权限 —— 朋友圈可见范围（Alert 单选）+ 允许加好友 + 允许被搜索
+   - `settings/chat.js` 聊天设置 —— 聊天背景（Alert 单选）+ 听筒模式 + 消息预览
+   - `settings/download.js` 自动下载设置 —— 图片 / 视频 / 文件 三开关
+   - `settings/more.js` 更多 —— 关怀模式 + 界面语言（Alert 单选）+ 恢复默认设置（destructive → `resetSettings()`）
+   - `settings/storage.js` 存储空间 —— **真实统计**，不是假数据
+
+6. **改造 `src/app/settings.js`** —— 5 个占位项从 `handleNotImplemented(...)` 改成 `router.push('/settings/xxx')`，顺手删掉两个硬编码假值：存储空间的 `value="1.2 GB"`、更多的 `value="关怀模式"`。`handleNotImplemented` 保留（通知、切换账号还在用）。
+
+**存储空间怎么算的**：
+
+`AsyncStorage.getAllKeys()` → `multiGet(keys)` → 按 key 前缀分 4 类（健康打卡 / 外观主题 / 应用设置 / 其他兜底）→ 累加 `byteLength(key) + byteLength(value)`。`byteLength` 是手写 UTF-8 估算：`<0x80` 记 1 字节、`<0x800` 记 2 字节、代理对（emoji）记 4 字节并跳过一个码元、其余记 3 字节。清缓存走 `AsyncStorage.clear()` + 二次 `measure()` 刷新。
+
+**踩的坑**：
+
+1. **`apply_diff` 又栽在 `settings.js`**。第一次两个 SEARCH 块一起提交，报 `No sufficiently similar match found at line: 209 (97% similar)`，两块都没落地。拆成两个独立块、各自带准确行号后一次成功。教训：同一文件多处改动，行号必须按**原始文件**算，不能按前一块改完后的算。
+
+2. **`storage.js` 的 `set-state-in-effect`**。`measure()` 首行 `setLoading(true)` 是同步 setState，`useEffect(() => { measure(); }, [measure])` 直接触发规则报错。改法：`measure` 里删掉 `setLoading(true)`（初始值本来就是 `true`），effect 改成 `let cancelled` + 异步 IIFE 包一层；清缓存路径里手动补 `setLoading(true)`。
+
+3. **`catch (e)` 未使用** → 改 `catch {`（无绑定 catch）。`download.js` 里 `const { colors } = useAppTheme()` 没用到 → 整行删掉，连带 `useAppTheme` 的 import 一起删。
+
+**数字**：
+
+- 新增 9 个文件：`useAppSettings.js`、`constants/settings.js`、`components/settings/SettingsPage.js`、`components/settings/SwitchRow.js`、`settings/privacy.js`、`settings/chat.js`、`settings/download.js`、`settings/more.js`、`settings/storage.js`
+- 修改 1 个文件：`src/app/settings.js`（5 行占位项 + 2 个假值）
+- `tsc --noEmit` → 0 错误
+- `eslint src/app/settings src/components/settings src/hooks/useAppSettings.js src/constants/settings.js` → 0 problems
+- `expo lint` → 164 problems（141 errors / 23 warnings），**跟基线一模一样**
+
+**注意**：`settings.js` 和 `settings/` 目录在 Expo Router 里**可以共存** —— `/settings` 走 `settings.js`，`/settings/privacy` 走 `settings/privacy.js`。执行书 §13.5.8 说「必须把 `settings.js` 改成重定向」是错的，不用管。
+
+**开关只持久化，行为没接**。听筒模式、消息预览、自动下载、关怀模式、语言这些开关现在只写进 `@app_settings`，聊天页 / 全局渲染还没读它们。等后续阶段再接。
+
+---
+
 ## 模板（复制用）
 
 ```
