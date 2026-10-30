@@ -208,6 +208,50 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4：聊天页纯 IM 化）
+
+聊天页从「消息 / 通讯录」双 Tab 的混合页，收敛为**纯消息列表**。联系人、搜索加友下沉到 L3 页面，符合执行书 §14 的 IM 化目标。
+
+**做了啥**：
+
+1. **新建 `src/hooks/chat/useChatList.js`**（239 行）— 会话列表数据层
+   - `formatPreview` 原样迁移（含 `SYNC_CINEMA_ENDED` / `SYNC_PARTNER_*` / `SYNC_SYSTEM` 全部 subtype 分支）
+   - `fetchAll` 原样迁移：friends → friend_requests（accepted 补好友 / pending 收请求）→ profiles → 未读数 → 最近 200 条消息生成预览与时间
+   - 实时监听原样迁移：`INSERT` 更新预览/时间/未读 +1，`UPDATE` 同步撤回后的预览；频道名带 `Date.now()` 保证唯一
+   - 导出 `conversations`（按最新消息时间倒序）、`refresh`、`getDisplayName`（remark 优先）
+   - ⚠️ `userIdRef` 改为在 `useEffect` 中同步，避免渲染期写 ref
+
+2. **新建 `src/components/chat/ConversationRow.js`**（121 行）— 会话行
+   - 与 `renderMessagesView` 逐项对齐：46×46 圆角 10 头像、未读角标（静音时降级为小红点）、`[N条]` 预览前缀、静音图标
+   - 保留 `minWidth: 0` + `flexShrink` 防长昵称撑爆布局（安全审计 #18）
+
+3. **新建 `src/app/chat/contacts.js`**（237 行）— 联系人页
+   - 搜索入口行 → `/chat/search`
+   - 新朋友请求：同意 / 拒绝，保留安全审计 #6/#7 归属校验（`receiver_id !== user.id` 直接 return；`friends` 插入强制 `user_id: user.id`）
+   - 所有联系人 → `/contact_profile`
+
+4. **新建 `src/app/chat/search.js`**（201 行）— 搜索加友
+   - 保留安全审计 #16：500ms 防抖 + 在途请求去重 + 同关键词不重复查询 + 长度 < 3 不发起查询
+   - 新增「已是好友」前置校验（原实现依赖内存 `friends` 数组，独立页面无此数据，改为查 `friends` 表双向匹配）
+
+5. **重写 `src/app/(tabs)/chat.js`**（607 → 268 行）
+   - 删除 `activeTab` 双 Tab、浮动 Dock（BlurView）、`renderContactsView`、搜索相关全部状态与逻辑
+   - 保留：平板双栏（`isTablet` + `ChatRoomInner`）、iOS 边缘右滑返回首页、长按上下文菜单（4 项仍为占位）、列表入场动画
+   - 右上角新增「+」→ `/chat/contacts`
+   - ⚠️ `Animated.Value` 与 `PanResponder` 改用 `useState(() => ...)` 惰性初始化，修复 `react-hooks/refs`
+
+**验收**：
+
+- `npx tsc --noEmit` → 0
+- `npx eslint "src/app/(tabs)/chat.js" src/app/chat/ src/hooks/chat/useChatList.js src/components/chat/` → 0 problems
+- `npx expo lint` → **149 problems (129 errors, 20 warnings)**，比上轮 158 **减少 9 个**，无回归
+
+**原有功能保全清单**：消息收发、未读角标、静音标记、实时置顶排序、长按菜单、平板双栏、左滑返回、好友请求同意/拒绝、Sync ID 搜索加友 —— 全部保留。
+
+**遗留**：长按菜单 4 项（标为已读 / 置顶 / 不显示 / 删除）仍为 `alert('开发中')`，与改造前一致，待后续实现。
+
+---
+
 ## 2026-10-30（阶段 3：空间页 4 卡布局）
 
 空间页从「2 个按钮」升级为执行书 §13 规定的 **4 卡布局**：私密空间 / 朋友圈 / 放映厅 / 浏览器。
