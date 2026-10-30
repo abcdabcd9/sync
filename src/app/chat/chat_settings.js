@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/chat/chat_settings.js ---
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,7 +15,7 @@ import SwitchRow from '../../components/settings/SwitchRow';
 
 // params: targetId, targetName
 // 聊天设置页（L2 聊天室右上角「3 个点」跳转目标）
-// 功能：查找聊天记录 / 消息免打扰 + 置顶聊天提醒 / 聊天背景 / 清空聊天记录 / 投诉
+// 功能：联系人头像卡片 / 查找聊天记录 / 消息免打扰 + 置顶聊天提醒 / 聊天背景 / 清空聊天记录 / 投诉
 export default function ChatSettingsScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
@@ -24,8 +24,48 @@ export default function ChatSettingsScreen() {
 
   const prefs = useChatPrefs(user);
 
+  // 联系人资料（用于顶部头像卡片 + 跳转朋友设置时携带参数）
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!targetId) return () => { cancelled = true; };
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id, nickname, username, sync_id')
+          .eq('id', targetId)
+          .maybeSingle();
+        if (!cancelled) setProfile(data || null);
+      } catch {
+        if (!cancelled) setProfile(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [targetId]);
+
+  const displayName = profile?.nickname || profile?.username || targetName || '好友';
+  const displayId = profile?.sync_id || profile?.username || '';
+
   const currentBgKey = prefs.getBackground(targetId);
   const currentBg = labelOf(CHAT_BACKGROUNDS, currentBgKey, '跟随主题');
+
+  // ===== 0. 头像卡片 → 朋友设置页（与通讯录「3 个点」同一目标）=====
+  const handleOpenFriendSettings = () => {
+    if (!targetId) return;
+    haptic.light();
+    router.push({
+      pathname: '/chat/friend_settings',
+      params: {
+        id: targetId,
+        nickname: profile?.nickname || '',
+        username: profile?.username || '',
+        sync_id: profile?.sync_id || '',
+        remark: '',
+      },
+    });
+  };
 
   // ===== 1. 查找聊天记录 → 独立页 =====
   const handleOpenSearch = () => {
@@ -89,7 +129,34 @@ export default function ChatSettingsScreen() {
   };
 
   return (
-    <SettingsPage title={targetName ? `${targetName}` : '聊天设置'}>
+    <SettingsPage title={displayName}>
+      {/* 0. 联系人头像卡片 → 朋友设置页 */}
+      <TouchableOpacity
+        style={[styles.profileCard, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}
+        onPress={handleOpenFriendSettings}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${displayName} 的朋友设置`}
+        accessibilityHint="打开朋友设置页面"
+      >
+        <View style={[styles.profileAvatar, { backgroundColor: palette.primary }]}>
+          <Text style={styles.profileAvatarText}>
+            {displayName.substring(0, 2).toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.profileTextCol}>
+          <Text style={[styles.profileName, { color: palette.textPrimary }]} numberOfLines={1}>
+            {displayName}
+          </Text>
+          {!!displayId && (
+            <Text style={[styles.profileId, { color: palette.textSecondary }]} numberOfLines={1}>
+              ID: {displayId}
+            </Text>
+          )}
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+      </TouchableOpacity>
+
       {/* 1. 查找聊天记录（跳转页） */}
       <GroupTitle>聊天记录</GroupTitle>
       <Group>
@@ -175,6 +242,29 @@ export default function ChatSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  profileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  profileAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarText: { color: '#FFFFFF', fontSize: 18, fontWeight: '600' },
+  profileTextCol: { flex: 1 },
+  profileName: { fontSize: 17, fontWeight: '600' },
+  profileId: { fontSize: 12, marginTop: 4 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

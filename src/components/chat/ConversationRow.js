@@ -25,8 +25,8 @@ export default function ConversationRow({
 }) {
   const { isDark, colors: palette } = useAppTheme();
 
-  // 置顶行背景加深（在上一版基础上再压暗约 20%，与选中态区分明显）
-  const pinnedBg = isDark ? '#0A0A0B' : '#E2E2E7';
+  // 置顶行背景：浅色模式「压暗」、深色模式「提亮」，两者对称，都与选中态区分明显
+  const pinnedBg = isDark ? '#2A2A2E' : '#E2E2E7';
   const selectedBg = isDark ? '#1C1C1E' : '#F2F2F7';
 
   return (

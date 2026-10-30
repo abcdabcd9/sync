@@ -208,6 +208,31 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 7：深色置顶提亮 + 聊天设置头像卡片）
+
+**1. 深色模式置顶行改为「提亮」**
+
+上一版深色模式把置顶行压暗到 `#0A0A0B`，与深色背景几乎融为一体，看不出置顶。改为与浅色模式对称的「提亮」：
+
+| 主题 | 置顶行 | 选中态 | 方向 |
+|---|---|---|---|
+| 浅色 | `#E2E2E7` | `#F2F2F7` | 压暗 |
+| 深色 | `#2A2A2E` | `#1C1C1E` | **提亮** |
+
+见 [`ConversationRow.js`](src/components/chat/ConversationRow.js:28)。
+
+**2. 聊天设置页顶部新增联系人头像卡片**
+
+[`chat_settings.js`](src/app/chat/chat_settings.js:19) 在「查找聊天记录」上方插入一张卡片：52×52 圆角头像（昵称前两字）+ 昵称 + `ID: xxx` + 右箭头。
+
+- 数据来源：`useEffect` 里 `supabase.from('profiles').select('id, nickname, username, sync_id').eq('id', targetId).maybeSingle()`，失败时回退到路由参数 `targetName`。
+- 点击 → `router.push('/chat/friend_settings')`，携带 `id / nickname / username / sync_id`，**与通讯录详细页「3 个点」跳转的是同一个页面**。
+- 页面标题同步改为 `displayName`（优先用 profile 昵称）。
+
+**验收**：`npx tsc --noEmit` → 0；目标文件 `eslint` → 0；全量 `npx expo lint` → 139 problems（119 errors / 20 warnings），与基线持平。
+
+---
+
 ## 2026-10-30（阶段 4 修复 6：隐藏恢复 + 置顶视觉 + 「3 个点」全面页面化）
 
 用户报告：长按会话选「不显示该聊天」后，该会话永久消失，即使重新对话也不回来。同时要求把「3 个点」从弹窗改为跳转页，并拆出二级设置页。
