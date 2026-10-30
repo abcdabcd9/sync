@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../context/ThemeContext';
 import { SIZES } from '../constants/theme';
+import { haptic } from '../constants/haptics';
 
 const ThemedText = React.memo(({ children, style, color, ...props }) => (
   <Text style={[style, { color }]} {...props}>
@@ -109,9 +110,10 @@ export default function WaterProgress({ waterAmount, maxWater, onSetWater, setSc
   ).current;
 
   const startAction = (direction) => {
-    stopAction(); 
+    stopAction();
+    haptic.light();
     const actionFunc = direction > 0 ? actionsRef.current.onAdd : actionsRef.current.onMinus;
-    actionFunc(); 
+    actionFunc();
     holdStartTime.current = Date.now();
     tickCount.current = 0;
     timerRef.current = setInterval(() => {
@@ -129,6 +131,13 @@ export default function WaterProgress({ waterAmount, maxWater, onSetWater, setSc
   };
 
   const stopAction = () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+
+  // 水位达标时给一次选择反馈（只在跨过目标线那一刻触发）
+  const prevDoneRef = useRef(done);
+  useEffect(() => {
+    if (done && !prevDoneRef.current) haptic.selection();
+    prevDoneRef.current = done;
+  }, [done]);
 
   return (
     <View style={[styles.card, { backgroundColor: palette.card }]}>

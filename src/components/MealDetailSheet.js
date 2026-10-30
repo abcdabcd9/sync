@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, StyleSheet, TouchableOpacity, Pressable, Animated, Platform } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 import { useHealthData } from '../hooks/useHealthData';
+import { SPRING, DURATION } from '../constants/motion';
+import { haptic } from '../constants/haptics';
 
 export default function MealDetailSheet({ meal, checked, onClose, onConfirm, onUndo }) {
   const { colors: palette } = useAppTheme();
@@ -18,8 +20,8 @@ export default function MealDetailSheet({ meal, checked, onClose, onConfirm, onU
       setInternalMeal(meal);
       setIsVisible(true);
       Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, friction: 7, tension: 50, useNativeDriver: true }),
-        Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true })
+        Animated.spring(scaleAnim, { ...SPRING.bouncy, toValue: 1, useNativeDriver: true }),
+        Animated.timing(opacityAnim, { toValue: 1, duration: DURATION.fast, useNativeDriver: true })
       ]).start();
     }
   }, [meal, scaleAnim, opacityAnim]);
@@ -27,8 +29,8 @@ export default function MealDetailSheet({ meal, checked, onClose, onConfirm, onU
   const handleClose = () => {
     Animated.parallel([
       // 强制统一：全部使用 useNativeDriver: true，绝不越界
-      Animated.spring(scaleAnim, { toValue: 0.9, friction: 7, tension: 50, useNativeDriver: true }),
-      Animated.timing(opacityAnim, { toValue: 0, duration: 200, useNativeDriver: true }) 
+      Animated.spring(scaleAnim, { ...SPRING.bouncy, toValue: 0.9, useNativeDriver: true }),
+      Animated.timing(opacityAnim, { toValue: 0, duration: DURATION.fast, useNativeDriver: true })
     ]).start(() => {
       setIsVisible(false);
       onClose(); 
@@ -36,9 +38,14 @@ export default function MealDetailSheet({ meal, checked, onClose, onConfirm, onU
   };
 
   const handleAction = () => {
-    if (checked) onUndo();
-    else onConfirm();
-    handleClose(); 
+    if (checked) {
+      haptic.warning();
+      onUndo();
+    } else {
+      haptic.success();
+      onConfirm();
+    }
+    handleClose();
   };
 
   const guideText = internalMeal && mealGuides ? mealGuides[internalMeal] : '';

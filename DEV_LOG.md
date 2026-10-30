@@ -64,6 +64,41 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（傍晚）
+
+阶段 2 干完了。首页从「DietScreen」变成「健康总览」，第一次动了现有代码。
+
+**做了啥**：
+
+拆成 6 个小步走，每步单独 lint，避免一次改一堆出问题难定位：
+
+- 2-A 到 2-D：4 个 home 组件（PartnerStatusCard / WaterCard / MealGrid / StreakCard），纯新文件
+- 2-E：重写 `(tabs)/index.js`
+- 2-F：微调 WaterProgress / MealListItem / MealDetailSheet，加动效和触感
+
+**踩的坑**：
+
+规格书里首页用的字段名跟 `useHealthData` 实际返回的**全对不上**。规格写 `health.partner`、`health.meals`、`health.checked`、`health.setWater`、`health.streak.days`、`health.toggleMeal`，实际返回的是 `partnerId`、`mealsStatus`、`setWaterDirect`、`streakDays`，而且根本没有 `toggleMeal`（是 `openMeal` / `closeMeal` / `confirmCheck` / `undoCheck` 四个）。规格第 1124 行自己也警告了这点，但正文代码没改。
+
+更坑的是 `MealGrid`：规格写 `Object.values(meals)` 然后 `meal.id`，但 `mealsStatus` 是 `{'早餐': bool}` 这种对象，`MealListItem` 的 `meal` prop 要的是**字符串**。照抄会渲染出一堆 `undefined`。改成 `Object.entries(mealsStatus)` 才对。
+
+还有 `todayProgress` 数据层压根没有。没编字段，用 `mealsStatus` 完成率和饮水完成率各占一半算出来。
+
+**数字**：
+
+- 新增 4 个文件（home 组件），改 4 个（index.js + 3 个微调）
+- `tsc --noEmit` → 0 错误
+- `expo lint` → 164 problems（141 errors / 23 warnings），**跟基线一模一样**
+- 3 个微调文件改动前后都是 23 problems，用 `git stash` 对比确认过，零新增
+
+**下次接着干**：
+
+阶段 3，空间页 + 设置页拆分 + 我的页。设置页要从单文件拆成 `src/app/settings/` 目录下 5 个 L3 页面，原有设置项一个不能丢 —— 这是目前风险最高的一步，拆之前得先把 `settings.js` 里的所有设置项逐条抄成清单。
+
+**待验证**：`ProgressRing` 现在挂在首页 StreakCard 上了，真机跑一下就能确认 Reanimated 自动配置生效。这个还没跑。
+
+---
+
 ## 模板（复制用）
 
 ```
