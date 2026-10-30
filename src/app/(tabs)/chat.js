@@ -291,7 +291,7 @@ export default function ChatMainScreen() {
       )}
 
       {/* 会话长按菜单：与「+」同款视觉（圆角卡片 + 纯文字行，无图标）
-          位置跟随手指（出现在手指下方，越界自动翻转）；功能项仍为占位 */}
+          位置跟随手指（出现在手指下方，越界自动翻转） */}
       <Modal
         visible={menuConfig.visible}
         transparent

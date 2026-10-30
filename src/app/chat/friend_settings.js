@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { Alert, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
+import * as Clipboard from 'expo-clipboard';
 
 import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../hooks/useAuth';
@@ -65,19 +67,40 @@ export default function FriendSettingsScreen() {
     }
   };
 
-  // ===== 4. 添加到桌面 =====
+  // ===== 4. 添加到桌面（生成深链，可复制或分享到桌面快捷方式）=====
   const handleAddToHome = () => {
     haptic.light();
+    // 生成可直达该好友会话的深链（scheme 由 app.json 的 scheme 决定）
+    const deepLink = Linking.createURL('/chat_room', {
+      queryParams: { targetId: id, targetName: displayName },
+    });
+
     Alert.alert(
       '添加到桌面',
-      `将「${displayName}」的快捷方式添加到手机桌面，方便一键发起聊天。`,
+      `复制下面的专属链接，粘贴到系统「快捷指令 / 桌面快捷方式」中，即可一键直达与「${displayName}」的聊天。\n\n${deepLink}`,
       [
         { text: '取消', style: 'cancel' },
         {
-          text: '添加',
-          onPress: () => {
-            haptic.success();
-            Alert.alert('已添加', '快捷方式已添加到桌面。');
+          text: '复制链接',
+          onPress: async () => {
+            try {
+              await Clipboard.setStringAsync(deepLink);
+              haptic.success();
+              Alert.alert('已复制', '专属链接已复制到剪贴板。');
+            } catch {
+              haptic.error();
+              Alert.alert('复制失败', '请手动长按上方链接复制。');
+            }
+          },
+        },
+        {
+          text: '分享',
+          onPress: async () => {
+            try {
+              await Share.share({ message: `一键和「${displayName}」聊天：${deepLink}` });
+            } catch {
+              // 用户取消分享
+            }
           },
         },
       ]

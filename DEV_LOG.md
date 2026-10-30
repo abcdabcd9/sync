@@ -747,6 +747,28 @@ Supabase 的会话由 `supabase-js` 存在 AsyncStorage 的固定 key 下，**�
 
 ---
 
+## 2026-10-30（阶段 4 修复 10：图片 / 视频 / 语音发不出去 —— 回归修复）
+
+**现象**：上一轮补齐占位符后，聊天室里「媒体库」「按住说话」全部失效，点了没反应，消息发不出去。
+
+**原因**：位置消息的 `useEffect` 依赖数组里放了 `router`。
+
+1. `useRouter()` 返回的对象**每次渲染都是新引用**，所以这个 effect 每次渲染都会重跑。
+2. 更致命的是 `router.setParams({ locLat: undefined, ... })` —— 即使参数本来就是 `undefined`，`setParams` 依然会触发路由状态更新 → 重渲染 → effect 再跑 → 再 `setParams`，**形成无限循环**。
+3. 这个循环把 JS 线程占满，`ImagePicker.launchImageLibraryAsync()` 和录音的异步回调永远排不上队，表现就是「点了没反应」。
+
+**修复**（[`ChatRoomInner.js`](src/components/ChatRoomInner.js:241)）：
+
+- 用 `routerRef` 持有 router，`useEffect` 里同步更新，**从依赖数组里彻底移除 `router`**。
+- 新增 `consumedLocRef`，用 `lat,lng,label` 拼成 key 做「已消费」标记，保证同一次定位只发送一次消息。
+- `setParams` 包在 `try/catch` 里，且只在 `!cancelled` 时执行。
+
+**教训**：Expo Router 的 `router` 对象**永远不能进 `useEffect` 依赖数组**。需要用到时一律用 ref 持有。同理，`setParams` 传 `undefined` 不等于「无操作」，它仍会触发一次路由更新。
+
+**验收**：`npx tsc --noEmit` → 0；`eslint ChatRoomInner.js` → 0；全量 `npx expo lint` → 139 problems（119 errors / 20 warnings），与基线持平。
+
+---
+
 ## 模板（复制用）
 
 ```

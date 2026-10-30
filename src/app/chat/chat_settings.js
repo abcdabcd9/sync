@@ -119,6 +119,12 @@ export default function ChatSettingsScreen() {
     );
   };
 
+  // ===== 我的收藏 → 独立页 =====
+  const handleOpenFavorites = () => {
+    haptic.light();
+    router.push('/chat/favorites');
+  };
+
   // ===== 6. 投诉 → 独立页 =====
   const handleOpenComplaint = () => {
     haptic.light();
@@ -211,9 +217,19 @@ export default function ChatSettingsScreen() {
         </TouchableOpacity>
       </Group>
 
-      {/* 5. 清空聊天记录 */}
+      {/* 5. 我的收藏 / 清空聊天记录 */}
       <GroupTitle>数据</GroupTitle>
       <Group>
+        <TouchableOpacity
+          style={[styles.row, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.separator }]}
+          onPress={handleOpenFavorites}
+          activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityLabel="我的收藏"
+        >
+          <Text style={[styles.title, { color: palette.textPrimary }]}>我的收藏</Text>
+          <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.row}
           onPress={handleClearHistory}

@@ -7,7 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
 import { useAudioPlayer } from 'expo-audio';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
@@ -15,6 +15,8 @@ import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
 import { useMediaUpload } from '../hooks/chat/useMediaUpload';
 import { useAudioRecorder } from '../hooks/chat/useAudioRecorder';
+import { useChatPrefs } from '../hooks/chat/useChatPrefs';
+import { useChatFavorites } from '../hooks/chat/useChatFavorites';
 import { getSignedUrl, toStoragePath } from '../hooks/chat/useSignedMediaUrl';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
@@ -34,11 +36,22 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
+  const routeParams = useLocalSearchParams();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
   const { messages, loading, messagesRef, saveAndSend, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
   const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend });
   const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend });
+
+  // ===== 会话偏好（背景） + 收藏 =====
+  const prefs = useChatPrefs(user);
+  const favorites = useChatFavorites(user);
+  const backgroundKey = prefs.getBackground(targetId);
+  const chatBackgroundColor = backgroundKey === 'light'
+    ? '#F2F2F7'
+    : backgroundKey === 'dark'
+      ? '#111111'
+      : palette.background;
 
   // ===== 本地 UI 状态 =====
   const { player: cinemaPlayer } = useCinema();
@@ -190,7 +203,19 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     }
   };
 
-  const handleFavorite = () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setActionMessage(null); };
+  // ⭐ 收藏：写入本地持久化（AsyncStorage），可在「聊天设置 → 我的收藏」查看
+  const handleFavorite = useCallback(() => {
+    const msg = actionMessage;
+    if (!msg) { setActionMessage(null); return; }
+    const added = favorites.addFavorite(msg, { peerId: targetId, peerName: targetName || '' });
+    if (added) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert('已收藏', '这条消息已经在你的收藏里了。');
+    }
+    setActionMessage(null);
+  }, [actionMessage, favorites, targetId, targetName]);
   const handleDelete = useCallback(async (id) => { setActionMessage(null); await deleteMessage(id); }, [deleteMessage]);
   const handleRecallMsg = useCallback(async (id) => { setActionMessage(null); await revokeMessage(id); }, [revokeMessage]);
 
@@ -209,6 +234,57 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push({
       pathname: '/chat/chat_settings',
+      params: { targetId, targetName: targetName || '' },
+    });
+  }, [router, targetId, targetName]);
+
+  // ===== 位置消息：从 /chat/location 页返回时携带 locLat / locLng / locLabel =====
+  // ⚠️ 关键：router 对象每次渲染都是新引用，绝不能进依赖数组；
+  //    且 setParams 在参数已为 undefined 时仍会触发路由更新 → 重渲染 → effect 再跑，
+  //    形成无限循环，把整个聊天室卡死（表现为图片/语音都发不出去）。
+  //    因此用 ref 持有 router，并用「已消费标记」保证同一次定位只发送一次。
+  const routerRef = useRef(router);
+  useEffect(() => { routerRef.current = router; }, [router]);
+
+  const locLat = routeParams?.locLat;
+  const locLng = routeParams?.locLng;
+  const locLabel = routeParams?.locLabel;
+  const consumedLocRef = useRef(null);
+
+  useEffect(() => {
+    if (!locLat || !locLng || !user || !targetId) return undefined;
+    const locKey = `${locLat},${locLng},${locLabel || ''}`;
+    // 同一次定位只处理一次，避免重复插入消息
+    if (consumedLocRef.current === locKey) return undefined;
+    consumedLocRef.current = locKey;
+
+    let cancelled = false;
+    (async () => {
+      const msgId = generateUUID();
+      const lat = Number(locLat);
+      const lng = Number(locLng);
+      const label = typeof locLabel === 'string' && locLabel ? locLabel : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      // 位置以 text 消息承载，附带坐标便于后续地图跳转
+      const text = `📍 ${label}\nhttps://maps.google.com/?q=${lat},${lng}`;
+      if (cancelled) return;
+      saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
+      await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
+      sendPushNotification(targetId, '', '发送了一个位置', { type: 'chat', targetId: user.id });
+      // 清理路由参数，避免返回时重复发送
+      if (!cancelled) {
+        try { routerRef.current?.setParams({ locLat: undefined, locLng: undefined, locLabel: undefined }); } catch (_) {}
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [locLat, locLng, locLabel, user, targetId, saveAndSend]);
+
+  // ===== 位置选择：跳转 L3 定位页 =====
+  const handlePickLocation = useCallback(() => {
+    if (!targetId) return;
+    Keyboard.dismiss();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({
+      pathname: '/chat/location',
       params: { targetId, targetName: targetName || '' },
     });
   }, [router, targetId, targetName]);
@@ -236,7 +312,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
       {(isTransitioning || loading) ? (
         <View style={styles.loadingContainer}><ActivityIndicator size="small" color={palette.textSecondary} /></View>
       ) : (
-        <View style={styles.chatArea}>
+        <View style={[styles.chatArea, { backgroundColor: chatBackgroundColor }]}>
           {uploading && (
             <View style={[styles.uploadBar, { backgroundColor: palette.chatBorder }]}>
               <View style={[styles.uploadBarFill, { width: `${Math.round(uploadProgress * 100)}%`, backgroundColor: palette.primary }]} />
@@ -268,7 +344,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
             ref={chatInputRef} palette={palette} isChatLoaded={true} onSendText={handleSendText}
             onStartRecord={() => { setPlayingAudioId(null); startRecord(); }} onStopRecord={stopAndSendRecord} onCancelRecord={cancelRecord}
             onPickMedia={pickAndSendMedia} onNudge={handleNudge} audioRecorder={audioRecorder}
-            onStartCall={handleStartCall}
+            onStartCall={handleStartCall} onPickLocation={handlePickLocation}
           />
         </View>
       )}

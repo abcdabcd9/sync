@@ -92,7 +92,7 @@ const VoiceWaveform = ({ recordState, palette, isDark, audioRecorder }) => {
 
 const SYSTEM_EMOJIS = ['😀','😂','🥰','😎','😭','😡','🥺','🥳','🤔','🙌','👏','👍','🤝','❤️','🔥','✨','🎉','🎂','🎁','☕️','🍔','🍟','🍕','🚀','🌟','月','☀️','☁️','🌧','❄️','🐶','🐱','🐼','🐷','🙉','🌹','🍎','🍉','🚗','✈️','🏀','⚽️','🎮','🎧','📱','💡','💸','💣','💊','💯'];
 
-const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRecord, onStopRecord, onCancelRecord, onPickMedia, onNudge, onStartCall, audioRecorder, onPanelVisibilityChange }, ref) => {
+const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRecord, onStopRecord, onCancelRecord, onPickMedia, onNudge, onStartCall, onPickLocation, audioRecorder, onPanelVisibilityChange }, ref) => {
   const insets = useSafeAreaInsets();
   const { isDark } = useAppTheme();
   const restingPadding = insets.bottom > 0 ? insets.bottom + 8 : 16; 
@@ -271,7 +271,7 @@ const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRec
     { id: 'photo', icon: 'image', label: '媒体库', action: () => { onPickMedia(); closeAll(); } },
     { id: 'videoCall', icon: 'videocam', label: '视频通话', action: () => { if(onStartCall) onStartCall('video'); closeAll(); } },
     { id: 'audioCall', icon: 'call', label: '语音通话', action: () => { if(onStartCall) onStartCall('audio'); closeAll(); } },
-    { id: 'location', icon: 'location', label: '位置', action: () => { Haptics.selectionAsync(); } },
+    { id: 'location', icon: 'location', label: '位置', action: () => { if (onPickLocation) onPickLocation(); closeAll(); } },
   ];
 
   return (

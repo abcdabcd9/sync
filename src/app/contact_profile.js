@@ -51,6 +51,13 @@ export default function ContactProfileScreen() {
     );
   };
 
+  // 好友动态：进入 TA 的动态列表（L3 页）
+  const handleOpenMoments = () => {
+    if (!id) return;
+    haptic.light();
+    router.push({ pathname: '/chat/moments', params: { id, nickname: displayName } });
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -82,12 +89,25 @@ export default function ContactProfileScreen() {
             {remark && <Text style={[styles.subText, { color: palette.textSecondary }]}>昵称: {nickname || username}</Text>}
           </View>
 
-          <View style={styles.momentsPlaceholder}>
-            <Ionicons name="images-outline" size={42} color={palette.separator} />
-            <Text style={[styles.placeholderText, { color: palette.textSecondary }]}>
-              好友动态功能升级中...
-            </Text>
-          </View>
+          <TouchableOpacity
+            style={[styles.momentsEntry, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}
+            onPress={handleOpenMoments}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="查看好友动态"
+            accessibilityHint="打开 TA 的动态列表"
+          >
+            <View style={[styles.momentsIconBox, { backgroundColor: palette.iconBackground }]}>
+              <Ionicons name="images-outline" size={22} color={palette.primary} />
+            </View>
+            <View style={styles.momentsTextCol}>
+              <Text style={[styles.momentsTitle, { color: palette.textPrimary }]}>好友动态</Text>
+              <Text style={[styles.momentsSub, { color: palette.textSecondary }]} numberOfLines={1}>
+                查看 {displayName} 发布的动态
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+          </TouchableOpacity>
           
         </ScrollView>
 
@@ -123,8 +143,11 @@ const styles = StyleSheet.create({
   idText: { fontSize: 13, fontWeight: '500', marginBottom: 4, letterSpacing: 0.5 },
   subText: { fontSize: 12, fontWeight: '400' },
   
-  momentsPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 250 },
-  placeholderText: { fontSize: 13, marginTop: 12, fontWeight: '500', letterSpacing: 0.5 },
+  momentsEntry: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, marginBottom: 24, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
+  momentsIconBox: { width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  momentsTextCol: { flex: 1 },
+  momentsTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  momentsSub: { fontSize: 12 },
   
   // 🍎 优雅的上下分级按钮布局
   actionContainer: { paddingHorizontal: 32, paddingBottom: Platform.OS === 'ios' ? 24 : 32, gap: 14 },
