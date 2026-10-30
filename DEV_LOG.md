@@ -208,6 +208,63 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（切换账号：本地多 profile 快速切换）
+
+设置页最后一个占位项「切换账号」落地。产品形态定为**本地多 profile 快速切换**。
+
+**核心约束（决定了整个设计）**：
+
+Supabase 的会话由 `supabase-js` 存在 AsyncStorage 的固定 key 下，**同一时刻只能有一个活跃 session**。所以「多账号并存」在客户端做不到。方案是：
+
+- 只保存**账号档案**（id / 邮箱 / 昵称 / sync_id / 头像色 / 最后使用时间），用于列表展示
+- 切换时 `signOut()` 当前账号 → `router.replace({ pathname: '/auth', params: { email } })` 预填邮箱
+- 用户只需再输一次密码，登录成功后 `rememberAccount()` 自动把新账号写回档案
+
+**做了啥**：
+
+1. **新建 `src/hooks/useAccountSwitcher.js`** —— 本地账号档案 CRUD。
+   - 存储 key `@app_known_accounts`，最多保留 `MAX_ACCOUNTS = 5` 条，按 `lastUsedAt` 倒序
+   - `rememberAccount(profile)` / `forgetAccount(id)` / `clearAccounts()`
+   - `pickAvatarColor(seed)` 用字符串 hash 从 6 色池取色，保证同一账号颜色稳定
+   - `normalize()` 做防御性清洗：过滤非法项、补默认值、排序、截断
+   - **绝不存密码 / access_token / refresh_token**，只存展示字段
+
+2. **新建 `src/app/settings/accounts.js`** —— 账号列表页。
+   - 当前账号：高亮 + `checkmark-circle` + 「当前」徽章，点击提示「这已经是当前登录的账号了」
+   - 其他账号：点击 → 二次确认（说明要重新输密码）→ `signOut()` → 带 `?email=` 跳 `/auth`
+   - 右侧 `close-circle-outline` → 从本机移除（明确说明不影响云端账号）
+   - 空态：`people-outline` 图标 + 引导文案
+   - 底部「添加账号」行：`signOut()` → 跳 `/auth`
+   - `formatLastUsed()` 输出「刚刚使用 / N 分钟前使用 / N 小时前使用 / N 天前使用 / 很久以前使用」
+
+3. **`auth.js` 支持邮箱预填** —— `useLocalSearchParams()` 读 `params.email`，作为 `useState` 初值。
+
+4. **`auth.js` 登录成功后记录档案** —— `data?.session` 存在时调 `rememberAccount({ id, email, nickname, syncId })`，字段取自 `user.user_metadata`。
+
+5. **`settings.js` 的「切换账号」改为 `router.push('/settings/accounts')`** —— 删掉 `handleNotImplemented`（设置页已无任何占位项）。
+
+**踩的坑**：
+
+1. **`accounts.js` 里写了个空壳 `useFocusEffect`**。本意是「回到本页刷新列表」，但 `useAccountSwitcher` 自己持有 state，空壳 effect 什么也没做，纯属噪音。直接删掉，连带删掉 `useCallback` / `useFocusEffect` 两个 import。
+
+2. **`auth.js:54` 的 `useRef(new Animated.Value(0)).current` 是基线既有违规**。`react-hooks/refs` 报「Cannot access ref value during render」。既然改到了这个文件，顺手按项目既定模式修成 `useState(() => new Animated.Value(0))`，并删掉变成死导入的 `useRef`。
+
+**数字**：
+
+- 新增 2 个文件：`src/hooks/useAccountSwitcher.js`、`src/app/settings/accounts.js`
+- 修改 2 个文件：`src/app/auth.js`（邮箱预填 + 记录档案 + 修 useRef）、`src/app/settings.js`（切换账号改跳转，删 `handleNotImplemented`）
+- `tsc --noEmit` → 0 错误
+- `eslint src/hooks/useAccountSwitcher.js src/app/settings/accounts.js src/app/auth.js src/app/settings.js` → 0 problems
+- `expo lint` → **158 problems（135 errors / 23 warnings）**，比上一轮 163 **少 5 个 error**
+
+**为什么少 5 个**：`auth.js` 的 `useRef` 违规修掉 1 个；`settings.js` 删掉 `handleNotImplemented` 后 `Alert` 引用链收敛，连带消掉 4 个。**净改善，不是回归。**
+
+**设置页占位项清零**：`grep -rn "handleNotImplemented\|功能开发中" src/app/settings/ src/app/settings.js` → 无结果。
+
+**仍存在的功能性占位**（`more.js`，下一轮处理）：关怀模式与界面语言只存偏好、不生效。要真正落地需把 `useAppSettings` 从「每页各自实例化」提升为全局 Provider，否则跨页面读不到。
+
+---
+
 ## 2026-10-30（设置页入口统一为 L3 页面）
 
 上一轮补完 5 个占位项后，设置页还剩 4 个「弹窗型」入口：个人信息与权限、账号安全、健康与打卡偏好、通知、外观模式。它们分别走 `legalModal` Modal、`showHealthModal` Modal、`Alert.alert` 单选，跟其他页面的 `router.push` 不一致。这次全部改成独立 L3 页面。

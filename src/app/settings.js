@@ -127,10 +127,6 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleNotImplemented = (feature) => {
-    Alert.alert('功能开发中', `[${feature}] 将在后续版本开放，敬请期待！`);
-  };
-
   // 🎨 主题模式标签（仅用于「外观模式」行的右侧值展示）
   const THEME_OPTIONS = [
     { key: 'system', label: '跟随系统' },
@@ -183,7 +179,7 @@ export default function SettingsScreen() {
 
           {/* 4. 底部操作栏 */}
           <View style={[styles.group, { marginTop: 36, marginBottom: 40 }]}>
-            <SettingRow title="切换账号" hideArrow onPress={() => handleNotImplemented('切换账号')} isFirst palette={palette} />
+            <SettingRow title="切换账号" onPress={() => router.push('/settings/accounts')} isFirst palette={palette} />
             <SettingRow title="注销账号" hideArrow isDestructive onPress={handleDeleteAccount} palette={palette} />
             <SettingRow title="退出登录" hideArrow isDestructive onPress={handleSignOut} isLast palette={palette} />
           </View>

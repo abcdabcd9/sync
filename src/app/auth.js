@@ -1,12 +1,13 @@
 // --- START OF FILE src/app/auth.js ---
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Animated, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
+import { useAccountSwitcher } from '../hooks/useAccountSwitcher';
 
 // 🔒 安全审计 #12：将 Supabase 原始错误映射为友好文案，避免泄露表名/约束名/SQL 细节
 const mapAuthError = (error, isLoginMode) => {
@@ -38,14 +39,21 @@ export default function AuthScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { signIn, signUp } = useAuth();
+  const { rememberAccount } = useAccountSwitcher();
+
+  // 🔀 切换账号：/settings/accounts 会带 ?email= 跳过来，预填邮箱省去重复输入
+  const params = useLocalSearchParams();
+  const presetEmail = typeof params.email === 'string' ? params.email : '';
 
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(presetEmail);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const shakeAnim = useRef(new Animated.Value(0)).current;
+  // ⚠️ 必须用 useState 惰性初始化：useRef(new Animated.Value()).current 会在渲染期读 ref，
+  //    违反 react-hooks/refs 规则（React 19）
+  const [shakeAnim] = useState(() => new Animated.Value(0));
 
   const triggerErrorShake = (msg) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -103,7 +111,18 @@ export default function AuthScreen() {
         triggerErrorShake('服务器未返回有效用户信息，请重试');
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        
+
+        // 🔀 记录到本机账号档案，供 /settings/accounts 快速切换
+        // 只存 id / 邮箱 / 昵称 / sync_id，绝不存密码或 token
+        if (data?.session) {
+          await rememberAccount({
+            id: data.user.id,
+            email: data.user.email || email,
+            nickname: data.user.user_metadata?.nickname || '',
+            syncId: data.user.user_metadata?.sync_id || '',
+          });
+        }
+
         if (!isLoginMode && !data?.session) {
           Alert.alert('注册成功', '请前往邮箱点击验证链接激活账号。');
           toggleMode();
