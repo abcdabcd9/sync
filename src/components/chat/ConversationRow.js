@@ -18,15 +18,24 @@ export default function ConversationRow({
   previewText,
   unreadNum = 0,
   isMuted = false,
+  isPinned = false,
   isSelected = false,
   onPress,
   onLongPress,
 }) {
   const { isDark, colors: palette } = useAppTheme();
 
+  // 置顶行背景加深（在上一版基础上再压暗约 20%，与选中态区分明显）
+  const pinnedBg = isDark ? '#0A0A0B' : '#E2E2E7';
+  const selectedBg = isDark ? '#1C1C1E' : '#F2F2F7';
+
   return (
     <TouchableOpacity
-      style={[styles.row, isSelected && { backgroundColor: isDark ? '#1C1C1E' : '#F2F2F7' }]}
+      style={[
+        styles.row,
+        isPinned && { backgroundColor: pinnedBg },
+        isSelected && { backgroundColor: selectedBg },
+      ]}
       onPress={onPress}
       onLongPress={onLongPress}
       // 长按触发时间缩短 50%（RN 默认 500ms → 250ms）

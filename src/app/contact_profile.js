@@ -1,33 +1,41 @@
 // --- START OF FILE src/app/contact_profile.js ---
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { useAuth } from '../hooks/useAuth';
 import { haptic } from '../constants/haptics';
-import { useFriendActions } from '../hooks/chat/useFriendActions';
-import ContactActionsMenu from '../components/chat/ContactActionsMenu';
 
 export default function ContactProfileScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
-  const { user } = useAuth();
-  const { deleteFriend } = useFriendActions(user);
 
   const { id, nickname, sync_id, username, remark } = useLocalSearchParams();
 
   const displayName = remark || nickname || username || '未知用户';
   const displayId = sync_id || username || '暂无 ID';
 
-  // 右上角「3 个点」：与聊天室 L2 共用同一个 ContactActionsMenu
-  const [menuVisible, setMenuVisible] = useState(false);
-
   const handleBack = () => {
     haptic.light();
     router.back();
+  };
+
+  // 右上角「3 个点」：直接跳转朋友设置页（不再弹窗）
+  const handleOpenFriendSettings = () => {
+    if (!id) return;
+    haptic.light();
+    router.push({
+      pathname: '/chat/friend_settings',
+      params: {
+        id,
+        nickname: nickname || '',
+        username: username || '',
+        sync_id: sync_id || '',
+        remark: remark || '',
+      },
+    });
   };
 
   const handleSendMessage = () => {
@@ -43,37 +51,6 @@ export default function ContactProfileScreen() {
     );
   };
 
-  // 查看详细资料：当前页本身就是详细资料页，故给出轻提示
-  const handleViewProfile = () => {
-    Alert.alert('详细资料', `昵称：${nickname || username || '未设置'}\nSync ID：${displayId}`);
-  };
-
-  // 删除好友：二次确认 → 数据层双向解除 → 返回通讯录
-  const handleDeleteFriend = () => {
-    if (!id) return;
-    Alert.alert(
-      '删除好友',
-      `确定要删除「${displayName}」吗？删除后聊天记录将不再显示，且需要重新添加才能继续聊天。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: async () => {
-            const res = await deleteFriend(id);
-            if (res.ok) {
-              haptic.success();
-              router.back();
-            } else {
-              haptic.error();
-              Alert.alert('删除失败', res.error || '请稍后重试。');
-            }
-          },
-        },
-      ]
-    );
-  };
-
   return (
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -83,14 +60,11 @@ export default function ContactProfileScreen() {
             <Ionicons name="chevron-back" size={28} color={palette.textPrimary} />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => {
-              haptic.light();
-              setMenuVisible(true);
-            }}
+            onPress={handleOpenFriendSettings}
             activeOpacity={0.6}
             accessibilityRole="button"
-            accessibilityLabel="联系人操作"
-            accessibilityHint="查看详细资料或删除好友"
+            accessibilityLabel="朋友设置"
+            accessibilityHint="打开朋友设置页面"
           >
             <Ionicons name="ellipsis-horizontal" size={24} color={palette.textPrimary} style={{ marginRight: 16 }} />
           </TouchableOpacity>
@@ -129,15 +103,6 @@ export default function ContactProfileScreen() {
             <Text style={[styles.actionTextSecondary, { color: palette.textPrimary }]}>音视频通话</Text>
           </TouchableOpacity>
         </View>
-
-        {/* 右上角「3 个点」菜单：与聊天室 L2 共用同一组件 */}
-        <ContactActionsMenu
-          visible={menuVisible}
-          displayName={displayName}
-          onClose={() => setMenuVisible(false)}
-          onViewProfile={handleViewProfile}
-          onDeleteFriend={handleDeleteFriend}
-        />
 
       </SafeAreaView>
     </View>

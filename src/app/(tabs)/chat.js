@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/(tabs)/chat.js ---
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { haptic } from '../../constants/haptics';
 import { supabase } from '../../services/supabase';
 import { useChatList } from '../../hooks/chat/useChatList';
+import { useChatPrefs } from '../../hooks/chat/useChatPrefs';
 import ConversationRow from '../../components/chat/ConversationRow';
 import ChatRoomInner from '../../components/ChatRoomInner';
 
@@ -42,11 +43,11 @@ export default function ChatMainScreen() {
   const { conversations, unreadCounts, friendsMap, latestMessages, loading, refresh, getDisplayName } =
     useChatList(user);
 
+  // 会话级偏好（置顶 / 隐藏 / 免打扰 / 星标）—— 持久化到 AsyncStorage，按用户隔离
+  const prefs = useChatPrefs(user);
+
   const [selectedChat, setSelectedChat] = useState(null);
-  // 会话长按菜单的本地操作状态（置顶 / 不显示 / 已读）
-  // 说明：置顶与「不显示」属于纯本地偏好，暂存内存；已读直接写库。
-  const [pinnedIds, setPinnedIds] = useState([]);
-  const [hiddenIds, setHiddenIds] = useState([]);
+  // 「标为已读」后的本地角标清零（仅本次会话有效，刷新后由数据库 is_read 决定）
   const [readIds, setReadIds] = useState([]);
   // 会话长按菜单：与右上角「+」同款视觉（圆角卡片 + 纯文字行，无图标）
   // top 由触点 pageY 计算，弹窗出现在手指下方；left 由触点 pageX 计算，自动贴边
@@ -98,38 +99,34 @@ export default function ChatMainScreen() {
     refresh();
   };
 
-  // 置顶该聊天：本地置顶，列表排序时优先展示
+  // 置顶该聊天：持久化到 AsyncStorage，列表排序时优先展示 + 背景加深
   const handleTogglePin = (chat) => {
     if (!chat) return;
     haptic.medium();
-    setPinnedIds((prev) =>
-      prev.includes(chat.id) ? prev.filter((x) => x !== chat.id) : [...prev, chat.id]
-    );
+    prefs.togglePin(chat.id);
   };
 
-  // 不显示该聊天：本地隐藏，不删除任何消息
+  // 不显示该聊天：仅从列表隐藏，不删除任何消息
+  // ⚠️ 恢复机制：对方发来消息或我发出消息时，会自动 unhide（见下方 effect）
   const handleHideChat = (chat) => {
     if (!chat) return;
     haptic.medium();
-    setHiddenIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+    prefs.hide(chat.id);
   };
 
-  // 删除该聊天：清空与该好友的本地会话（仅隐藏，不删对方消息）
+  // 删除该聊天：二次确认后隐藏并取消置顶
   const handleDeleteChat = (chat) => {
     if (!chat) return;
     haptic.warning();
     Alert.alert(
       '删除该聊天',
-      `确定要删除与「${getDisplayName(chat)}」的聊天吗？删除后该会话将从列表中移除。`,
+      `确定要删除与「${getDisplayName(chat)}」的聊天吗？删除后该会话将从列表中移除，收到新消息时会重新出现。`,
       [
         { text: '取消', style: 'cancel' },
         {
           text: '删除',
           style: 'destructive',
-          onPress: () => {
-            setHiddenIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
-            setPinnedIds((prev) => prev.filter((x) => x !== chat.id));
-          },
+          onPress: () => prefs.clearChat(chat.id),
         },
       ]
     );
@@ -160,14 +157,24 @@ export default function ChatMainScreen() {
 
   const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, left: 0, chat: null });
 
+  // 隐藏恢复机制：只要该会话产生了新消息（收或发），就取消隐藏
+  // latestMessages 由 useChatList 的实时监听更新，因此这里能捕获到收发两个方向
+  useEffect(() => {
+    if (!prefs.loaded || prefs.hidden.length === 0) return;
+    prefs.hidden.forEach((id) => {
+      if (latestMessages[id]) prefs.unhide(id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestMessages, prefs.loaded, prefs.hidden]);
+
   // 过滤「不显示」的会话，并把「置顶」的会话排到最前（保持原有相对顺序）
   const visibleConversations = useMemo(() => {
-    const list = conversations.filter((c) => c && !hiddenIds.includes(c.id));
-    if (pinnedIds.length === 0) return list;
-    const pinned = list.filter((c) => pinnedIds.includes(c.id));
-    const rest = list.filter((c) => !pinnedIds.includes(c.id));
+    const list = conversations.filter((c) => c && !prefs.hidden.includes(c.id));
+    if (prefs.pinned.length === 0) return list;
+    const pinned = list.filter((c) => prefs.pinned.includes(c.id));
+    const rest = list.filter((c) => !prefs.pinned.includes(c.id));
     return [...pinned, ...rest];
-  }, [conversations, hiddenIds, pinnedIds]);
+  }, [conversations, prefs.hidden, prefs.pinned]);
 
   if (!isAuthLoading && !user) {
     return (
@@ -204,7 +211,8 @@ export default function ChatMainScreen() {
               displayName={getDisplayName(item)}
               previewText={latestMessages[item.id] || '点击进入会话...'}
               unreadNum={unreadNum}
-              isMuted={!!friendsMap[item.id]?.is_muted}
+              isMuted={!!friendsMap[item.id]?.is_muted || prefs.isMuted(item.id)}
+              isPinned={prefs.isPinned(item.id)}
               isSelected={isTablet && selectedChat?.id === item.id}
               onPress={() => openChatRoom(item)}
               onLongPress={(e) => handleLongPress(item, e)}
@@ -330,7 +338,7 @@ export default function ChatMainScreen() {
               accessibilityLabel="置顶该聊天"
             >
               <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>
-                {menuConfig.chat && pinnedIds.includes(menuConfig.chat.id) ? '取消置顶' : '置顶该聊天'}
+                {menuConfig.chat && prefs.isPinned(menuConfig.chat.id) ? '取消置顶' : '置顶该聊天'}
               </Text>
             </TouchableOpacity>
 

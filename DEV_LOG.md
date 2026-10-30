@@ -208,6 +208,46 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 6：隐藏恢复 + 置顶视觉 + 「3 个点」全面页面化）
+
+用户报告：长按会话选「不显示该聊天」后，该会话永久消失，即使重新对话也不回来。同时要求把「3 个点」从弹窗改为跳转页，并拆出二级设置页。
+
+**1. 隐藏聊天恢复机制（Bug 修复）**
+
+- 新增 [`src/hooks/chat/useChatPrefs.js`](src/hooks/chat/useChatPrefs.js:35)：按用户 ID 隔离的 AsyncStorage 偏好存储（`pinned` / `hidden` / `muted` / `starred` / `blocked` / `backgrounds`）。
+- 恢复逻辑在 [`chat.js`](src/app/(tabs)/chat.js:35)：`useEffect` 监听 `latestMessages`，只要某个被隐藏的会话产生了新消息（**收或发**），立即 `prefs.unhide(id)`。因为 `latestMessages` 由 `useChatList` 的 realtime 监听驱动，收发两个方向都能捕获。
+- 列表渲染改用 `visibleConversations`（`useMemo`）：先过滤 `hidden`，再按 `pinned` 稳定排序。
+
+**2. 置顶视觉提示**
+
+- [`ConversationRow.js`](src/components/chat/ConversationRow.js:15) 新增 `isPinned` prop，置顶行背景加深：深色 `#0A0A0B`、浅色 `#E2E2E7`（比选中态 `#1C1C1E` / `#F2F2F7` 更暗，两者可区分）。
+
+**3. 「3 个点」全面页面化（不再弹窗、不再共用）**
+
+- 删除 `src/components/chat/ContactActionsMenu.js`（原共用弹窗组件）。
+- 聊天室 L2 右上角「3 个点」→ [`router.push('/chat/chat_settings')`](src/components/ChatRoomInner.js:210)。
+- 通讯录详细页 L3 右上角「3 个点」→ [`router.push('/chat/friend_settings')`](src/app/contact_profile.js:33)。
+
+**4. 新增 5 个 L3 页面**
+
+| 页面 | 路径 | 功能 |
+|---|---|---|
+| 聊天设置 | [`chat_settings.js`](src/app/chat/chat_settings.js:19) | 查找记录（跳转）/ 免打扰 + 置顶提醒（SwitchRow）/ 聊天背景（跳转）/ 清空记录 / 投诉（跳转） |
+| 查找聊天记录 | [`chat_search.js`](src/app/chat/chat_search.js:14) | `messages` 表 `ilike` 关键词搜索，限本会话双向，最多 50 条 |
+| 聊天背景 | [`chat_background.js`](src/app/chat/chat_background.js:15) | `CHAT_BACKGROUNDS` 单选列表，写入 `prefs.setBackground` |
+| 朋友设置 | [`friend_settings.js`](src/app/chat/friend_settings.js:19) | 设置资料（备注）/ 朋友权限（跳转）/ 星标 / 推荐 / 添加到桌面 / 黑名单 / 投诉（跳转）/ 删除好友 |
+| 朋友权限 | [`friend_permission.js`](src/app/chat/friend_permission.js:24) | 「全部可见」/「仅聊天」单选 |
+| 投诉 | [`complaint.js`](src/app/chat/complaint.js:20) | 5 类原因单选 + 补充说明 → `complaints` 表插入（`scope` 区分 chat / friend） |
+
+**5. 数据层**
+
+- 新增 [`src/hooks/chat/useFriendActions.js`](src/hooks/chat/useFriendActions.js:1)：`deleteFriend`（`friends` 表双向 `or(and(...),and(...))` 删除 + 清理已接受的 `friend_requests`）、`updateRemark`。
+- `useChatPrefs` 的 effect 改为「异步回调里 setState + 派生 `loaded`」，规避 `react-hooks/set-state-in-effect`。
+
+**验收**：`npx tsc --noEmit` → 0；目标文件 `eslint` → 0；全量 `npx expo lint` → 139 problems（119 errors / 20 warnings），与基线持平。
+
+---
+
 ## 2026-10-30（阶段 4 修复 5：占位补全 + 联系人「3 个点」菜单共用）
 
 用户提出两项需求，均已落地。
