@@ -130,32 +130,34 @@ export default function ChatSettingsScreen() {
 
   return (
     <SettingsPage title={displayName}>
-      {/* 0. 联系人头像卡片 → 朋友设置页 */}
-      <TouchableOpacity
-        style={[styles.profileCard, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}
-        onPress={handleOpenFriendSettings}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel={`${displayName} 的朋友设置`}
-        accessibilityHint="打开朋友设置页面"
-      >
-        <View style={[styles.profileAvatar, { backgroundColor: palette.primary }]}>
-          <Text style={styles.profileAvatarText}>
-            {displayName.substring(0, 2).toUpperCase()}
-          </Text>
-        </View>
-        <View style={styles.profileTextCol}>
-          <Text style={[styles.profileName, { color: palette.textPrimary }]} numberOfLines={1}>
-            {displayName}
-          </Text>
-          {!!displayId && (
-            <Text style={[styles.profileId, { color: palette.textSecondary }]} numberOfLines={1}>
-              ID: {displayId}
+      {/* 0. 联系人头像卡片 → 朋友设置页（放进 Group 内，宽度与下方各行完全一致） */}
+      <Group style={styles.profileGroup}>
+        <TouchableOpacity
+          style={styles.profileCard}
+          onPress={handleOpenFriendSettings}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`${displayName} 的朋友设置`}
+          accessibilityHint="打开朋友设置页面"
+        >
+          <View style={[styles.profileAvatar, { backgroundColor: palette.primary }]}>
+            <Text style={styles.profileAvatarText}>
+              {displayName.substring(0, 2).toUpperCase()}
             </Text>
-          )}
-        </View>
-        <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
-      </TouchableOpacity>
+          </View>
+          <View style={styles.profileTextCol}>
+            <Text style={[styles.profileName, { color: palette.textPrimary }]} numberOfLines={1}>
+              {displayName}
+            </Text>
+            {!!displayId && (
+              <Text style={[styles.profileId, { color: palette.textSecondary }]} numberOfLines={1}>
+                ID: {displayId}
+              </Text>
+            )}
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+        </TouchableOpacity>
+      </Group>
 
       {/* 1. 查找聊天记录（跳转页） */}
       <GroupTitle>聊天记录</GroupTitle>
@@ -242,17 +244,14 @@ export default function ChatSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  // 与 GroupTitle 的 marginTop: 24 对齐，让卡片和下方分组节奏一致
+  profileGroup: { marginTop: 24 },
   profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 4,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
   },
   profileAvatar: {
     width: 52,

@@ -208,6 +208,18 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 8：头像卡片宽度对齐）
+
+头像卡片原先自带 `marginHorizontal: 16`，而 `SettingsPage` 的 `scroll` 已有 `paddingHorizontal: 16`，导致卡片比下方各行**窄了 32px**。
+
+改为把卡片包进 `<Group style={{ marginTop: 24 }}>`，去掉自身 margin 与 border —— 宽度由 `Group` 决定，与「查找聊天记录」「消息免打扰」等行**完全等宽**，圆角与卡片底色也自动继承。
+
+见 [`chat_settings.js`](src/app/chat/chat_settings.js:132)。
+
+**验收**：`npx tsc --noEmit` → 0；`eslint chat_settings.js` → 0；全量 `npx expo lint` → 139 problems，与基线持平。
+
+---
+
 ## 2026-10-30（阶段 4 修复 7：深色置顶提亮 + 聊天设置头像卡片）
 
 **1. 深色模式置顶行改为「提亮」**
