@@ -55,6 +55,9 @@ export default function ChatLocationScreen() {
   const [coords, setCoords] = useState(null);
   const [address, setAddress] = useState('');
   const [hint, setHint] = useState('');
+  // 🔄 「重新定位」进行中标记：只用来禁用按钮 + 按钮内显示小转圈，
+  //    绝不参与内容区渲染，因此不会造成整块 UI 卸载/重挂（闪烁）。
+  const [isRelocating, setIsRelocating] = useState(false);
 
   // 防止并发定位（连点「重新定位」时只保留最后一次）
   const runIdRef = useRef(0);
@@ -137,14 +140,27 @@ export default function ChatLocationScreen() {
     }
   }, []);
 
-  // 重新定位：用户主动点击时先回到 loading 态
+  // 重新定位：用户主动点击时**不**回到 loading 态。
+  // 🚨 旧实现 setStatus('loading') + setAddress('') + setHint('') 会把整个
+  //    `status === 'ready'` 区块（图钉 / 地址 / 坐标 / 提示）卸载掉，
+  //    换成居中的 ActivityIndicator，等定位回来再挂回去 —— 用户看到的就是
+  //    「整块内容闪一下、消失、再出现」。
+  //    修复：已有坐标时保持 ready 态，只在 hint 里显示「正在重新定位…」，
+  //    新坐标到达后原地更新，视觉上零跳动。
   const handleRelocate = useCallback(() => {
     haptic.selection();
-    setStatus('loading');
-    setAddress('');
-    setHint('');
-    locate();
-  }, [locate]);
+    setIsRelocating(true);
+    if (coords) {
+      // 已有坐标：原地刷新，不卸载 UI
+      setHint('正在重新定位…');
+    } else {
+      // 首次定位失败后重试：此时没有可保留的内容，回到 loading 是合理的
+      setStatus('loading');
+      setAddress('');
+      setHint('');
+    }
+    locate().finally(() => setIsRelocating(false));
+  }, [locate, coords]);
 
   // 首次进入自动定位（异步 IIFE，setState 全部在 await 之后）
   useEffect(() => {
@@ -233,14 +249,18 @@ export default function ChatLocationScreen() {
 
       <View style={styles.actions}>
         <TouchableOpacity
-          style={[styles.btn, styles.btnGhost, { borderColor: palette.cardBorder, opacity: status === 'loading' ? 0.5 : 1 }]}
+          style={[styles.btn, styles.btnGhost, { borderColor: palette.cardBorder, opacity: isRelocating ? 0.5 : 1 }]}
           onPress={handleRelocate}
-          disabled={status === 'loading'}
+          disabled={isRelocating}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel="重新定位"
         >
-          <Ionicons name="refresh" size={18} color={palette.textPrimary} />
+          {isRelocating ? (
+            <ActivityIndicator size="small" color={palette.textPrimary} />
+          ) : (
+            <Ionicons name="refresh" size={18} color={palette.textPrimary} />
+          )}
           <Text style={[styles.btnText, { color: palette.textPrimary }]}>重新定位</Text>
         </TouchableOpacity>
 

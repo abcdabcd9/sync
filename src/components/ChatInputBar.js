@@ -1,13 +1,14 @@
 // --- START OF FILE src/components/ChatInputBar.js ---
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { 
-  View, Text, TextInput, TouchableOpacity, Animated, Keyboard, Platform, 
+import {
+  View, Text, TextInput, TouchableOpacity, Animated, Keyboard, Platform,
   StyleSheet, PanResponder, Dimensions, ScrollView, AppState, Pressable, ActivityIndicator
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioRecorderState } from 'expo-audio';
+import { File } from 'expo-file-system';
 import { useAppTheme } from '../context/ThemeContext';
 
 const AI_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
@@ -20,21 +21,6 @@ const inferAudioExt = (uri) => {
   return /^[a-z0-9]{2,5}$/.test(ext) ? ext : 'm4a';
 };
 
-/** 扩展名 → Groq 接受的 MIME（Groq 白名单：flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm） */
-const audioMimeOf = (ext) => {
-  switch (ext) {
-    case 'mp3': return 'audio/mpeg';
-    case 'wav': return 'audio/wav';
-    case 'ogg': return 'audio/ogg';
-    case 'webm': return 'audio/webm';
-    case 'flac': return 'audio/flac';
-    case 'aac': return 'audio/aac';
-    case '3gp': return 'audio/mp4';
-    case 'm4a':
-    default: return 'audio/m4a';
-  }
-};
-
 /**
  * 🎙️ 语音转文字（Groq Whisper）
  *
@@ -44,6 +30,18 @@ const audioMimeOf = (ext) => {
  *  2. FormData 的 file part 必须带正确的 `type`（MIME）。Groq 对 `audio/m4a`
  *     之外的未知类型会 400，而旧代码把 400 也报成「网络异常」。
  *  3. 必须把真实错误（HTTP 状态 + 响应体）透出到 UI，否则永远无法定位。
+ *
+ * 🚨 SDK 58 真根因（"Unsupported form data part implementation"）：
+ *   Expo SDK 58 把全局 `fetch` 换成了 `expo/fetch`（winter fetch）。
+ *   它的 `convertFormDataAsync()`（node_modules/expo/src/winter/fetch/convertFormData.ts:77）
+ *   只接受三种 part：
+ *     a) `string`
+ *     b) `instanceof Blob`
+ *     c) 带 `bytes()` 方法的对象
+ *   RN 传统写法 `formData.append('file', { uri, type, name })` 三者都不是
+ *   → 直接抛 `Unsupported FormDataPart implementation`。
+ *   修复：改用 `expo-file-system` 的 `File`（`class File implements Blob`，
+ *   且原生实现了 `bytes()`），直接 append 即可被 expo/fetch 正确序列化。
  */
 const transcribeAudioToText = async (audioUri) => {
   try {
@@ -60,14 +58,17 @@ const transcribeAudioToText = async (audioUri) => {
     }
 
     const ext = inferAudioExt(safeUri);
-    const mime = audioMimeOf(ext);
+
+    // expo-file-system 的 File 实现了 Blob 接口（含 bytes()），
+    // 是 expo/fetch 唯一能正确序列化的二进制 part 形式。
+    // MIME 由 File.type 自动提供（原生按扩展名推断），无需手动传。
+    const audioFile = new File(safeUri);
+    if (!audioFile.exists) {
+      return '录音文件不存在，请重新录制。';
+    }
 
     const formData = new FormData();
-    formData.append('file', {
-      uri: safeUri,
-      type: mime,
-      name: `voice.${ext}`,
-    });
+    formData.append('file', audioFile, `voice.${ext}`);
     formData.append('model', 'whisper-large-v3');
     formData.append('language', 'zh');
     formData.append('response_format', 'json');

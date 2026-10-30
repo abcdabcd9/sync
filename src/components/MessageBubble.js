@@ -41,13 +41,60 @@ async function openInMaps(lat, lng, label) {
   }
 }
 
-export default React.memo(function MessageBubble({ 
-  item, palette, onPreviewMedia, isPlaying, onToggleAudio, onLongPressMessage, onJoinCinema, onAcceptPartner, onRejectPartner 
+/**
+ * 🖼️ 气泡内媒体尺寸计算（修复「横屏照片被裁切 / 自动放大」）
+ *
+ * 旧实现固定 `width: 220, height: 300` + `contentFit="cover"`：
+ *   - 竖屏照片被拉伸成 220×300 的竖长条；
+ *   - 横屏照片（如电脑桌面截图）被 cover 裁掉左右两侧，只剩中间一块。
+ * 新实现：按图片真实宽高比计算气泡尺寸，并改用 `contentFit="contain"`，
+ * 保证「原图比例完整显示、不裁切、不放大」。
+ *
+ * 约束：
+ *   - 最大宽 220（与旧版一致，不破坏气泡布局）
+ *   - 最大高 300（避免超长竖图撑爆屏幕）
+ *   - 最小边 80（避免极端长条图变成一条线）
+ */
+const MEDIA_MAX_W = 220;
+const MEDIA_MAX_H = 300;
+const MEDIA_MIN_SIDE = 80;
+
+function computeMediaSize(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (w <= 0 || h <= 0) {
+    // 尺寸未知（本地 URI 尚未加载）：退回一个中性的 4:3 横屏框，
+    // 比旧的 220×300 竖框更接近手机照片的真实比例。
+    return { width: MEDIA_MAX_W, height: Math.round((MEDIA_MAX_W * 3) / 4) };
+  }
+  const ratio = w / h;
+  let outW = MEDIA_MAX_W;
+  let outH = Math.round(MEDIA_MAX_W / ratio);
+  if (outH > MEDIA_MAX_H) {
+    outH = MEDIA_MAX_H;
+    outW = Math.round(MEDIA_MAX_H * ratio);
+  }
+  // 极端长条图兜底
+  if (outW < MEDIA_MIN_SIDE) outW = MEDIA_MIN_SIDE;
+  if (outH < MEDIA_MIN_SIDE) outH = MEDIA_MIN_SIDE;
+  return { width: outW, height: outH };
+}
+
+export default React.memo(function MessageBubble({
+  item, palette, onPreviewMedia, isPlaying, onToggleAudio, onLongPressMessage, onJoinCinema, onAcceptPartner, onRejectPartner
 }) {
   const isMe = item.isMe;
   let msgType = item.type || 'text';
   let displayText = item.text || '';
   let isCinemaEnded = false;
+
+  // 🖼️ 媒体真实尺寸：优先用消息里已存的宽高（发送时写入），
+  //    否则等 expo-image 的 onLoad 回调补上，再重算气泡尺寸。
+  const [mediaSize, setMediaSize] = useState(() => {
+    const w = Number(item.mediaWidth) || 0;
+    const h = Number(item.mediaHeight) || 0;
+    return computeMediaSize(w, h);
+  });
 
   // 协议消息统一按 subtype 字段判断（text 只承载真实内容）
   if (item.subtype) {
@@ -239,14 +286,42 @@ export default React.memo(function MessageBubble({
             </View>
           )}
           {(msgType === 'image' || msgType === 'video') && (
-            <View style={styles.mediaWrapper}>
+            <View style={[styles.mediaWrapper, { width: mediaSize.width, height: mediaSize.height }]}>
               {msgType === 'image' && signedMediaUrl && (
-                <Image source={{ uri: signedMediaUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} />
+                <Image
+                  source={{ uri: signedMediaUrl }}
+                  style={styles.bubbleMedia}
+                  contentFit="contain"
+                  transition={200}
+                  onLoad={(e) => {
+                    const src = e?.source || {};
+                    if (src.width && src.height) {
+                      const next = computeMediaSize(src.width, src.height);
+                      setMediaSize((prev) => (
+                        prev.width === next.width && prev.height === next.height ? prev : next
+                      ));
+                    }
+                  }}
+                />
               )}
               {msgType === 'video' && (
                 <>
                   {(signedThumbUrl || signedMediaUrl) && (
-                    <Image source={{ uri: signedThumbUrl || signedMediaUrl }} style={styles.bubbleMedia} contentFit="cover" transition={200} />
+                    <Image
+                      source={{ uri: signedThumbUrl || signedMediaUrl }}
+                      style={styles.bubbleMedia}
+                      contentFit="contain"
+                      transition={200}
+                      onLoad={(e) => {
+                        const src = e?.source || {};
+                        if (src.width && src.height) {
+                          const next = computeMediaSize(src.width, src.height);
+                          setMediaSize((prev) => (
+                            prev.width === next.width && prev.height === next.height ? prev : next
+                          ));
+                        }
+                      }}
+                    />
                   )}
                   <View style={styles.playIconOverlay}><Ionicons name="play-circle" size={54} color="rgba(255, 255, 255, 0.85)" /></View>
                 </>
@@ -263,7 +338,7 @@ const styles = StyleSheet.create({
   messageRow: { flexDirection: 'row', marginBottom: 16 }, messageRowMe: { justifyContent: 'flex-end' }, messageRowOther: { justifyContent: 'flex-start' }, 
   bubbleWrapper: { maxWidth: '75%', overflow: 'hidden', borderRadius: 20 }, bubble: { borderRadius: 20 }, bubbleMe: { marginLeft: 40 }, bubbleOther: { marginRight: 40 }, 
   messageText: { fontSize: 16, lineHeight: 22 }, audioBubble: { alignItems: 'center', justifyContent: 'space-between', minWidth: 60, height: 22 }, audioDurationText: { fontSize: 16, marginHorizontal: 8, fontWeight: '500' }, 
-  bubbleMedia: { width: 220, height: 300, backgroundColor: '#1c1c1e', borderRadius: 16 }, mediaWrapper: { overflow: 'hidden', borderRadius: 16 }, playIconOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }, 
+  bubbleMedia: { width: '100%', height: '100%', backgroundColor: '#1c1c1e', borderRadius: 16 }, mediaWrapper: { overflow: 'hidden', borderRadius: 16 }, playIconOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
   actionMessageContainer: { alignItems: 'center', marginVertical: 12 }, actionMessageText: { fontSize: 12, color: '#888888', backgroundColor: 'rgba(150,150,150,0.15)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, overflow: 'hidden', fontWeight: '500' },
   cinemaCard: { width: 240, padding: 16, borderRadius: 20, borderWidth: 1 }, cinemaCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 }, cinemaCardTitle: { fontSize: 16, fontWeight: 'bold', marginLeft: 8 }, cinemaCardSub: { fontSize: 13, marginBottom: 16 }, cinemaJoinBtn: { paddingVertical: 10, borderRadius: 12, alignItems: 'center' }, cinemaJoinText: { fontSize: 15, fontWeight: 'bold' }, actionBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
   locationCard: { width: 240, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },

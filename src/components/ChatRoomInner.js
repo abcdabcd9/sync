@@ -277,7 +277,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         isMe: true,
         timestamp: Date.now(),
       });
-      await supabase.from('messages').insert({
+      const { error: insertError } = await supabase.from('messages').insert({
         id: msgId,
         user_id: user.id,
         receiver_id: targetId,
@@ -285,8 +285,15 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         text: label,
         media_url: coordsStr,
       });
+      if (insertError) {
+        // 落库失败：允许用户重新进入时再试一次（不清参数、不标记已消费）
+        console.warn('位置消息落库失败:', insertError?.message || insertError);
+        consumedLocRef.current = null;
+        return;
+      }
       sendPushNotification(targetId, '', '发送了一个位置', { type: 'chat', targetId: user.id });
-      // 清理路由参数，避免返回时重复发送
+      // ✅ 落库成功后才清理路由参数，避免「参数已清但数据未落库」导致
+      //    重新挂载的 ChatRoomInner 既没有乐观消息、也拉不到云端数据。
       if (!cancelled) {
         try { routerRef.current?.setParams({ locLat: undefined, locLng: undefined, locLabel: undefined }); } catch (_) {}
       }

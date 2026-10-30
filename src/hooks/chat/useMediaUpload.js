@@ -261,12 +261,19 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage }) {
       }
 
       // ③ 乐观发送（本地 URI 立即可见）
+      // 🖼️ 同时带上真实宽高：MessageBubble 用它一次性算出正确气泡比例，
+      //    避免「先按 4:3 渲染 → 图片加载完再跳变」的抖动，
+      //    也彻底解决横屏照片被 220×300 竖框裁切的问题。
       const msgId = generateUUID();
+      const assetW = Number(asset.width) || 0;
+      const assetH = Number(asset.height) || 0;
       saveAndSend({
         id: msgId,
         type: msgType,
         mediaUrl: asset.uri,
         thumbnailUrl: localThumbUri,
+        mediaWidth: assetW,
+        mediaHeight: assetH,
         isMe: true,
         timestamp: Date.now(),
       });

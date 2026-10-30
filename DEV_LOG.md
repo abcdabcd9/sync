@@ -4,6 +4,71 @@
 
 ---
 
+## 2026-10-30（阶段 4 修复 13：位置卡片不即时出现 / 重新定位闪烁 / 横屏照片被裁切 / 语音转文字 Unsupported FormDataPart）
+
+用户反馈四件事：
+
+1. 聊天界面发送地图卡片后**不会立刻出现**，必须退出去再进来才看得到；
+2. 点「重新定位」时界面**闪烁**；
+3. 安卓和苹果的图片都**不会自动缩放** —— 发一张电脑的横屏照片，气泡里变成「最大样式」并且**被截掉一部分**，不是原生横屏比例；
+4. 语音转文字报 `识别失败："Unsupported form data part implementation，请重试。"`
+
+### 根因（四个独立问题）
+
+**① 位置卡片不即时出现：`router.replace` 重挂载 + `setMessages` 盲覆盖**
+
+[`location.js`](src/app/chat/location.js:183) 发送后走 `router.replace` 回 `/chat_room`，这会**重新挂载** [`ChatRoomInner`](src/components/ChatRoomInner.js:35)，[`useChatMessages`](src/hooks/chat/useChatMessages.js:52) 的 `messages` 从 `[]` 重新开始。紧接着 `fetchMessages` 里 [`setMessages(mergedMessages)`](src/hooks/chat/useChatMessages.js:91) 是**整体覆盖**，而此刻 DB 的 insert 可能还没提交完 —— 于是乐观插入的那条位置消息被抹掉，卡片消失。等用户退出重进时 DB 已有数据，才「突然出现」。
+
+**② 重新定位闪烁：`setStatus('loading')` 把整块内容卸载了**
+
+[`handleRelocate`](src/app/chat/location.js:141) 里 `setStatus('loading')` + `setAddress('')` + `setHint('')`，导致 `status === 'ready'` 的整块 UI（图钉 / 地址 / 坐标 / 提示）被卸载，换成居中的 `ActivityIndicator`，定位回来再挂回去 —— 视觉上就是「闪一下、消失、再出现」。
+
+**③ 横屏照片被裁切：固定 220×300 竖框 + `contentFit="cover"`**
+
+[`MessageBubble.js`](src/components/MessageBubble.js:266) 的 `bubbleMedia` 写死 `{ width: 220, height: 300 }`，配合 `contentFit="cover"`，横屏照片会被裁掉左右两侧去填满竖框，看起来就是「被放大 + 截掉一部分」。
+
+**④ 语音转文字失败：SDK 58 的全局 `fetch` 换成了 `expo/fetch`**
+
+这是本次最隐蔽的一个。Expo SDK 58 把全局 `fetch` 替换为 **`expo/fetch`（winter fetch）**。它的 [`convertFormDataAsync()`](node_modules/expo/src/winter/fetch/convertFormData.ts:38) 只接受三种 part：
+
+- `string`
+- `instanceof Blob`
+- 带 `bytes()` 方法的对象
+
+RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是**，于是 [`convertFormData.ts:77`](node_modules/expo/src/winter/fetch/convertFormData.ts:77) 直接抛 `Unsupported FormDataPart implementation`。注意这个错误串在 RN 原生层（`NetworkingModule.kt`）里根本不存在，所以之前一直误判成「网络问题」。
+
+### 修复
+
+**① 位置卡片即时出现**
+
+- [`useChatMessages.js`](src/hooks/chat/useChatMessages.js:91)：`setMessages` 改为**函数式合并** —— 保留本地独有的（乐观）消息，按 id 去重，远端优先，本地独有的前置。
+- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:254)：位置 effect 捕获 `insertError`，插入失败时 `consumedLocRef.current = null` 并直接 return（不清 params，允许重进重试）；**只有插入成功后才清路由参数**。
+
+**② 重新定位不闪烁**
+
+- 新增 `isRelocating` 状态，只作用于按钮（`opacity` / `disabled` / 按钮内小转圈），**不参与内容区渲染**。
+- 已有坐标时 `handleRelocate` 只 `setHint('正在重新定位…')`，保持 `ready` 态原地刷新；只有首次定位失败（无坐标）时才回到 `loading`。
+
+**③ 图片按原比例完整显示**
+
+- 新增 [`computeMediaSize(width, height)`](src/components/MessageBubble.js:62)：按真实宽高比计算气泡尺寸，上限 `220×300`，最小边 `80`，尺寸未知时退回 4:3 横框。
+- `contentFit` 由 `cover` 改为 **`contain`**，`bubbleMedia` 改为 `width/height: '100%'`。
+- `onLoad` 用 `e.source.width/height` 二次校正（本地 URI 首帧可能拿不到尺寸）。
+- [`useMediaUpload.js`](src/hooks/chat/useMediaUpload.js:270)：乐观发送时写入 `mediaWidth` / `mediaHeight`，首帧即为正确比例，无跳变。
+
+**④ 语音转文字**
+
+- [`ChatInputBar.js`](src/components/ChatInputBar.js:46)：改用 `expo-file-system` 的 `File`（`class File implements Blob`，原生实现 `bytes()`），直接 `formData.append('file', audioFile, 'voice.xxx')`，满足 `expo/fetch` 的序列化要求。
+- 顺带删掉不再需要的 `audioMimeOf`（MIME 由 `File.type` 原生推断）。
+
+### 验收
+
+- `npx tsc --noEmit` → 0 错误
+- `npx expo lint` → 138 problems（119 errors / 19 warnings），与基线持平，无新增
+- 改动文件：`src/components/ChatInputBar.js`、`src/components/MessageBubble.js`、`src/hooks/chat/useMediaUpload.js`、`src/hooks/chat/useChatMessages.js`、`src/components/ChatRoomInner.js`、`src/app/chat/location.js`
+
+---
+
 ## 2026-10-30（阶段 4 修复 12：位置消息 / Android 定位慢 / Android 全屏预览空白 / 语音转文字失败）
 
 用户反馈三件事：

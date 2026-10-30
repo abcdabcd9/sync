@@ -85,11 +85,26 @@ export function useChatMessages(targetId, user) {
       if (data && !cancelled) {
         const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
         const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-        const mergedMessages = data
+        const remoteMessages = data
           .map(r => formatDbMsg(r, user.id))
           .filter(m => !deletedIds.includes(m.id));
-        setMessages(mergedMessages);
-        AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(mergedMessages.slice(0, CACHE_LIMIT)));
+
+        // 🚨 关键修复（「位置卡片发送后不立刻出现，必须退出重进」）：
+        //   旧实现直接 setMessages(remoteMessages) 覆盖整个列表。
+        //   但 /chat/location 页用 router.replace 回到聊天室，会重新挂载
+        //   ChatRoomInner → 新的 useChatMessages 实例 → messages 从 [] 开始，
+        //   而此刻乐观插入的位置消息已随旧实例卸载而丢失。
+        //   若 DB insert 尚未提交，fetch 结果里也没有它 → 卡片不显示；
+        //   等用户退出重进时 DB 已有数据，才「突然出现」。
+        //   修复：把「本地已有但云端还没返回」的消息（乐观消息）合并保留，
+        //   按 id 去重，云端数据优先，本地独有的排在前面（最新在上）。
+        setMessages((prev) => {
+          const remoteIds = new Set(remoteMessages.map(m => m.id));
+          const localOnly = prev.filter(m => !remoteIds.has(m.id) && !deletedIds.includes(m.id));
+          const merged = [...localOnly, ...remoteMessages];
+          AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(merged.slice(0, CACHE_LIMIT)));
+          return merged;
+        });
       }
 
       // ③ 已读标定：把对方发给我的未读消息置为已读
