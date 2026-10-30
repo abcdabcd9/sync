@@ -178,6 +178,36 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（深夜）
+
+两处小调整。
+
+**做了啥**：
+
+1. **底部导航栏「今日」→「首页」**。`(tabs)/_layout.js` 的 `title` 改了，`CustomTabBar.js` 里 `index` 那个 tab 的图标也从 `today` / `today-outline` 换成 `home` / `home-outline` —— 名字叫「首页」却挂个日历图标，语义对不上。
+
+2. **`/health` 详情页瘦身**。删掉三块：
+   - motto 大标语（`TYPOGRAPHY.largeTitle` 那行）
+   - 「N 天坚持」火焰徽章
+   - 「TA：水 Xml | 饭 X/3」搭子徽章
+
+   现在页面只剩「饮食记录」列表 + 「水分补充」进度条，顶部一条返回栏。`useHealthData()` 的解构也跟着砍到只剩 9 个字段（`streakDays` / `motto` / `partnerData` / `partnerId` 都不再需要），`badgesRow` / `badge` / `badgeText` / `header` / `titleRow` / `largeTitle` 六个样式一起删了，`TYPOGRAPHY` 的 import 也去掉。
+
+**踩的坑**：
+
+没有。纯删代码，删完 `eslint src/app/health/` 直接 0 problems。
+
+**数字**：
+
+- `src/app/health/index.js`：193 行 → 128 行（-65）
+- `tsc --noEmit` → 0 错误
+- `expo lint` → 164 problems（141 errors / 23 warnings），**跟基线一模一样**
+- `eslint src/app/health/ "src/app/(tabs)/_layout.js"` → 0 problems
+
+**注意**：`CustomTabBar.js` 本身有 10 个历史 lint 错误（`react-hooks/refs`、`set-state-in-effect`），不是这次引入的，全量 164 没变就是证明。以后要单独清。
+
+---
+
 ## 模板（复制用）
 
 ```

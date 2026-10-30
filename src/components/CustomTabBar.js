@@ -98,7 +98,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 const event = navigation?.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!isFocused && (!event || !event.defaultPrevented)) {
-                  // 如果点的是“今日”，强制跳转到 '/'，其他页面跳转到对应的名字
+                  // 如果点的是“首页”，强制跳转到 '/'，其他页面跳转到对应的名字
                   if (route.name === 'index') {
                     router.navigate('/');
                   } else {
@@ -110,7 +110,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
               let iconName;
               switch (route.name) {
                 case 'chat': iconName = isFocused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'; break;
-                case 'index': iconName = isFocused ? 'today' : 'today-outline'; break;
+                case 'index': iconName = isFocused ? 'home' : 'home-outline'; break;
                 case 'space': iconName = isFocused ? 'planet' : 'planet-outline'; break;
                 case 'profile': iconName = isFocused ? 'person' : 'person-outline'; break;
                 default: iconName = 'ellipse';
