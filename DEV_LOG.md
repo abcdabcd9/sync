@@ -4,6 +4,63 @@
 
 ---
 
+## 2026-10-30（阶段 4 修复 12：位置消息 / Android 定位慢 / Android 全屏预览空白 / 语音转文字失败）
+
+用户反馈三件事：
+
+1. 发出去的位置信息「根本搜不到」，而且 Android 定位要很久（iOS 一秒出），重新定位点很多次也没用；
+2. Android 全屏预览图片和视频「完全看不到东西」，iOS 正常；
+3. 语音输入转文字一直提示「网络连接异常，请重试」。
+
+### 根因（三个独立问题，互不相关）
+
+**① 位置：`expo-location` 的 config plugin 根本没配**
+
+`app.json` 的 `plugins` 里没有 `expo-location`，`android.permissions` 里也没有 `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION`。结果：
+
+- Android 拿不到精确定位权限，只能靠网络/基站粗定位，且系统不会主动开网络定位提供者 → 表现为「定位很久 / 一直转圈」；
+- iOS 缺 `NSLocationWhenInUseUsageDescription`，权限弹窗文案缺失。
+
+另外旧代码只有一次 `getCurrentPositionAsync({ accuracy: High })`，**没有超时、没有兜底**。Android GPS 冷启动动辄 30s+，`High` 精度更慢；「重新定位」按钮在 `loading` 态下没禁用，连点会并发多个定位请求互相覆盖，看起来就是「点很多次才生效」。
+
+**② 位置消息：发的是纯文本 + 裸 Google Maps 链接**
+
+`ChatRoomInner` 把位置当 `type: 'text'` 发出去，内容是 `📍 地址\nhttps://maps.google.com/?q=lat,lng`。在聊天里就是一段文字，点不动、也「搜不到」。
+
+**③ Android 全屏预览空白：`removeClippedSubviews` + `flex: 1` 双杀**
+
+`InteractiveMediaViewer` 的 `FlatList` 上写了 `removeClippedSubviews={Platform.OS === 'android'}`。外层是 `StyleSheet.absoluteFill` + `transform` 动画，Android 的裁剪计算会误判所有 item 都不可见 → 原生视图全被摘掉 → 一片黑。iOS 该属性默认 `false`，所以 iOS 一直正常。
+
+同时图片 `ScrollView` 的 `contentContainerStyle` 用了 `flex: 1`，在 Android 上内容容器高度由内容决定，`flex: 1` 解析为 0 → 图片被压成 0 高度。
+
+**④ 语音转文字：无脑拼 `file://` + 错误被吞**
+
+旧代码 `const uri = audioUri.startsWith('file://') ? audioUri : 'file://' + audioUri;`。Android 录音 URI 可能是 `content://...`，拼完变成 `file://content://...` → `fetch` 直接抛错 → 被 `catch` 统一报成「网络连接异常，请重试」。同时 MIME 硬编码 `audio/m4a`，Groq 对不匹配的类型返回 400，也被报成网络异常。
+
+### 修复
+
+1. **`app.json`**：`plugins` 增加 `expo-location` 配置块（`locationWhenInUsePermission` 中文文案，关闭后台定位与前台服务）；`android.permissions` 增加 `ACCESS_COARSE_LOCATION`、`ACCESS_FINE_LOCATION`。
+2. **`src/app/chat/location.js` 定位逻辑重写**：
+   - `withTimeout()` 包装，单次定位 12s 上限，绝不无限挂起；
+   - Android 先 `enableNetworkProviderAsync()`（4s 超时，用户拒绝也不阻断）；
+   - 先取 `getLastKnownPositionAsync()`（3s 超时）→ 界面立刻可用（对齐 iOS 的「一秒出」）；
+   - 再 `getCurrentPositionAsync({ accuracy: Balanced })` 精修，失败则沿用已知位置；
+   - `runIdRef` 做并发守卫，连点「重新定位」只保留最后一次；
+   - 合并原先 `locate()` 与 `useEffect` 里重复的两份定位代码；
+   - UI 增加 `hint` 提示（「已使用最近一次定位，正在精确定位…」/「定位超时…」），`loading` 时禁用重新定位按钮。
+3. **位置消息改为 `type: 'location'`**：`ChatRoomInner` 发送时 `text` 存可读地址、`media_url` 存 `"lat,lng"`；`MessageBubble` 新增 `location` 渲染分支 —— 可点击地图卡片（图标 + 地址 + 坐标 + 地图预览区），点击调用 `openInMaps()`（iOS `maps.apple.com` / Android `geo:` / 兜底 Google Maps），长按仍走原长按菜单。`parseLocationCoords()` 同时兼容新格式与历史 `maps.google.com` 链接。
+4. **`useChatList.formatPreview`** 增加 `location → '[位置]'`。
+5. **`InteractiveMediaViewer`**：`removeClippedSubviews={false}`（改用 `windowSize={3}` 控内存）；`contentContainerStyle` 换成显式 `SCREEN_WIDTH/SCREEN_HEIGHT` 的 `imageScrollContent`，去掉 `flex: 1`；`Image` 改用 `contentFit="contain"` + `cachePolicy="memory-disk"`；`renderItem` 与 `fullScreenMedia` 都用显式宽高。
+6. **`ChatInputBar.transcribeAudioToText` 重写**：协议感知补前缀（只有裸路径才补 `file://`，`content://` / `ph://` / `file://` 原样用）；`inferAudioExt()` + `audioMimeOf()` 动态 MIME 与文件名；`response_format: 'json'`；缺 Key 时明确提示；HTTP 401/403 → 密钥无效、429 → 频率限制、其他 → 状态码 + 响应体前 120 字；`catch` 透出真实 `error.message`。
+
+### 验收
+
+- `npx tsc --noEmit` → 0
+- `npx expo lint` → 138 problems（119 errors / 19 warnings），低于基线 139
+- 注意：`app.json` 改了原生配置，**必须重新构建**（`npx expo run:android` 或 `eas build --profile development`），Expo Go 里看不到定位权限变化
+
+---
+
 ## 2026-10-30（阶段 4 修复 11：语音发出去无法播放 / 退出重进消失 / 图片视频发不出去 —— 真根因）
 
 用户反馈：语音能录，但发出去点不动播放，退出到主界面再进聊天详情页就消失了；图片和视频完全发不出去。

@@ -264,11 +264,27 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
       const lat = Number(locLat);
       const lng = Number(locLng);
       const label = typeof locLabel === 'string' && locLabel ? locLabel : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-      // 位置以 text 消息承载，附带坐标便于后续地图跳转
-      const text = `📍 ${label}\nhttps://maps.google.com/?q=${lat},${lng}`;
+      // 📍 位置消息：type = 'location'，text 存「可读地址」，media_url 存 "lat,lng"。
+      //    这样渲染层能画出可点击的地图卡片（点击直接打开系统地图），
+      //    而不是一段「搜不到」的纯文本 + 裸链接。
+      const coordsStr = `${lat},${lng}`;
       if (cancelled) return;
-      saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
-      await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
+      saveAndSend({
+        id: msgId,
+        type: 'location',
+        text: label,
+        mediaUrl: coordsStr,
+        isMe: true,
+        timestamp: Date.now(),
+      });
+      await supabase.from('messages').insert({
+        id: msgId,
+        user_id: user.id,
+        receiver_id: targetId,
+        type: 'location',
+        text: label,
+        media_url: coordsStr,
+      });
       sendPushNotification(targetId, '', '发送了一个位置', { type: 'chat', targetId: user.id });
       // 清理路由参数，避免返回时重复发送
       if (!cancelled) {

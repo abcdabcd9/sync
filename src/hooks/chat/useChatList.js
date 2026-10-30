@@ -13,6 +13,7 @@ export const formatPreview = (msg) => {
   if (msg.type === 'image') return '[图片]';
   if (msg.type === 'video') return '[视频]';
   if (msg.type === 'audio') return '[语音]';
+  if (msg.type === 'location') return '[位置]';
   if (msg.type === 'cinema_invite') return '[邀请同步观影]';
   if (msg.subtype === 'SYNC_CINEMA_ENDED') return '[本次同步放映已结束]';
   if (msg.subtype === 'SYNC_PARTNER_INVITE') return '[健康搭子邀请]';

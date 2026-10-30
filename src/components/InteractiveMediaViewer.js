@@ -281,16 +281,30 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
   return (
     <View style={styles.mediaContainer}>
       <ScrollView
-        ref={scrollRef} contentContainerStyle={styles.mediaContainer}
+        ref={scrollRef}
+        // ⚠️ Android 关键修复：contentContainerStyle 里绝不能用 `flex: 1`。
+        //    ScrollView 的内容容器在 Android 上高度由内容决定，`flex: 1` 会解析为 0，
+        //    导致图片被压成 0 高度 → 全屏预览「完全看不到东西」（iOS 无此问题）。
+        //    这里改用显式宽高 + 居中，两端行为一致。
+        contentContainerStyle={styles.imageScrollContent}
         maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} bouncesZoom={true}
-        onScroll={(e) => { 
+        onScroll={(e) => {
           const scale = e.nativeEvent.zoomScale || 1;
-          setIsZoomed(scale > 1.05); 
-        }} 
+          setIsZoomed(scale > 1.05);
+        }}
         scrollEventThrottle={16}
       >
         <TouchableWithoutFeedback onPress={handleImagePress}>
-          <Image source={{ uri: url }} style={[styles.fullScreenMedia, Platform.OS === 'android' && isZoomed && { transform: [{ scale: 2 }] }]} resizeMode="contain" />
+          <Image
+            source={{ uri: url }}
+            style={[
+              styles.fullScreenMedia,
+              Platform.OS === 'android' && isZoomed && { transform: [{ scale: 2 }] },
+            ]}
+            contentFit="contain"
+            transition={120}
+            cachePolicy="memory-disk"
+          />
         </TouchableWithoutFeedback>
       </ScrollView>
 
@@ -327,7 +341,13 @@ const GalleryItem = React.memo(function GalleryItem({ item, isActive, isZoomed, 
         ) : (
           <View style={styles.mediaContainer}>
             {(signedThumbUrl || signedMediaUrl) && (
-              <Image source={{ uri: signedThumbUrl || signedMediaUrl }} style={styles.fullScreenMedia} resizeMode="contain" />
+              <Image
+                source={{ uri: signedThumbUrl || signedMediaUrl }}
+                style={styles.fullScreenMedia}
+                contentFit="contain"
+                transition={120}
+                cachePolicy="memory-disk"
+              />
             )}
             <View style={styles.purePlayIcon}>
               <Ionicons name="play" size={42} color="rgba(255,255,255,0.8)" style={{ marginLeft: 6 }} />
@@ -450,12 +470,17 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
           windowSize={3}
           maxToRenderPerBatch={2}
           initialNumToRender={2}
-          
-          // 🍎 核心修复 3：解除 iOS 平移时的离谱白块 BUG，针对 Android 维持内存回收
-          removeClippedSubviews={Platform.OS === 'android'}
+
+          // ⚠️ Android 全屏预览空白的关键根因：
+          //    removeClippedSubviews 会在 item 被判定「移出可视区」时把原生视图
+          //    从视图树摘掉。本组件外层是 StyleSheet.absoluteFill + transform 动画，
+          //    Android 的裁剪计算会误判所有 item 都不可见 → 全部被摘掉 → 一片黑。
+          //    iOS 上该属性默认 false，所以 iOS 一直正常。
+          //    这里统一关闭，改用 windowSize 控制内存（3 屏，足够）。
+          removeClippedSubviews={false}
 
           renderItem={({ item, index }) => (
-            <View style={{ width: SCREEN_WIDTH }}>
+            <View style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
               <GalleryItem 
                 item={item} 
                 isActive={index === currentIndex} 
@@ -478,7 +503,9 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
 
 const styles = StyleSheet.create({
   mediaContainer: { flex: 1, width: SCREEN_WIDTH, height: SCREEN_HEIGHT, justifyContent: 'center', alignItems: 'center' },
-  fullScreenMedia: { width: '100%', height: '100%' },
+  // 图片 ScrollView 的内容容器：显式尺寸，绝不用 flex（Android 会解析为 0）
+  imageScrollContent: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, justifyContent: 'center', alignItems: 'center' },
+  fullScreenMedia: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
   purePlayIcon: { position: 'absolute', width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   bottomControlBar: { position: 'absolute', bottom: Platform.OS === 'ios' ? 44 : 32, alignSelf: 'center', width: SCREEN_WIDTH - 32 },
   controlBarInner: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(25,25,25,0.85)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10 },

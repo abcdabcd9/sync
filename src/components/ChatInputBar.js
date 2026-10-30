@@ -10,38 +10,97 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioRecorderState } from 'expo-audio';
 import { useAppTheme } from '../context/ThemeContext';
 
-const AI_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions'; 
+const AI_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const AI_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
 
+/** 从本地 URI 推断扩展名（expo-audio 在 iOS 产出 .m4a，Android 可能是 .m4a / .3gp / .aac） */
+const inferAudioExt = (uri) => {
+  const clean = String(uri || '').split('?')[0].split('#')[0];
+  const ext = clean.includes('.') ? clean.split('.').pop().toLowerCase() : '';
+  return /^[a-z0-9]{2,5}$/.test(ext) ? ext : 'm4a';
+};
+
+/** 扩展名 → Groq 接受的 MIME（Groq 白名单：flac/mp3/mp4/mpeg/mpga/m4a/ogg/wav/webm） */
+const audioMimeOf = (ext) => {
+  switch (ext) {
+    case 'mp3': return 'audio/mpeg';
+    case 'wav': return 'audio/wav';
+    case 'ogg': return 'audio/ogg';
+    case 'webm': return 'audio/webm';
+    case 'flac': return 'audio/flac';
+    case 'aac': return 'audio/aac';
+    case '3gp': return 'audio/mp4';
+    case 'm4a':
+    default: return 'audio/m4a';
+  }
+};
+
+/**
+ * 🎙️ 语音转文字（Groq Whisper）
+ *
+ * ⚠️ 关键点（Android 上「网络连接异常」的真根因）：
+ *  1. Android 的录音 URI 可能是 `content://` 或裸路径，绝不能无脑拼 `file://`，
+ *     否则拼成 `file://content://...` → fetch 直接抛错 → 被 catch 吞成「网络异常」。
+ *  2. FormData 的 file part 必须带正确的 `type`（MIME）。Groq 对 `audio/m4a`
+ *     之外的未知类型会 400，而旧代码把 400 也报成「网络异常」。
+ *  3. 必须把真实错误（HTTP 状态 + 响应体）透出到 UI，否则永远无法定位。
+ */
 const transcribeAudioToText = async (audioUri) => {
   try {
     if (!audioUri) return '未获取到录音文件，请重试。';
-    
-    let safeUri = audioUri;
-    if (!safeUri.startsWith('file://')) {
+
+    if (!AI_API_KEY) {
+      return '未配置语音识别密钥（EXPO_PUBLIC_GROQ_API_KEY），请检查 .env 后重启开发服务器。';
+    }
+
+    // 只对「裸路径」补 file://；content:// / ph:// / 已是 file:// 的一律原样使用
+    let safeUri = String(audioUri).trim();
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(safeUri)) {
       safeUri = 'file://' + safeUri;
     }
+
+    const ext = inferAudioExt(safeUri);
+    const mime = audioMimeOf(ext);
 
     const formData = new FormData();
     formData.append('file', {
       uri: safeUri,
-      type: 'audio/m4a',
-      name: 'voice.m4a'
+      type: mime,
+      name: `voice.${ext}`,
     });
-    formData.append('model', 'whisper-large-v3'); 
-    formData.append('language', 'zh'); 
+    formData.append('model', 'whisper-large-v3');
+    formData.append('language', 'zh');
+    formData.append('response_format', 'json');
 
     const response = await fetch(AI_API_URL, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${AI_API_KEY}` },
+      headers: { Authorization: `Bearer ${AI_API_KEY}` },
       body: formData,
     });
 
-    if (!response.ok) return '云端识别失败，请检查 API Key 或网络。';
+    if (!response.ok) {
+      // 把服务端真实原因透出，便于定位（401 = Key 失效，400 = 音频格式/参数问题）
+      let detail = '';
+      try {
+        const errText = await response.text();
+        detail = errText ? ` ${String(errText).slice(0, 120)}` : '';
+      } catch (_) {}
+      console.warn('语音识别失败:', response.status, detail);
+      if (response.status === 401 || response.status === 403) {
+        return '语音识别密钥无效，请检查 API Key。';
+      }
+      if (response.status === 429) {
+        return '识别请求过于频繁，请稍后再试。';
+      }
+      return `识别失败（${response.status}）。${detail}`.trim();
+    }
+
     const data = await response.json();
     return (data && data.text) ? data.text : '未能识别出文字，请手动输入...';
   } catch (error) {
-    return '网络连接异常，请重试。';
+    // 真正的网络/文件读取异常：把 message 透出，不再一律「网络连接异常」
+    console.warn('语音识别异常:', error?.message || error);
+    return `识别失败：${error?.message || '网络连接异常'}，请重试。`;
   }
 };
 
