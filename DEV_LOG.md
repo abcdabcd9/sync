@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-10-30（阶段 4 修复 14：下线地图卡片 + 全屏预览图片截断）
+
+用户反馈两件事：
+
+1. 「算了，直接删除地图卡片以及这个功能，不需要删除位置功能。」
+2. 「图片发出来确实是原生格式了，但是点开预览的时候，它还是会截断。」
+
+### ① 下线地图卡片（保留定位能力）
+
+只删「聊天里的地图卡片」这一条链路，[`src/app/chat/location.js`](src/app/chat/location.js:49) 定位页本身**完整保留**（位置能力不删）。
+
+- [`ChatInputBar.js`](src/components/ChatInputBar.js:330)：`allActionItems` 移除 `location` 项，「+」面板不再有「位置」入口。
+- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:241)：删除 `locLat/locLng/locLabel` 回传 effect、`handlePickLocation`、`routerRef` / `consumedLocRef`，以及 `useLocalSearchParams` 导入与 `routeParams`。
+- [`MessageBubble.js`](src/components/MessageBubble.js:188)：删除 `type === 'location'` 的地图卡片渲染分支、`parseLocationCoords()`、`openInMaps()`、6 条 `location*` 样式，以及不再使用的 `Linking` / `Alert` 导入。
+- [`useChatList.js`](src/hooks/chat/useChatList.js:16)：保留 `type === 'location' → '[位置]'` 的**只读兼容**，历史消息在会话列表仍能正常显示预览。
+
+> 历史 `type='location'` 消息在气泡里会降级为普通文本气泡（显示地址文字），不会变成空白。
+
+### ② 全屏预览图片截断
+
+**根因**：`CustomImagePlayer` 里 `<Image>` 的样式是 `fullScreenMedia = { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }`，再配 `contentFit="contain"`。expo-image 在「容器尺寸 == 屏幕尺寸」且外层 `ScrollView` 带 `maximumZoomScale` 时，Android 会按容器裁剪（iOS 偶发同样表现），于是横屏照片左右被切、竖屏照片上下被切。
+
+**修复**（[`InteractiveMediaViewer.js`](src/components/InteractiveMediaViewer.js:254)）：
+
+- 新增 `naturalSize` 状态 + `displaySize` 计算：按图片真实宽高**等比缩放**到「不超出屏幕」，把 `Image` 的宽高直接设成这个尺寸。
+- 尺寸未知时先铺满屏幕（`contain` 兜底），`onLoad` 拿到 `e.source.width/height` 后立刻替换。
+- 这样 `contain` 无事可做，**物理上不可能裁切**；双击缩放逻辑（`isZoomed` / `scrollResponderZoomTo`）完全不受影响。
+
+### 验收
+
+- `npx tsc --noEmit` → 0 错误
+- `npx expo lint` → 138 problems（119 errors / 19 warnings），与基线持平，无新增
+- 改动文件：`src/components/ChatInputBar.js`、`src/components/ChatRoomInner.js`、`src/components/MessageBubble.js`、`src/components/InteractiveMediaViewer.js`、`src/hooks/chat/useChatList.js`
+
+---
+
 ## 2026-10-30（阶段 4 修复 13：位置卡片不即时出现 / 重新定位闪烁 / 横屏照片被裁切 / 语音转文字 Unsupported FormDataPart）
 
 用户反馈四件事：

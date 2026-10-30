@@ -7,7 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
 import { useAudioPlayer } from 'expo-audio';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
 import { useAuth } from '../hooks/useAuth';
@@ -36,7 +36,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
-  const routeParams = useLocalSearchParams();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
   const { messages, loading, messagesRef, saveAndSend, patchMessage, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
@@ -238,79 +237,8 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     });
   }, [router, targetId, targetName]);
 
-  // ===== 位置消息：从 /chat/location 页返回时携带 locLat / locLng / locLabel =====
-  // ⚠️ 关键：router 对象每次渲染都是新引用，绝不能进依赖数组；
-  //    且 setParams 在参数已为 undefined 时仍会触发路由更新 → 重渲染 → effect 再跑，
-  //    形成无限循环，把整个聊天室卡死（表现为图片/语音都发不出去）。
-  //    因此用 ref 持有 router，并用「已消费标记」保证同一次定位只发送一次。
-  const routerRef = useRef(router);
-  useEffect(() => { routerRef.current = router; }, [router]);
-
-  const locLat = routeParams?.locLat;
-  const locLng = routeParams?.locLng;
-  const locLabel = routeParams?.locLabel;
-  const consumedLocRef = useRef(null);
-
-  useEffect(() => {
-    if (!locLat || !locLng || !user || !targetId) return undefined;
-    const locKey = `${locLat},${locLng},${locLabel || ''}`;
-    // 同一次定位只处理一次，避免重复插入消息
-    if (consumedLocRef.current === locKey) return undefined;
-    consumedLocRef.current = locKey;
-
-    let cancelled = false;
-    (async () => {
-      const msgId = generateUUID();
-      const lat = Number(locLat);
-      const lng = Number(locLng);
-      const label = typeof locLabel === 'string' && locLabel ? locLabel : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-      // 📍 位置消息：type = 'location'，text 存「可读地址」，media_url 存 "lat,lng"。
-      //    这样渲染层能画出可点击的地图卡片（点击直接打开系统地图），
-      //    而不是一段「搜不到」的纯文本 + 裸链接。
-      const coordsStr = `${lat},${lng}`;
-      if (cancelled) return;
-      saveAndSend({
-        id: msgId,
-        type: 'location',
-        text: label,
-        mediaUrl: coordsStr,
-        isMe: true,
-        timestamp: Date.now(),
-      });
-      const { error: insertError } = await supabase.from('messages').insert({
-        id: msgId,
-        user_id: user.id,
-        receiver_id: targetId,
-        type: 'location',
-        text: label,
-        media_url: coordsStr,
-      });
-      if (insertError) {
-        // 落库失败：允许用户重新进入时再试一次（不清参数、不标记已消费）
-        console.warn('位置消息落库失败:', insertError?.message || insertError);
-        consumedLocRef.current = null;
-        return;
-      }
-      sendPushNotification(targetId, '', '发送了一个位置', { type: 'chat', targetId: user.id });
-      // ✅ 落库成功后才清理路由参数，避免「参数已清但数据未落库」导致
-      //    重新挂载的 ChatRoomInner 既没有乐观消息、也拉不到云端数据。
-      if (!cancelled) {
-        try { routerRef.current?.setParams({ locLat: undefined, locLng: undefined, locLabel: undefined }); } catch (_) {}
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [locLat, locLng, locLabel, user, targetId, saveAndSend]);
-
-  // ===== 位置选择：跳转 L3 定位页 =====
-  const handlePickLocation = useCallback(() => {
-    if (!targetId) return;
-    Keyboard.dismiss();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push({
-      pathname: '/chat/location',
-      params: { targetId, targetName: targetName || '' },
-    });
-  }, [router, targetId, targetName]);
+  // 🗑️ 地图卡片功能已整体下线：不再从 /chat/location 回传坐标，也不再插入 type='location' 消息。
+  //    定位页 src/app/chat/location.js 本身保留（位置能力不删），只是聊天入口已移除。
 
   return (
     <View style={[styles.container, { backgroundColor: palette.background }]}>
@@ -367,7 +295,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
             ref={chatInputRef} palette={palette} isChatLoaded={true} onSendText={handleSendText}
             onStartRecord={() => { setPlayingAudioId(null); startRecord(); }} onStopRecord={stopAndSendRecord} onCancelRecord={cancelRecord}
             onPickMedia={pickAndSendMedia} onNudge={handleNudge} audioRecorder={audioRecorder}
-            onStartCall={handleStartCall} onPickLocation={handlePickLocation}
+            onStartCall={handleStartCall}
           />
         </View>
       )}

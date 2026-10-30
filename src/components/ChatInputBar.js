@@ -327,11 +327,11 @@ const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRec
     })
   ).current;
 
+  // 🗑️ 「位置」入口已移除：地图卡片功能整体下线（定位页 /chat/location 保留但不再从聊天入口进入）。
   const allActionItems = [
     { id: 'photo', icon: 'image', label: '媒体库', action: () => { onPickMedia(); closeAll(); } },
     { id: 'videoCall', icon: 'videocam', label: '视频通话', action: () => { if(onStartCall) onStartCall('video'); closeAll(); } },
     { id: 'audioCall', icon: 'call', label: '语音通话', action: () => { if(onStartCall) onStartCall('audio'); closeAll(); } },
-    { id: 'location', icon: 'location', label: '位置', action: () => { if (onPickLocation) onPickLocation(); closeAll(); } },
   ];
 
   return (

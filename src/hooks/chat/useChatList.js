@@ -13,6 +13,7 @@ export const formatPreview = (msg) => {
   if (msg.type === 'image') return '[图片]';
   if (msg.type === 'video') return '[视频]';
   if (msg.type === 'audio') return '[语音]';
+  // 🗑️ 地图卡片已下线：历史 type='location' 消息在列表里显示为 [位置]（只读兼容）
   if (msg.type === 'location') return '[位置]';
   if (msg.type === 'cinema_invite') return '[邀请同步观影]';
   if (msg.subtype === 'SYNC_CINEMA_ENDED') return '[本次同步放映已结束]';

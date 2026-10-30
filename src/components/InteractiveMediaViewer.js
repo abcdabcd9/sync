@@ -256,6 +256,30 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
   const lastTap = useRef(0);
   const tapTimer = useRef(null);
 
+  // 🖼️ 全屏预览「图片被截断」的真根因：
+  //    旧实现把 <Image> 直接写成 width: SCREEN_WIDTH / height: SCREEN_HEIGHT，
+  //    再配 contentFit="contain"。expo-image 在「容器尺寸 == 屏幕尺寸」且外层
+  //    ScrollView 有 maximumZoomScale 时，Android 会按容器裁剪（iOS 偶发同样表现），
+  //    于是横屏照片左右被切、竖屏照片上下被切 —— 看起来就是「截断」。
+  //    修复：先拿到图片真实宽高，按「等比缩放 + 不超出屏幕」算出显示尺寸，
+  //    再把 Image 的宽高设成这个尺寸。这样 contain 无事可做，绝不会裁切。
+  const [naturalSize, setNaturalSize] = useState(null);
+
+  const displaySize = useMemo(() => {
+    if (!naturalSize || !naturalSize.width || !naturalSize.height) {
+      // 尺寸未知时先铺满屏幕（contain 兜底），拿到尺寸后立刻替换
+      return { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+    }
+    const scale = Math.min(
+      SCREEN_WIDTH / naturalSize.width,
+      SCREEN_HEIGHT / naturalSize.height
+    );
+    return {
+      width: Math.round(naturalSize.width * scale),
+      height: Math.round(naturalSize.height * scale),
+    };
+  }, [naturalSize]);
+
   const handleImagePress = () => {
     const now = Date.now();
     if (now - lastTap.current < 300) {
@@ -298,12 +322,22 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
           <Image
             source={{ uri: url }}
             style={[
-              styles.fullScreenMedia,
+              { width: displaySize.width, height: displaySize.height },
               Platform.OS === 'android' && isZoomed && { transform: [{ scale: 2 }] },
             ]}
             contentFit="contain"
             transition={120}
             cachePolicy="memory-disk"
+            onLoad={(e) => {
+              const src = e?.source || {};
+              if (src.width && src.height) {
+                setNaturalSize((prev) => (
+                  prev && prev.width === src.width && prev.height === src.height
+                    ? prev
+                    : { width: src.width, height: src.height }
+                ));
+              }
+            }}
           />
         </TouchableWithoutFeedback>
       </ScrollView>

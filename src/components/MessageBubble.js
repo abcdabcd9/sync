@@ -1,45 +1,10 @@
 // --- START OF FILE src/components/MessageBubble.js ---
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Platform, TouchableOpacity, Linking, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useSignedMediaUrl } from '../hooks/chat/useSignedMediaUrl';
-
-/**
- * 📍 解析位置消息里的坐标。
- * 新格式：mediaUrl = "lat,lng"；旧格式（历史数据）：text 里带 maps.google.com 链接。
- */
-function parseLocationCoords(item) {
-  const raw = typeof item.mediaUrl === 'string' ? item.mediaUrl.trim() : '';
-  const m = raw.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
-  if (m) return { lat: Number(m[1]), lng: Number(m[2]) };
-
-  const text = typeof item.text === 'string' ? item.text : '';
-  const legacy = text.match(/[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
-  if (legacy) return { lat: Number(legacy[1]), lng: Number(legacy[2]) };
-  return null;
-}
-
-/** 打开系统地图（iOS 用 Apple Maps，Android 用 geo: 交给用户默认地图） */
-async function openInMaps(lat, lng, label) {
-  const encoded = encodeURIComponent(label || `${lat},${lng}`);
-  const url = Platform.select({
-    ios: `http://maps.apple.com/?ll=${lat},${lng}&q=${encoded}`,
-    android: `geo:${lat},${lng}?q=${lat},${lng}(${encoded})`,
-    default: `https://maps.google.com/?q=${lat},${lng}`,
-  });
-  try {
-    const supported = await Linking.canOpenURL(url);
-    if (!supported) {
-      await Linking.openURL(`https://maps.google.com/?q=${lat},${lng}`);
-      return;
-    }
-    await Linking.openURL(url);
-  } catch (_) {
-    Alert.alert('无法打开地图', '请检查是否安装了地图应用。');
-  }
-}
 
 /**
  * 🖼️ 气泡内媒体尺寸计算（修复「横屏照片被裁切 / 自动放大」）
@@ -185,53 +150,8 @@ export default React.memo(function MessageBubble({
     );
   }
 
-  if (msgType === 'location') {
-    const pos = parseLocationCoords(item);
-    const label = displayText || (pos ? `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}` : '位置');
-    return (
-      <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.locationCard,
-            { backgroundColor: palette.card, borderColor: palette.cardBorder, opacity: pressed ? 0.85 : 1 },
-          ]}
-          disabled={!pos}
-          onPress={() => {
-            if (!pos) return;
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            openInMaps(pos.lat, pos.lng, label);
-          }}
-          onLongPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            bubbleRef.current?.measure((x, y, width, height, pageX, pageY) => {
-              if (onLongPressMessage) onLongPressMessage({ ...item, layout: { pageX, pageY, width, height } });
-            });
-          }}
-          delayLongPress={250}
-        >
-          <View ref={bubbleRef} style={styles.locationHeader}>
-            <View style={[styles.locationIconBox, { backgroundColor: palette.iconBackground }]}>
-              <Ionicons name="location" size={20} color={palette.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.locationTitle, { color: palette.textPrimary }]} numberOfLines={2}>
-                {label}
-              </Text>
-              <Text style={[styles.locationSub, { color: palette.textSecondary }]} numberOfLines={1}>
-                {pos ? `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}` : '坐标不可用'}
-              </Text>
-            </View>
-          </View>
-          <View style={[styles.locationMapPreview, { backgroundColor: palette.iconBackground }]}>
-            <Ionicons name="map" size={34} color={palette.primary} />
-            <Text style={[styles.locationMapHint, { color: palette.textSecondary }]}>
-              {pos ? '点击打开地图导航' : '无法打开'}
-            </Text>
-          </View>
-        </Pressable>
-      </View>
-    );
-  }
+  // 🗑️ 地图卡片功能已下线：type='location' 的历史消息降级为普通文本气泡，
+  //    避免旧数据在列表里变成空白。新消息不会再产生该类型。
 
   if (msgType === 'partner_invite') {
     return (
@@ -341,12 +261,5 @@ const styles = StyleSheet.create({
   bubbleMedia: { width: '100%', height: '100%', backgroundColor: '#1c1c1e', borderRadius: 16 }, mediaWrapper: { overflow: 'hidden', borderRadius: 16 }, playIconOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
   actionMessageContainer: { alignItems: 'center', marginVertical: 12 }, actionMessageText: { fontSize: 12, color: '#888888', backgroundColor: 'rgba(150,150,150,0.15)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, overflow: 'hidden', fontWeight: '500' },
   cinemaCard: { width: 240, padding: 16, borderRadius: 20, borderWidth: 1 }, cinemaCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 }, cinemaCardTitle: { fontSize: 16, fontWeight: 'bold', marginLeft: 8 }, cinemaCardSub: { fontSize: 13, marginBottom: 16 }, cinemaJoinBtn: { paddingVertical: 10, borderRadius: 12, alignItems: 'center' }, cinemaJoinText: { fontSize: 15, fontWeight: 'bold' }, actionBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
-  locationCard: { width: 240, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
-  locationHeader: { flexDirection: 'row', alignItems: 'center', padding: 12, gap: 10 },
-  locationIconBox: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  locationTitle: { fontSize: 15, fontWeight: '600', lineHeight: 20 },
-  locationSub: { fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
-  locationMapPreview: { height: 96, alignItems: 'center', justifyContent: 'center', gap: 6 },
-  locationMapHint: { fontSize: 11, fontWeight: '500' }
 });
 // --- END OF FILE src/components/MessageBubble.js ---
