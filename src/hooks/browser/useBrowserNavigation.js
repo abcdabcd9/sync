@@ -111,6 +111,7 @@ export function useBrowserNavigation({
   }, [canGoBack, navigation]);
 
   // 🔗 跳转影院（iOS 延迟 150ms，规避原生转场与 WebView 卸载竞争）
+  //    阶段 5：/cinema 已变为大厅，投屏后进入大厅选择/创建房间
   const goCinema = useCallback(() => {
     if (Platform.OS === 'ios') {
       if (submitTimerRef.current) clearTimeout(submitTimerRef.current);

@@ -101,8 +101,16 @@ export default React.memo(function MessageBubble({
   //    历史数据若是完整签名 URL，Hook 内部会直接透传，保证不崩。
   //    注意：必须在本组件内部调用（组件是 React.memo），
   //    不能由父层批量解析，否则会破坏 memo 并导致全列表重渲染。
-  const { url: signedMediaUrl } = useSignedMediaUrl(item.mediaUrl);
-  const { url: signedThumbUrl } = useSignedMediaUrl(item.thumbnailUrl);
+  //
+  // 🚨 修复「发送观影邀请时刷屏 WARN 生成签名 URL 失败: 40.38,-5.76 Object not found」：
+  //    历史 type='location' 消息把经纬度写进了 media_url，而本组件对所有类型都无条件
+  //    调用 useSignedMediaUrl(item.mediaUrl)，于是把 "40.3881208,-5.7601863" 当成
+  //    chat_media 桶内对象路径去 createSignedUrl，必然 404 并打日志。
+  //    Hook 不能条件调用，因此这里按消息类型决定「是否真的需要签名」：
+  //    只有 image / video / audio 才传真实值，其余一律传 null（Hook 内部直接短路）。
+  const needsMedia = msgType === 'image' || msgType === 'video' || msgType === 'audio';
+  const { url: signedMediaUrl } = useSignedMediaUrl(needsMedia ? item.mediaUrl : null);
+  const { url: signedThumbUrl } = useSignedMediaUrl(needsMedia ? item.thumbnailUrl : null);
 
   useEffect(() => {
     let animInterval;

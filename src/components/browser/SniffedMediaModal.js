@@ -12,7 +12,7 @@ import {
   PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import { haptic } from '../../constants/haptics';
 
 import { ellipsisMiddle } from '../../constants/browser';
 import { FILTER_OPTIONS } from '../../hooks/browser/useBrowserSniffer';
@@ -199,7 +199,7 @@ export default function SniffedMediaModal({
                     active && { backgroundColor: '#FF2D55' },
                   ]}
                   onPress={() => {
-                    Haptics.selectionAsync();
+                    haptic.selection();
                     onFilterChange(opt);
                   }}
                   activeOpacity={0.8}
@@ -242,11 +242,12 @@ export default function SniffedMediaModal({
 
 const styles = StyleSheet.create({
   modalWrapper: { flex: 1, justifyContent: 'flex-end' },
-  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.1)' },
+  // 🫧 弹窗效果整体减弱 20%（遮罩 0.1 → 0.08，阴影 0.1 → 0.08，elevation 20 → 16）
+  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.08)' },
   menuDragHandle: { width: 40, height: 5, backgroundColor: 'rgba(150,150,150,0.3)', borderRadius: 3, alignSelf: 'center', marginBottom: 16 },
 
   // 🎬 多视频源选择弹窗
-  pickerContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, maxHeight: '78%', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
+  pickerContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, maxHeight: '78%', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
   pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   pickerTitle: { flex: 1, fontSize: 16, fontWeight: '700', marginRight: 8 },
   pickerHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -1,6 +1,6 @@
 // --- START OF FILE src/hooks/browser/useBrowserSniffer.js ---
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Alert, LayoutAnimation } from 'react-native';
+import { LayoutAnimation } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 import { mergeMediaList } from '../../constants/browser';
@@ -20,16 +20,14 @@ import { MANUAL_SNIFF_SCRIPT } from '../../scripts/browser';
  *   - 本 Hook 只负责「嗅探状态 + 消息解析」，绝不触碰全屏影院跳转（useCinema）
  *   - 绝不触碰任何 UI 弹窗组件（Picker / Menu 的显隐与动画由编排层持有）
  *   - AD_BLOCKED 上报不属于嗅探域，由调用方在 handleWebMessage 之前自行分流
+ *   - 🔇 静默嗅探：未命中任何片源时「零反馈」（不弹窗、不提示、不震动），
+ *     仅当真正嗅探到片源时才通过 onMediaFound 通知编排层弹出选择窗口
  */
 
 // 🎚️ 筛选选项（顺序即 UI 展示顺序）
 export const FILTER_OPTIONS = ['ALL', 'MP4', 'M3U8', 'MOV'];
 
-// 空结果提示文案（与原实现逐字一致）
-const EMPTY_SNIFF_TIP =
-  '未发现真实的视频地址。\n\n💡 提示：如果网页中出现了视频，请先点击一下网页里的“播放”按钮缓冲一秒钟，然后再点底部扫描图标！';
-
-export function useBrowserSniffer() {
+export function useBrowserSniffer({ onMediaFound } = {}) {
   // 🎞️ 嗅探到的视频源列表
   const [sniffedMediaList, setSniffedMediaList] = useState([]);
   // 🎚️ 格式筛选：'ALL' | 'MP4' | 'M3U8' | 'MOV'
@@ -39,6 +37,12 @@ export function useBrowserSniffer() {
 
   // ⏱️ 手动扫描兜底定时器
   const sniffTimerRef = useRef(null);
+
+  // 📣 命中回调：用 ref 持有，避免调用方内联函数导致 handleWebMessage 频繁重建
+  const onMediaFoundRef = useRef(onMediaFound);
+  useEffect(() => {
+    onMediaFoundRef.current = onMediaFound;
+  }, [onMediaFound]);
 
   // 🧹 卸载时清理定时器（避免 setState on unmounted component）
   useEffect(
@@ -52,24 +56,17 @@ export function useBrowserSniffer() {
   );
 
   // 🎬 合并新片源：去重 + 置顶 + 触感反馈 + 布局动画
+  //    ✅ 仅当「确实新增了片源」时才反馈，并通知编排层弹出选择窗口
   const pushMedia = useCallback((incoming) => {
     setSniffedMediaList((prev) => {
       const next = mergeMediaList(prev, incoming);
       if (next !== prev) {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // 📣 真正嗅探到片源 → 通知编排层打开选择播放源弹窗
+        onMediaFoundRef.current?.(next);
       }
       return next;
-    });
-  }, []);
-
-  // ⚠️ 空结果提示：仅在列表为空时弹窗（避免重复打扰）
-  const warnIfEmpty = useCallback(() => {
-    setSniffedMediaList((prev) => {
-      if (prev.length === 0) {
-        Alert.alert('嗅探反馈', EMPTY_SNIFF_TIP);
-      }
-      return prev;
     });
   }, []);
 
@@ -98,10 +95,8 @@ export function useBrowserSniffer() {
       if (data.type === 'VIDEO_FOUND_LIST') {
         setIsSniffing(false);
         const urls = Array.isArray(data.urls) ? data.urls.filter(Boolean) : [];
-        if (urls.length === 0) {
-          warnIfEmpty();
-          return true;
-        }
+        // 🔇 空结果：静默处理，不弹窗、不提示
+        if (urls.length === 0) return true;
         pushMedia(urls);
         return true;
       }
@@ -109,14 +104,14 @@ export function useBrowserSniffer() {
       // 旧版手动扫描完成信号（兼容）
       if (data.type === 'MANUAL_SNIFF_DONE') {
         setIsSniffing(false);
-        if (!data.found) warnIfEmpty();
+        // 🔇 未命中：静默处理，不弹窗、不提示
         return true;
       }
 
       // 非嗅探域消息（AD_BLOCKED 等）
       return false;
     },
-    [pushMedia, warnIfEmpty]
+    [pushMedia]
   );
 
   // 🗑️ 移除单条嗅探源（卡片横滑触发）

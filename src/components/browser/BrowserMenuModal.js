@@ -6,24 +6,20 @@ import {
   StyleSheet,
   TouchableOpacity,
   Modal,
-  FlatList,
   Animated,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { ellipsisMiddle, formatHistoryTime } from '../../constants/browser';
-
 /**
- * 🗂️ 浏览器主菜单 Modal（阶段 4 抽离）
+ * 🗂️ 浏览器主菜单 Modal（阶段 4 抽离 / 阶段 5 拆分）
  *
  * 职责：
  *   - 顶部操作行：电脑版切换 / 收藏本页 / 刷新
  *   - 🛡️ 广告拦截开关行（含累计拦截计数）
- *   - 🏷️ 书签 / 🕘 历史 双 Tab 列表
+ *   - 🏷️ 书签 / 🕘 历史 入口行（阶段 5 起跳转独立页，不再内嵌列表）
  *
  * ⚠️ 最高指令：
- *   - 样式、动画参数、Haptics 交互与原内联实现 100% 一致
  *   - 本组件只负责「展示」，所有状态与业务回调由父组件注入
  */
 
@@ -45,18 +41,12 @@ export default function BrowserMenuModal({
   isAdBlockEnabled,
   blockedAdCount,
   onToggleAdBlock,
-  // Tab
-  menuTab,
-  onMenuTabChange,
-  // 书签
+  // 列表计数（仅用于展示）
   bookmarksList,
-  onLoadBookmark,
-  onDeleteBookmark,
-  // 历史
   historyList,
-  onLoadHistory,
-  onDeleteHistory,
-  onClearHistory,
+  // 独立页入口
+  onOpenBookmarks,
+  onOpenHistory,
 }) {
   const overlayOpacity = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   const menuTranslateY = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] });
@@ -120,99 +110,34 @@ export default function BrowserMenuModal({
             </View>
           </TouchableOpacity>
 
-          {/* 🏷️ 书签 / 历史 双 Tab */}
-          <View style={[styles.menuTabBar, { backgroundColor: palette.background }]}>
+          {/* 🏷️ 书签 / 🕘 历史 入口行（跳转独立页） */}
+          <View style={styles.entryGroup}>
             <TouchableOpacity
-              style={[styles.menuTabBtn, menuTab === 'bookmark' && { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF' }]}
-              onPress={() => onMenuTabChange('bookmark')}
-              activeOpacity={0.8}
+              style={[styles.entryRow, { backgroundColor: palette.background }]}
+              onPress={onOpenBookmarks}
+              activeOpacity={0.7}
             >
-              <Text style={[styles.menuTabText, { color: menuTab === 'bookmark' ? palette.primary : palette.textSecondary }]}>
-                影院书签 ({bookmarksList.length})
+              <Ionicons name="bookmarks-outline" size={22} color={palette.primary} />
+              <Text style={[styles.entryText, { color: palette.textPrimary }]}>影院书签</Text>
+              <Text style={[styles.entryCount, { color: palette.textSecondary }]}>
+                {bookmarksList.length}
               </Text>
+              <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
             </TouchableOpacity>
+
             <TouchableOpacity
-              style={[styles.menuTabBtn, menuTab === 'history' && { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF' }]}
-              onPress={() => onMenuTabChange('history')}
-              activeOpacity={0.8}
+              style={[styles.entryRow, { backgroundColor: palette.background }]}
+              onPress={onOpenHistory}
+              activeOpacity={0.7}
             >
-              <Text style={[styles.menuTabText, { color: menuTab === 'history' ? palette.primary : palette.textSecondary }]}>
-                历史记录 ({historyList.length})
+              <Ionicons name="time-outline" size={22} color={palette.primary} />
+              <Text style={[styles.entryText, { color: palette.textPrimary }]}>历史记录</Text>
+              <Text style={[styles.entryCount, { color: palette.textSecondary }]}>
+                {historyList.length}
               </Text>
+              <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
             </TouchableOpacity>
           </View>
-
-          {menuTab === 'bookmark' ? (
-            <FlatList
-              data={bookmarksList}
-              keyExtractor={(item) => item}
-              style={styles.bookmarkList}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <Text style={[styles.listEmptyText, { color: palette.textSecondary }]}>暂无收藏的网址</Text>
-              }
-              renderItem={({ item }) => (
-                <View style={[styles.bookmarkItem, { borderBottomColor: palette.separator }]}>
-                  <TouchableOpacity style={styles.bookmarkContent} onPress={() => onLoadBookmark(item)}>
-                    <Ionicons name="globe-outline" size={20} color={palette.textSecondary} style={{ marginRight: 12 }} />
-                    <Text style={[styles.bookmarkText, { color: palette.textPrimary }]} numberOfLines={1}>{item}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.bookmarkDeleteBtn} onPress={() => onDeleteBookmark(item)}>
-                    <Ionicons name="trash-outline" size={20} color="#FF3B30" />
-                  </TouchableOpacity>
-                </View>
-              )}
-            />
-          ) : (
-            <View style={styles.historySection}>
-              <View style={styles.historyToolbar}>
-                <Text style={[styles.historyCountText, { color: palette.textSecondary }]}>
-                  最近 {historyList.length} 条记录
-                </Text>
-                <TouchableOpacity
-                  style={styles.historyClearBtn}
-                  onPress={onClearHistory}
-                  disabled={historyList.length === 0}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="trash-bin-outline" size={15} color={historyList.length === 0 ? palette.separator : '#FF3B30'} />
-                  <Text style={[styles.historyClearText, { color: historyList.length === 0 ? palette.separator : '#FF3B30' }]}>
-                    清空历史
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <FlatList
-                data={historyList}
-                keyExtractor={(item) => item.id}
-                style={styles.bookmarkList}
-                showsVerticalScrollIndicator={false}
-                ListEmptyComponent={
-                  <Text style={[styles.listEmptyText, { color: palette.textSecondary }]}>暂无浏览历史</Text>
-                }
-                renderItem={({ item }) => (
-                  <View style={[styles.bookmarkItem, { borderBottomColor: palette.separator }]}>
-                    <TouchableOpacity style={styles.historyContent} onPress={() => onLoadHistory(item.url)} activeOpacity={0.7}>
-                      <View style={styles.historyTextGroup}>
-                        <Text style={[styles.historyTitle, { color: palette.textPrimary }]} numberOfLines={1}>
-                          {item.title}
-                        </Text>
-                        <Text style={[styles.historyUrl, { color: palette.textSecondary }]} numberOfLines={1}>
-                          {ellipsisMiddle(item.url, 28, 14)}
-                        </Text>
-                      </View>
-                      <Text style={[styles.historyTime, { color: palette.textSecondary }]}>
-                        {formatHistoryTime(item.timestamp)}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.bookmarkDeleteBtn} onPress={() => onDeleteHistory(item.id)}>
-                      <Ionicons name="close-circle-outline" size={20} color={palette.textSecondary} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              />
-            </View>
-          )}
         </Animated.View>
       </View>
     </Modal>
@@ -221,8 +146,9 @@ export default function BrowserMenuModal({
 
 const styles = StyleSheet.create({
   modalWrapper: { flex: 1, justifyContent: 'flex-end' },
-  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.1)' },
-  menuContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 20 },
+  // 🫧 弹窗效果整体减弱 20%（遮罩 0.1 → 0.08，阴影 0.1 → 0.08，elevation 20 → 16）
+  modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.08)' },
+  menuContainer: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingTop: 12, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 16 },
   menuDragHandle: { width: 40, height: 5, backgroundColor: 'rgba(150,150,150,0.3)', borderRadius: 3, alignSelf: 'center', marginBottom: 16 },
   menuSectionTitle: { fontSize: 13, fontWeight: '600', marginBottom: 12, marginLeft: 4 },
   menuActionRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
@@ -237,28 +163,10 @@ const styles = StyleSheet.create({
   adBlockSwitch: { width: 42, height: 24, borderRadius: 12, padding: 3, justifyContent: 'center' },
   adBlockSwitchKnob: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FFFFFF' },
 
-  bookmarkList: { marginTop: 8, maxHeight: 250 },
-  bookmarkItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  bookmarkContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  bookmarkText: { fontSize: 15, flex: 1 },
-  bookmarkDeleteBtn: { padding: 8, marginLeft: 8 },
-  listEmptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 28 },
-
-  // 🗂️ 书签 / 历史 双 Tab
-  menuTabBar: { flexDirection: 'row', marginTop: 16, marginBottom: 4, padding: 4, borderRadius: 12 },
-  menuTabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, borderRadius: 9 },
-  menuTabText: { fontSize: 13, fontWeight: '600' },
-
-  // 🕘 历史记录
-  historySection: { marginTop: 4 },
-  historyToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-  historyCountText: { fontSize: 12 },
-  historyClearBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 6 },
-  historyClearText: { fontSize: 12, fontWeight: '600' },
-  historyContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  historyTextGroup: { flex: 1, marginRight: 10 },
-  historyTitle: { fontSize: 14, fontWeight: '500' },
-  historyUrl: { fontSize: 11, marginTop: 3 },
-  historyTime: { fontSize: 11, fontVariant: ['tabular-nums'] },
+  // 🏷️ 书签 / 🕘 历史 入口行
+  entryGroup: { marginTop: 12, gap: 10 },
+  entryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 14, borderRadius: 14 },
+  entryText: { flex: 1, fontSize: 15, fontWeight: '500' },
+  entryCount: { fontSize: 13, fontVariant: ['tabular-nums'] },
 });
 // --- END OF FILE src/components/browser/BrowserMenuModal.js ---

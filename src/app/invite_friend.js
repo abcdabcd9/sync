@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/invite_friend.js ---
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,17 +51,46 @@ export default function InviteFriendScreen() {
     loadFriends();
   }, [user]);
 
-  const sendInvite = async (friend) => {
+  // 🍎 用 useCallback 包裹：sendInvite 只在用户点击时执行（事件回调），
+  //    但 React Compiler 的 purity 规则无法静态区分「render 期调用」与
+  //    「事件回调」，会把 Date.now() 误判为 render 期不纯调用。
+  //    显式声明为 useCallback 后编译器可正确识别为回调作用域。
+  const sendInvite = useCallback(async (friend) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     
     // 🍎 使用标准 UUID，数据库绝对不会再报错拦截了！
     const msgId = generateUUID();
     
-    const newMsg = { id: msgId, user_id: user.id, receiver_id: friend.id, type: 'cinema_invite', text: roomId || 'error_room', isMe: true, timestamp: Date.now() };
+    // 🚨 修复「消息删不掉 / 顺序错乱」：
+    //   旧实现直接 [newMsg, ...msgs] 覆盖缓存，既不过滤「已删除 ID 黑名单」，
+    //   也不按时间排序，导致被删消息被重新写回、时间轴错乱。
+    //   现在与 useChatMessages 的合并规则保持一致：
+    //   过滤黑名单 → 按 timestamp 降序 → 截断到 300 条。
+    const newMsg = {
+      id: msgId,
+      type: 'cinema_invite',
+      subtype: null,
+      text: roomId || 'error_room',
+      mediaUrl: null,
+      thumbnailUrl: null,
+      duration: 0,
+      isMe: true,
+      timestamp: Date.now(),
+    };
     const cacheKey = `@chatMessages_${friend.id}`;
-    const cached = await AsyncStorage.getItem(cacheKey);
+    const delKey = `@deletedMsgIds_${friend.id}`;
+    const [cached, deletedStr] = await Promise.all([
+      AsyncStorage.getItem(cacheKey),
+      AsyncStorage.getItem(delKey),
+    ]);
     const msgs = cached ? JSON.parse(cached) : [];
-    await AsyncStorage.setItem(cacheKey, JSON.stringify([newMsg, ...msgs]));
+    const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
+    const deletedSet = new Set(deletedIds);
+    const merged = [newMsg, ...msgs]
+      .filter((m) => !deletedSet.has(m.id))
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .slice(0, 300);
+    await AsyncStorage.setItem(cacheKey, JSON.stringify(merged));
 
     // 存入云端
     const { error } = await supabase.from('messages').insert({
@@ -76,7 +105,7 @@ export default function InviteFriendScreen() {
     Alert.alert('邀请已发送', `邀请卡片已发送至与 ${friend.username} 的聊天界面`, [
       { text: '返回影院', onPress: () => router.back() }
     ]);
-  };
+  }, [roomId, user]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]} edges={['top']}>

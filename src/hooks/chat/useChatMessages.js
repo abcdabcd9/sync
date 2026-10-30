@@ -85,9 +85,10 @@ export function useChatMessages(targetId, user) {
       if (data && !cancelled) {
         const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
         const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
+        const deletedSet = new Set(deletedIds);
         const remoteMessages = data
           .map(r => formatDbMsg(r, user.id))
-          .filter(m => !deletedIds.includes(m.id));
+          .filter(m => !deletedSet.has(m.id));
 
         // 🚨 关键修复（「位置卡片发送后不立刻出现，必须退出重进」）：
         //   旧实现直接 setMessages(remoteMessages) 覆盖整个列表。
@@ -96,12 +97,22 @@ export function useChatMessages(targetId, user) {
         //   而此刻乐观插入的位置消息已随旧实例卸载而丢失。
         //   若 DB insert 尚未提交，fetch 结果里也没有它 → 卡片不显示；
         //   等用户退出重进时 DB 已有数据，才「突然出现」。
-        //   修复：把「本地已有但云端还没返回」的消息（乐观消息）合并保留，
-        //   按 id 去重，云端数据优先，本地独有的排在前面（最新在上）。
+        //   修复：把「本地已有但云端还没返回」的消息（乐观消息）合并保留。
+        //
+        // 🚨 二次修复（「消息删不掉 / 顺序错乱」）：
+        //   1. 删不掉：旧实现 localOnly 只过滤 deletedIds，但 remoteMessages 与
+        //      本地缓存写入都没有统一过滤；且本地缓存里可能残留已删除消息。
+        //      现在合并后统一按 deletedSet 再过滤一次，并回写「干净」缓存。
+        //   2. 顺序错乱：旧实现 [...localOnly, ...remoteMessages] 直接拼接，
+        //      localOnly 是旧缓存顺序、remoteMessages 是云端倒序，两者混在一起
+        //      时间轴完全错乱。现在合并后按 timestamp 降序统一排序
+        //      （列表是 inverted，最新在上）。
         setMessages((prev) => {
           const remoteIds = new Set(remoteMessages.map(m => m.id));
-          const localOnly = prev.filter(m => !remoteIds.has(m.id) && !deletedIds.includes(m.id));
-          const merged = [...localOnly, ...remoteMessages];
+          const localOnly = prev.filter(m => !remoteIds.has(m.id) && !deletedSet.has(m.id));
+          const merged = [...localOnly, ...remoteMessages]
+            .filter(m => !deletedSet.has(m.id))
+            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
           AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(merged.slice(0, CACHE_LIMIT)));
           return merged;
         });
@@ -162,7 +173,11 @@ export function useChatMessages(targetId, user) {
           setMessages(prev => {
             if (prev.find(m => m.id === newMsg.id)) return prev;
             if (!newMsg.isMe) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            return [newMsg, ...prev];
+            // 🚨 顺序修复：不能简单前插，必须按 timestamp 降序统一排序，
+            //    否则与本地乐观消息 / 缓存消息混排时时间轴会错乱。
+            const next = [newMsg, ...prev].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(next.slice(0, CACHE_LIMIT)));
+            return next;
           });
         }
       )
@@ -189,7 +204,8 @@ export function useChatMessages(targetId, user) {
   const saveAndSend = useCallback((newMsg) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setMessages((prev) => {
-      const updated = [newMsg, ...prev];
+      // 🚨 顺序修复：乐观插入同样按 timestamp 降序排序，保证与云端回填一致。
+      const updated = [newMsg, ...prev].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(updated.slice(0, CACHE_LIMIT)));
       return updated;
     });
@@ -227,14 +243,33 @@ export function useChatMessages(targetId, user) {
   }, []);
 
   // 4️⃣ 本地删除：从列表移除并记入「已删除 ID」黑名单（防止 Realtime 重新拉回）
+  //    🚨 修复「消息删不掉」：旧实现只更新内存 + 黑名单，没有同步清理
+  //    @chatMessages_* 缓存。下次进入会话时 fetchMessages 会先把缓存原样
+  //    setMessages，被删消息立刻「复活」；且合并逻辑若未过滤黑名单也会带回。
+  //    现在：内存过滤 → 黑名单落盘 → 缓存同步剔除，三处一致。
   const deleteMessage = useCallback(async (id) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setMessages(prev => prev.filter(m => m.id !== id));
+    setMessages(prev => {
+      const next = prev.filter(m => m.id !== id);
+      AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(next.slice(0, CACHE_LIMIT)));
+      return next;
+    });
     const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
     const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-    deletedIds.push(id);
+    if (!deletedIds.includes(id)) deletedIds.push(id);
     await AsyncStorage.setItem(CACHE_DEL_KEY, JSON.stringify(deletedIds));
-  }, [CACHE_DEL_KEY]);
+
+    // 🚨 修复「删不掉」的根因：旧实现只删本地，云端记录仍在。
+    //    换设备 / 清缓存 / 重装后 fetchMessages 会把它重新拉回来。
+    //    这里同步删除云端行；RLS 保证只能删自己发的消息。
+    //    失败不阻塞 UI（本地已移除 + 黑名单已落盘），仅开发期告警。
+    try {
+      const { error } = await supabase.from('messages').delete().eq('id', id);
+      if (error && __DEV__) console.warn('[deleteMessage] 云端删除失败:', error.message);
+    } catch (e) {
+      if (__DEV__) console.warn('[deleteMessage] 云端删除异常:', e?.message);
+    }
+  }, [CACHE_MSG_KEY, CACHE_DEL_KEY]);
 
   return {
     messages,

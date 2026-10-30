@@ -49,7 +49,10 @@ function RootNavigation() {
         <Stack.Screen name="auth" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
         {/* settings 及其子路由（settings/notifications 等）统一走 Stack 默认动画，保证一级/二级跳转观感一致 */}
         <Stack.Screen name="settings" />
-        <Stack.Screen name="browser" options={{ animation: 'slide_from_bottom' }} />
+        {/* 浏览器（阶段 5 拆分）：主页 + 历史 + 书签 */}
+        <Stack.Screen name="browser/index" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="browser/history" />
+        <Stack.Screen name="browser/bookmarks" />
         <Stack.Screen name="cinema" options={{ animation: 'slide_from_bottom' }} />
       </Stack>
       <FloatingPlayer />

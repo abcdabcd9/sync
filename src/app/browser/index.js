@@ -1,34 +1,37 @@
-// --- START OF FILE src/app/browser.js ---
-import React, { useRef, useState, useMemo, useCallback } from 'react';
+// --- START OF FILE src/app/browser/index.js ---
+import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, TextInput, Keyboard, Platform, LayoutAnimation, UIManager, Alert, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams } from 'expo-router';
-import * as Haptics from 'expo-haptics';
+import { useLocalSearchParams, router } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import { useAppTheme } from '../context/ThemeContext';
-import { useCinema } from '../hooks/useCinema';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useCinema } from '../../hooks/useCinema';
 
 // 🧩 领域 Hook（阶段 2~5 抽离）
-import { useBrowserHistory } from '../hooks/browser/useBrowserHistory';
-import { useBrowserSniffer } from '../hooks/browser/useBrowserSniffer';
-import { useAdBlocker } from '../hooks/browser/useAdBlocker';
-import { useBrowserProgress } from '../hooks/browser/useBrowserProgress';
-import { useBrowserNavigation } from '../hooks/browser/useBrowserNavigation';
+import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
+import { useBrowserSniffer } from '../../hooks/browser/useBrowserSniffer';
+import { useAdBlocker } from '../../hooks/browser/useAdBlocker';
+import { useBrowserProgress } from '../../hooks/browser/useBrowserProgress';
+import { useBrowserNavigation } from '../../hooks/browser/useBrowserNavigation';
 
 // 🧩 UI 弹窗组件（阶段 4 抽离）
-import BrowserMenuModal from '../components/browser/BrowserMenuModal';
-import SniffedMediaModal from '../components/browser/SniffedMediaModal';
+import BrowserMenuModal from '../../components/browser/BrowserMenuModal';
+import SniffedMediaModal from '../../components/browser/SniffedMediaModal';
 
 // 🌐 常量与注入脚本（阶段 1 抽离）
-import { MOBILE_USER_AGENT, DESKTOP_USER_AGENT, isSafeUrl } from '../constants/browser';
-import { buildBeforeLoadScript, AD_DOM_WATCHER_SCRIPT } from '../scripts/browser';
+import { MOBILE_USER_AGENT, DESKTOP_USER_AGENT, isSafeUrl } from '../../constants/browser';
+import { buildBeforeLoadScript, AD_DOM_WATCHER_SCRIPT } from '../../scripts/browser';
+import { SPRING } from '../../constants/motion';
+import { haptic } from '../../constants/haptics';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// params: { targetUrl?: string }
+// 浏览器主页：WebView 主体 + 嗅探投屏；历史/书签已拆为独立页
 export default function BrowserScreen() {
   const { isDark, colors: palette } = useAppTheme();
   const params = useLocalSearchParams();
@@ -40,16 +43,15 @@ export default function BrowserScreen() {
   // 🗂️ 菜单 / 🎬 嗅探弹窗的 UI 状态与动画
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuAnim] = useState(() => new Animated.Value(0));
-  const [menuTab, setMenuTab] = useState('bookmark'); // 'bookmark' | 'history'
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerAnim] = useState(() => new Animated.Value(0));
   const [pickerExpanded, setPickerExpanded] = useState(false); // false=半屏50% / true=全屏92%
   const pickerExpandedRef = useRef(false);
 
   const openMenu = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     setMenuVisible(true);
-    Animated.timing(menuAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+    Animated.spring(menuAnim, { toValue: 1, ...SPRING.bouncy, useNativeDriver: true }).start();
   }, [menuAnim]);
 
   const closeMenu = useCallback(() => {
@@ -60,16 +62,22 @@ export default function BrowserScreen() {
 
   // 🕘 历史记录 + 🏷️ 书签收藏（阶段 2）
   const {
-    historyList, addHistory, deleteHistory, clearHistory,
-    bookmarksList, toggleBookmark, removeBookmark, isBookmarked,
+    historyList, addHistory,
+    bookmarksList, toggleBookmark, isBookmarked,
   } = useBrowserHistory();
 
   // 🎬 视频嗅探核心（阶段 3）
+  //    🔇 静默嗅探：未命中时零反馈；命中时由 onMediaFound 自动弹出选择播放源窗口
+  //    ⚠️ openPicker 定义在下方，此处用 ref 转发，避免 Hook 调用顺序 / 依赖问题
+  const openPickerRef = useRef(null);
+  const handleMediaFound = useCallback(() => {
+    openPickerRef.current?.();
+  }, []);
   const {
     sniffedMediaList, filterFormat, setFilterFormat, isSniffing,
     filteredMediaList, formatCounts, handleWebMessage,
     removeMediaItem, clearSniffedMedia, triggerManualSniff,
-  } = useBrowserSniffer();
+  } = useBrowserSniffer({ onMediaFound: handleMediaFound });
 
   // 🛡️ 广告拦截域（阶段 5）
   const {
@@ -82,7 +90,7 @@ export default function BrowserScreen() {
     currentUrl, inputUrl, setInputUrl, canGoBack, canGoForward,
     isDesktopMode, actualLoadedUrl,
     handleSubmitUrl, handleGoBack, handleGoForward, handleClose,
-    toggleDesktopMode, handleNavigationStateChange, loadUrlInWebView, goCinema,
+    toggleDesktopMode, handleNavigationStateChange, goCinema,
   } = useBrowserNavigation({ startUrl, webViewRef, loadUrl, emitCommand, addHistory, closeMenu });
 
   // 📊 加载进度条（阶段 5）：加载完成后注入广告清理 + 写入历史
@@ -121,14 +129,20 @@ export default function BrowserScreen() {
     [bumpBlockedAdCount, handleWebMessage]
   );
 
-  // 🎬 打开 / 关闭多资源选择弹窗（默认半屏，允许空列表打开）
+  // 🎬 打开 / 关闭多资源选择弹窗（默认半屏）
+  //    ⚠️ 仅在真正嗅探到片源时由 onMediaFound 触发，空列表不再打开
   const openPicker = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     pickerExpandedRef.current = false;
     setPickerExpanded(false);
     setPickerVisible(true);
-    Animated.timing(pickerAnim, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    Animated.spring(pickerAnim, { toValue: 1, ...SPRING.bouncy, useNativeDriver: true }).start();
   }, [pickerAnim]);
+
+  // 🔗 将 openPicker 挂到 ref，供嗅探 Hook 的 onMediaFound 回调调用
+  useEffect(() => {
+    openPickerRef.current = openPicker;
+  }, [openPicker]);
 
   const closePicker = useCallback(() => {
     Animated.timing(pickerAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start(({ finished }) => {
@@ -144,7 +158,7 @@ export default function BrowserScreen() {
   const setPickerExpandedState = useCallback((expanded) => {
     if (pickerExpandedRef.current === expanded) return;
     pickerExpandedRef.current = expanded;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setPickerExpanded(expanded);
   }, []);
@@ -154,10 +168,13 @@ export default function BrowserScreen() {
     [setPickerExpandedState]
   );
 
-  // 🔍 嗅探按钮：有源直接开菜单；无源先深度扫描，再打开菜单展示结果
+  // 🔍 嗅探按钮：有源直接开菜单；无源则静默深度扫描（命中后由 onMediaFound 自动弹窗）
   const handleSniffPress = useCallback(() => {
-    if (sniffedMediaList.length === 0) triggerManualSniff(webViewRef);
-    openPicker();
+    if (sniffedMediaList.length > 0) {
+      openPicker();
+      return;
+    }
+    triggerManualSniff(webViewRef);
   }, [sniffedMediaList.length, triggerManualSniff, openPicker]);
 
   // ▶ 启动影院：支持传入指定片源 URL（默认取列表首项）
@@ -165,7 +182,7 @@ export default function BrowserScreen() {
     (url) => {
       const target = typeof url === 'string' && url ? url : sniffedMediaList[0]?.url;
       if (!target) return;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      haptic.heavy();
       Keyboard.dismiss();
       closePicker();
       loadUrl(target);
@@ -179,9 +196,9 @@ export default function BrowserScreen() {
     if (!url) return;
     try {
       await Clipboard.setStringAsync(url);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      haptic.success();
     } catch (_) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      haptic.error();
     }
   }, []);
 
@@ -191,38 +208,21 @@ export default function BrowserScreen() {
     closePicker();
   }, [clearSniffedMedia, closePicker]);
 
-  // 🕘 历史记录 / 🏷️ 书签的 UI 包装层（触感反馈 + 二次确认 + 安全校验）
-  const handleDeleteHistory = useCallback(
-    (id) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      deleteHistory(id);
-    },
-    [deleteHistory]
-  );
+  // 🕘 历史 / 🏷️ 书签：跳转独立页（阶段 5 拆分）
+  const handleOpenHistory = useCallback(() => {
+    haptic.light();
+    closeMenu();
+    router.push('/browser/history');
+  }, [closeMenu]);
 
-  const handleClearHistory = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert('清空历史记录', '确定要删除全部浏览历史吗？此操作不可恢复。', [
-      { text: '取消', style: 'cancel' },
-      { text: '清空', style: 'destructive', onPress: () => clearHistory() },
-    ]);
-  }, [clearHistory]);
-
-  const handleLoadHistory = useCallback(
-    (url) => {
-      if (!isSafeUrl(url)) {
-        Alert.alert('链接不安全', '该历史链接不是 HTTPS 安全地址，已阻止加载。');
-        return;
-      }
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      closeMenu();
-      loadUrlInWebView(url);
-    },
-    [closeMenu, loadUrlInWebView]
-  );
+  const handleOpenBookmarks = useCallback(() => {
+    haptic.light();
+    closeMenu();
+    router.push('/browser/bookmarks');
+  }, [closeMenu]);
 
   const handleSaveBookmark = useCallback(async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     // ⚠️ ref 引用恒定，不放入依赖数组
     const targetUrl = actualLoadedUrl.current;
     // 🔒 仅允许保存 https:// 安全链接（拒绝 http:// 与非法协议）
@@ -242,34 +242,11 @@ export default function BrowserScreen() {
       closeMenu();
       return;
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    haptic.success();
     Alert.alert('收藏成功', '已添加到影院书签列表');
     closeMenu();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- actualLoadedUrl 为 ref，引用恒定
   }, [isBookmarked, toggleBookmark, closeMenu]);
-
-  const handleDeleteBookmark = useCallback(
-    async (urlToDelete) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      await removeBookmark(urlToDelete);
-    },
-    [removeBookmark]
-  );
-
-  const handleLoadBookmark = useCallback(
-    (url) => {
-      // 🔒 加载前二次校验，防止历史遗留的不安全书签被打开
-      if (!isSafeUrl(url)) {
-        Alert.alert('链接不安全', '该收藏链接不是 HTTPS 安全地址，已阻止加载。');
-        return;
-      }
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      loadUrlInWebView(url);
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      closeMenu();
-    },
-    [loadUrlInWebView, closeMenu]
-  );
 
   const handleReload = useCallback(() => {
     closeMenu();
@@ -355,7 +332,7 @@ export default function BrowserScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 🗂️ 浏览器主菜单（阶段 4 抽离至 BrowserMenuModal） */}
+      {/* 🗂️ 浏览器主菜单（历史/书签已拆为独立页，菜单仅保留入口） */}
       <BrowserMenuModal
         visible={menuVisible}
         onRequestClose={closeMenu}
@@ -369,15 +346,10 @@ export default function BrowserScreen() {
         isAdBlockEnabled={isAdBlockEnabled}
         blockedAdCount={blockedAdCount}
         onToggleAdBlock={toggleAdBlock}
-        menuTab={menuTab}
-        onMenuTabChange={setMenuTab}
         bookmarksList={bookmarksList}
-        onLoadBookmark={handleLoadBookmark}
-        onDeleteBookmark={handleDeleteBookmark}
         historyList={historyList}
-        onLoadHistory={handleLoadHistory}
-        onDeleteHistory={handleDeleteHistory}
-        onClearHistory={handleClearHistory}
+        onOpenBookmarks={handleOpenBookmarks}
+        onOpenHistory={handleOpenHistory}
       />
 
       {/* 🎬 多视频源选择 Bottom Sheet（阶段 4 抽离至 SniffedMediaModal） */}
@@ -422,4 +394,4 @@ const styles = StyleSheet.create({
   sniffBadge: { position: 'absolute', top: 2, right: 0, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: '#FF2D55', alignItems: 'center', justifyContent: 'center' },
   sniffBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
 });
-// --- END OF FILE src/app/browser.js ---
+// --- END OF FILE src/app/browser/index.js ---

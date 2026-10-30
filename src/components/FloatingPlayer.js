@@ -14,10 +14,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useRouter, usePathname } from 'expo-router';
-import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCinema } from '../hooks/useCinema';
 import { useAppTheme } from '../context/ThemeContext';
+import { SPRING } from '../constants/motion';
+import { haptic } from '../constants/haptics';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const DOCK_OFFSET = (SCREEN_WIDTH / 2) - 20;
@@ -48,8 +49,9 @@ export default function FloatingPlayer() {
     return () => sub.remove();
   }, []);
 
-  // 🍎 如果在影院页面，或者被全局广播强制隐藏，则下潜消失
-  const isHidden = (pathname === '/cinema' && !isMinimized) || forceHide;
+  // 🍎 如果在影院页面（大厅或房间），或者被全局广播强制隐藏，则下潜消失
+  const isCinemaRoute = pathname === '/cinema' || pathname.startsWith('/cinema/');
+  const isHidden = (isCinemaRoute && !isMinimized) || forceHide;
 
   useEffect(() => {
     if (isHidden) {
@@ -71,18 +73,17 @@ export default function FloatingPlayer() {
   const snapToDock = (side) => {
     dockSideRef.current = side;
     setDockSide(side);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     Animated.parallel([
-      Animated.spring(panX, { 
-        toValue: side === 'left' ? -DOCK_OFFSET : DOCK_OFFSET, 
-        friction: 6, 
-        tension: 45, 
-        useNativeDriver: true 
+      Animated.spring(panX, {
+        toValue: side === 'left' ? -DOCK_OFFSET : DOCK_OFFSET,
+        ...SPRING.snap,
+        useNativeDriver: true
       }),
-      Animated.timing(dockAnim, { 
-        toValue: 1, 
-        duration: 180, 
-        useNativeDriver: true 
+      Animated.timing(dockAnim, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true
       })
     ]).start();
   };
@@ -90,18 +91,17 @@ export default function FloatingPlayer() {
   const snapToCenter = () => {
     dockSideRef.current = 'none';
     setDockSide('none');
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    haptic.medium();
     Animated.parallel([
-      Animated.spring(panX, { 
-        toValue: 0, 
-        friction: 6, 
-        tension: 45, 
-        useNativeDriver: true 
+      Animated.spring(panX, {
+        toValue: 0,
+        ...SPRING.snap,
+        useNativeDriver: true
       }),
-      Animated.timing(dockAnim, { 
-        toValue: 0, 
-        duration: 180, 
-        useNativeDriver: true 
+      Animated.timing(dockAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true
       })
     ]).start();
   };
@@ -128,14 +128,14 @@ export default function FloatingPlayer() {
   ).current;
 
   const handleMaximize = () => {
-    if (dockSideRef.current !== 'none') return; 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (dockSideRef.current !== 'none') return;
+    haptic.medium();
     setIsMinimized(false);
     panX.setValue(0);
     dockAnim.setValue(0);
     dockSideRef.current = 'none';
     setDockSide('none');
-    router.push('/cinema'); 
+    router.push('/cinema');
   };
 
   if (!currentUrl) return null;
