@@ -33,6 +33,37 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（下午）
+
+阶段 1 干完了。全是新文件，没碰一行现有代码。
+
+**做了啥**：
+
+- `@shopify/flash-list` 2.3.2
+- 4 个常量：`motion.js`（时长/弹簧/缓动/缩放/错峰）、`haptics.js`（7 种触感，iOS 才真触发）、`features.js`（8 个开关，5 个已实现 + 3 个关系网络预留）、`limits.js`（9 个上限，6 个现有 + 3 个预留）
+- `src/types/README.md`：TS 转型契约，只写规划不写实现
+- 7 个 UI 组件：AppleCard / AppleButton / AppleListRow / AppleSectionHeader / ProgressRing / Skeleton / EmptyState，加一个 `index.js` 统一出口
+
+**踩的坑**：
+
+第一次 lint 冒出 12 个 error，全在 AppleCard、AppleButton、Skeleton 三个文件。现象是 `react-hooks/refs` 报「Cannot access refs during render」，指向 `useRef(new Animated.Value(1)).current`。原因就是 React 19 这条新规则——渲染期读 `.current` 一律算违规，跟基线里那 107 个 error 同源。解决：换成 `useState(() => new Animated.Value(1))`，惰性初始化只创建一次，而且它是个普通变量不是 ref，规则不触发。顺手把 ProgressRing 两个 exhaustive-deps warning 也补了依赖。
+
+**数字**：
+
+- 新增 13 个文件（4 常量 + 1 README + 8 UI）
+- `tsc --noEmit` → 0 错误
+- `expo lint` → 164 problems（141 errors / 23 warnings），**跟基线一模一样，零新增**
+- `expo-doctor` → 20/20
+- 新增文件单独 lint → 0 problems
+
+**下次接着干**：
+
+阶段 2，首页重写。这是第一个会删改现有代码的阶段，`(tabs)/index.js` 整个重写，新建 4 个 home 组件。验收标准还是「不新增 error」。
+
+**待验证**：`ProgressRing.js` 是全项目第一个 import `react-native-reanimated` 的文件。SDK 58 的 babel-preset-expo 会自动配插件，理论上不用管，但组件还没被任何页面引用，真机效果得等阶段 2 挂上去才知道。
+
+---
+
 ## 模板（复制用）
 
 ```
