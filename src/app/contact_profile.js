@@ -1,35 +1,77 @@
 // --- START OF FILE src/app/contact_profile.js ---
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { useAppTheme } from '../context/ThemeContext';
+import { useAuth } from '../hooks/useAuth';
+import { haptic } from '../constants/haptics';
+import { useFriendActions } from '../hooks/chat/useFriendActions';
+import ContactActionsMenu from '../components/chat/ContactActionsMenu';
 
 export default function ContactProfileScreen() {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
-  
+  const { user } = useAuth();
+  const { deleteFriend } = useFriendActions(user);
+
   const { id, nickname, sync_id, username, remark } = useLocalSearchParams();
 
   const displayName = remark || nickname || username || '未知用户';
   const displayId = sync_id || username || '暂无 ID';
 
+  // 右上角「3 个点」：与聊天室 L2 共用同一个 ContactActionsMenu
+  const [menuVisible, setMenuVisible] = useState(false);
+
   const handleBack = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic.light();
     router.back();
   };
 
   const handleSendMessage = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    haptic.medium();
     router.push({ pathname: '/chat_room', params: { targetId: id, targetName: displayName } });
   };
 
   const handleCall = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    alert('加密音视频通话功能即将开放，敬请期待！');
+    haptic.warning();
+    Alert.alert(
+      '音视频通话',
+      '加密音视频通话功能即将开放，敬请期待！\n\n当前可先通过「发消息」与好友保持联系。'
+    );
+  };
+
+  // 查看详细资料：当前页本身就是详细资料页，故给出轻提示
+  const handleViewProfile = () => {
+    Alert.alert('详细资料', `昵称：${nickname || username || '未设置'}\nSync ID：${displayId}`);
+  };
+
+  // 删除好友：二次确认 → 数据层双向解除 → 返回通讯录
+  const handleDeleteFriend = () => {
+    if (!id) return;
+    Alert.alert(
+      '删除好友',
+      `确定要删除「${displayName}」吗？删除后聊天记录将不再显示，且需要重新添加才能继续聊天。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await deleteFriend(id);
+            if (res.ok) {
+              haptic.success();
+              router.back();
+            } else {
+              haptic.error();
+              Alert.alert('删除失败', res.error || '请稍后重试。');
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -40,7 +82,16 @@ export default function ContactProfileScreen() {
           <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.6}>
             <Ionicons name="chevron-back" size={28} color={palette.textPrimary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => {Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); alert('更多联系人设置开发中');}} activeOpacity={0.6}>
+          <TouchableOpacity
+            onPress={() => {
+              haptic.light();
+              setMenuVisible(true);
+            }}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel="联系人操作"
+            accessibilityHint="查看详细资料或删除好友"
+          >
             <Ionicons name="ellipsis-horizontal" size={24} color={palette.textPrimary} style={{ marginRight: 16 }} />
           </TouchableOpacity>
         </View>
@@ -78,6 +129,15 @@ export default function ContactProfileScreen() {
             <Text style={[styles.actionTextSecondary, { color: palette.textPrimary }]}>音视频通话</Text>
           </TouchableOpacity>
         </View>
+
+        {/* 右上角「3 个点」菜单：与聊天室 L2 共用同一组件 */}
+        <ContactActionsMenu
+          visible={menuVisible}
+          displayName={displayName}
+          onClose={() => setMenuVisible(false)}
+          onViewProfile={handleViewProfile}
+          onDeleteFriend={handleDeleteFriend}
+        />
 
       </SafeAreaView>
     </View>

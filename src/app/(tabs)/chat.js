@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/(tabs)/chat.js ---
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../hooks/useAuth';
 import { haptic } from '../../constants/haptics';
+import { supabase } from '../../services/supabase';
 import { useChatList } from '../../hooks/chat/useChatList';
 import ConversationRow from '../../components/chat/ConversationRow';
 import ChatRoomInner from '../../components/ChatRoomInner';
@@ -37,10 +39,15 @@ export default function ChatMainScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
-  const { conversations, unreadCounts, friendsMap, latestMessages, loading, getDisplayName } =
+  const { conversations, unreadCounts, friendsMap, latestMessages, loading, refresh, getDisplayName } =
     useChatList(user);
 
   const [selectedChat, setSelectedChat] = useState(null);
+  // 会话长按菜单的本地操作状态（置顶 / 不显示 / 已读）
+  // 说明：置顶与「不显示」属于纯本地偏好，暂存内存；已读直接写库。
+  const [pinnedIds, setPinnedIds] = useState([]);
+  const [hiddenIds, setHiddenIds] = useState([]);
+  const [readIds, setReadIds] = useState([]);
   // 会话长按菜单：与右上角「+」同款视觉（圆角卡片 + 纯文字行，无图标）
   // top 由触点 pageY 计算，弹窗出现在手指下方；left 由触点 pageX 计算，自动贴边
   const [menuConfig, setMenuConfig] = useState({ visible: false, top: 0, left: 0, chat: null });
@@ -76,6 +83,58 @@ export default function ChatMainScreen() {
     }
   };
 
+  // ===== 长按菜单的 4 个动作 =====
+  // 标为已读：把该会话里「对方发给我且未读」的消息标记为已读
+  const handleMarkRead = async (chat) => {
+    if (!chat || !user) return;
+    haptic.success();
+    setReadIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+    await supabase
+      .from('messages')
+      .update({ is_read: true })
+      .eq('user_id', chat.id)
+      .eq('receiver_id', user.id)
+      .eq('is_read', false);
+    refresh();
+  };
+
+  // 置顶该聊天：本地置顶，列表排序时优先展示
+  const handleTogglePin = (chat) => {
+    if (!chat) return;
+    haptic.medium();
+    setPinnedIds((prev) =>
+      prev.includes(chat.id) ? prev.filter((x) => x !== chat.id) : [...prev, chat.id]
+    );
+  };
+
+  // 不显示该聊天：本地隐藏，不删除任何消息
+  const handleHideChat = (chat) => {
+    if (!chat) return;
+    haptic.medium();
+    setHiddenIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+  };
+
+  // 删除该聊天：清空与该好友的本地会话（仅隐藏，不删对方消息）
+  const handleDeleteChat = (chat) => {
+    if (!chat) return;
+    haptic.warning();
+    Alert.alert(
+      '删除该聊天',
+      `确定要删除与「${getDisplayName(chat)}」的聊天吗？删除后该会话将从列表中移除。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            setHiddenIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+            setPinnedIds((prev) => prev.filter((x) => x !== chat.id));
+          },
+        },
+      ]
+    );
+  };
+
   // 长按会话：弹窗出现在手指下方（跟随触点），并自动贴边不超出屏幕
   const handleLongPress = (item, evt) => {
     haptic.heavy();
@@ -101,6 +160,15 @@ export default function ChatMainScreen() {
 
   const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, left: 0, chat: null });
 
+  // 过滤「不显示」的会话，并把「置顶」的会话排到最前（保持原有相对顺序）
+  const visibleConversations = useMemo(() => {
+    const list = conversations.filter((c) => c && !hiddenIds.includes(c.id));
+    if (pinnedIds.length === 0) return list;
+    const pinned = list.filter((c) => pinnedIds.includes(c.id));
+    const rest = list.filter((c) => !pinnedIds.includes(c.id));
+    return [...pinned, ...rest];
+  }, [conversations, hiddenIds, pinnedIds]);
+
   if (!isAuthLoading && !user) {
     return (
       <SafeAreaView
@@ -119,15 +187,16 @@ export default function ChatMainScreen() {
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
     >
-      {conversations.length === 0 ? (
+      {visibleConversations.length === 0 ? (
         <View style={styles.centerBox}>
           <Ionicons name="chatbubbles-outline" size={64} color={palette.separator} />
           <Text style={[styles.emptyText, { color: palette.textSecondary }]}>暂无聊天会话</Text>
         </View>
       ) : (
-        conversations.map((item) => {
+        visibleConversations.map((item) => {
           if (!item) return null;
-          const unreadNum = unreadCounts[item.id] || 0;
+          // 「标为已读」后本地立即清零未读角标，无需等实时推送
+          const unreadNum = readIds.includes(item.id) ? 0 : unreadCounts[item.id] || 0;
           return (
             <ConversationRow
               key={item.id}
@@ -236,8 +305,9 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.contextMenuItem}
               onPress={() => {
+                const chat = menuConfig.chat;
                 closeActionMenu();
-                alert('已读开发中');
+                handleMarkRead(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -251,14 +321,17 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.contextMenuItem}
               onPress={() => {
+                const chat = menuConfig.chat;
                 closeActionMenu();
-                alert('置顶开发中');
+                handleTogglePin(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
               accessibilityLabel="置顶该聊天"
             >
-              <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>置顶该聊天</Text>
+              <Text style={[styles.contextMenuText, { color: palette.textPrimary }]}>
+                {menuConfig.chat && pinnedIds.includes(menuConfig.chat.id) ? '取消置顶' : '置顶该聊天'}
+              </Text>
             </TouchableOpacity>
 
             <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
@@ -266,8 +339,9 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.contextMenuItem}
               onPress={() => {
+                const chat = menuConfig.chat;
                 closeActionMenu();
-                alert('隐藏开发中');
+                handleHideChat(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -281,8 +355,9 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.contextMenuItem}
               onPress={() => {
+                const chat = menuConfig.chat;
                 closeActionMenu();
-                alert('删除开发中');
+                handleDeleteChat(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"

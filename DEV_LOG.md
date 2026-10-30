@@ -208,6 +208,34 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 5：占位补全 + 联系人「3 个点」菜单共用）
+
+用户提出两项需求，均已落地。
+
+**1. 补全占位符**
+
+- 长按会话菜单 4 项从 `alert('xx开发中')` 改为真实逻辑：
+  - **标为已读** → `messages` 表 `update({ is_read: true })`，限定 `user_id = 对方` 且 `receiver_id = 我`，并本地 `readIds` 立即清零角标。
+  - **置顶该聊天** → 本地 `pinnedIds`，列表排序时置顶项排最前（保持原有相对顺序）；已置顶时文案变为「取消置顶」。
+  - **不显示该聊天** → 本地 `hiddenIds`，从列表过滤掉，不删任何消息。
+  - **删除该聊天** → 二次确认后加入 `hiddenIds` 并移出 `pinnedIds`。
+- 聊天室 `handleStartCall` 与 `contact_profile` 的 `handleCall` 保留原有「微信通话共存」说明，改为 `Alert.alert` 多行文案（原为裸 `alert`）。
+
+**2. 联系人「3 个点」菜单（聊天室 L2 + 通讯录详细页 L3 共用）**
+
+- 新建 [`src/components/chat/ContactActionsMenu.js`](src/components/chat/ContactActionsMenu.js:1)：与聊天页右上角「+」同款视觉（圆角卡片 + 纯文字行 + 细分隔线，无图标），贴右上角 `top: 96/72, right: 16`。菜单项：**查看详细资料** / **删除好友**（红色危险项）。
+- 新建 [`src/hooks/chat/useFriendActions.js`](src/hooks/chat/useFriendActions.js:1)：`deleteFriend(friendId)` 双向解除 `friends` 关系（`or(and(user_id=me,friend_id=other),and(user_id=other,friend_id=me))`），并清理已通过的 `friend_requests`；`updateRemark` 仅更新「我 → 对方」一条。
+- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:212)：把 header 右侧的 `<View style={{ width: 28 }} />` 占位替换为 `ellipsis-horizontal` 按钮 → 呼出菜单。删除好友成功后 `onBack()` 返回列表。
+- [`contact_profile.js`](src/app/contact_profile.js:43)：右上角「3 个点」从 `alert('更多联系人设置开发中')` 改为复用同一 `ContactActionsMenu`；删除好友成功后 `router.back()` 回通讯录。同时把裸 `Haptics` 调用统一为 `haptic` 包装器。
+
+**验收**
+
+- `npx tsc --noEmit` → 0
+- `npx eslint` 5 个改动文件 → 0 problems
+- `npx expo lint` 全量 → **139 problems (119 errors, 20 warnings)**，与修复 4 持平，无新增
+
+---
+
 ## 2026-10-30（阶段 4 修复 4：弹窗去图标 + 宽度自适应 + 长按跟随手指 + 缩短触发）
 
 用户实测反馈四点，均已处理。

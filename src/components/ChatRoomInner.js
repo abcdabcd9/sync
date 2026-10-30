@@ -21,7 +21,9 @@ import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
 import InteractiveMediaViewer from './InteractiveMediaViewer';
 import ChatContextMenu from './ChatContextMenu';
+import ContactActionsMenu from './chat/ContactActionsMenu';
 import { useCinema } from '../hooks/useCinema';
+import { useFriendActions } from '../hooks/chat/useFriendActions';
 
 const generateUUID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
   const r = (Math.random() * 16) | 0;
@@ -47,6 +49,9 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const [previewState, setPreviewState] = useState({ visible: false, index: 0, mediaList: [] });
   const [actionMessage, setActionMessage] = useState(null);
   const [playingAudioId, setPlayingAudioId] = useState(null);
+  // 右上角「3 个点」联系人操作菜单（与通讯录详细页共用同一组件）
+  const [contactMenuVisible, setContactMenuVisible] = useState(false);
+  const { deleteFriend } = useFriendActions(user);
 
   const globalAudioPlayer = useAudioPlayer(null);
   const flatListRef = useRef(null);
@@ -202,6 +207,48 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     );
   }, []);
 
+  // ===== 联系人操作菜单（右上角「3 个点」）=====
+  const openContactMenu = useCallback(() => {
+    Keyboard.dismiss();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setContactMenuVisible(true);
+  }, []);
+
+  // 查看详细资料：跳到通讯录详细页（L3），复用同一套资料展示
+  const handleViewProfile = useCallback(() => {
+    if (!targetId) return;
+    router.push({
+      pathname: '/contact_profile',
+      params: { id: targetId, nickname: targetName || '' },
+    });
+  }, [router, targetId, targetName]);
+
+  // 删除好友：二次确认 → 数据层双向解除 → 返回上一页
+  const handleDeleteFriend = useCallback(() => {
+    if (!targetId) return;
+    Alert.alert(
+      '删除好友',
+      `确定要删除「${targetName || '该好友'}」吗？删除后聊天记录将不再显示，且需要重新添加才能继续聊天。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await deleteFriend(targetId);
+            if (res.ok) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              if (onBack) onBack();
+            } else {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('删除失败', res.error || '请稍后重试。');
+            }
+          },
+        },
+      ]
+    );
+  }, [targetId, targetName, deleteFriend, onBack]);
+
   return (
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <View style={[styles.header, { borderBottomColor: palette.chatBorder }]}>
@@ -209,7 +256,17 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
           <TouchableOpacity onPress={onBack} style={styles.backBtn}><Ionicons name="chevron-back" size={28} color={palette.primary} /></TouchableOpacity>
         )}
         <Text style={[styles.headerTitle, { color: palette.textPrimary, marginLeft: isTabletMode ? 16 : 0 }]}>{targetName || '好友'}</Text>
-        <View style={{ width: 28 }} />
+        {/* 右上角「3 个点」：呼出联系人操作菜单（查看资料 / 删除好友） */}
+        <TouchableOpacity
+          onPress={openContactMenu}
+          style={styles.headerActionBtn}
+          activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityLabel="联系人操作"
+          accessibilityHint="查看详细资料或删除好友"
+        >
+          <Ionicons name="ellipsis-horizontal" size={24} color={palette.primary} />
+        </TouchableOpacity>
       </View>
 
       {(isTransitioning || loading) ? (
@@ -262,6 +319,13 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         )}
       </Modal>
       <ChatContextMenu actionMessage={actionMessage} onClose={() => setActionMessage(null)} onCopy={handleCopy} onSave={handleSaveToAlbum} onFavorite={handleFavorite} onDelete={handleDelete} onRecall={handleRecallMsg} />
+      <ContactActionsMenu
+        visible={contactMenuVisible}
+        displayName={targetName}
+        onClose={() => setContactMenuVisible(false)}
+        onViewProfile={handleViewProfile}
+        onDeleteFriend={handleDeleteFriend}
+      />
     </View>
   );
 }
@@ -270,6 +334,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { padding: 4, marginLeft: -8 }, headerTitle: { fontSize: 17, fontWeight: '600' },
+  headerActionBtn: { padding: 4, marginRight: -4 },
   chatArea: { flex: 1, position: 'relative' }, listContent: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 60 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   uploadBar: { height: 22, justifyContent: 'center', overflow: 'hidden' },
