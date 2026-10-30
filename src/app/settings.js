@@ -1,16 +1,14 @@
 // --- START OF FILE src/app/settings.js ---
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Keyboard, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 
 import { SIZES } from '../constants/theme';
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
-import { supabase } from '../services/supabase';
 
 // --- 原生风格的设置项组件 ---
 const SettingRow = ({ title, value, icon, iconBg, onPress, isDestructive, hideArrow, isFirst, isLast, palette }) => (
@@ -46,7 +44,6 @@ export default function SettingsScreen() {
   const { signOut } = useAuth();
 
   const isGoingBack = useRef(false);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleBack = () => {
     if (isGoingBack.current) return;
@@ -61,70 +58,6 @@ export default function SettingsScreen() {
       { text: '取消', style: 'cancel' },
       { text: '退出', style: 'destructive', onPress: async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); await signOut(); router.replace('/auth'); }}
     ]);
-  };
-
-  // 🔒 安全审计 #9：真正的注销执行体（仅在二次确认通过后调用）
-  const performAccountDeletion = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setIsDeleting(true);
-
-    const { error } = await supabase.rpc('delete_my_account');
-
-    // 🔒 安全审计 #12：不再透传 error.message，避免泄露数据库函数/表结构
-    if (error) {
-      Alert.alert('注销失败', '注销失败，请稍后重试。');
-      setIsDeleting(false);
-      return;
-    }
-
-    // 🔒 安全审计 #9：注销成功后彻底清除本地缓存，防止残留数据被下一个账号读到
-    try {
-      await AsyncStorage.clear();
-    } catch {
-      // 清缓存失败不阻断注销流程
-    }
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    // 先结束会话（signOut 内部会抹除云端 expo_push_token），再强制跳转登录页
-    try {
-      await signOut();
-    } catch {
-      // 会话已失效时忽略
-    }
-
-    setIsDeleting(false);
-    Alert.alert('账号已注销', '您在云端的所有数据已被彻底抹除。', [
-      { text: '好的', onPress: () => router.replace('/auth') },
-    ]);
-  };
-
-  // 🔒 安全审计 #9：二次确认 —— 第一次弹窗说明后果，第二次弹窗再次明确「不可逆」
-  const handleDeleteAccount = () => {
-    if (isDeleting) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    Alert.alert(
-      '永久注销账号',
-      '您的账号、所有聊天记录、图片、健康数据及好友关系将被永久删除且无法恢复！\n\n您确定要进行此操作吗？',
-      [
-        { text: '手滑了', style: 'cancel' },
-        {
-          text: '继续',
-          style: 'destructive',
-          onPress: () => {
-            // 第二次确认：明确警示不可逆，用户再次确认后才真正执行
-            Alert.alert(
-              '⚠️ 最后确认',
-              '此操作不可逆，将永久删除所有聊天与打卡数据，且无法通过任何方式找回。\n\n确认永久注销？',
-              [
-                { text: '取消', style: 'cancel' },
-                { text: '确认永久注销', style: 'destructive', onPress: performAccountDeletion },
-              ]
-            );
-          },
-        },
-      ]
-    );
   };
 
   // 🎨 主题模式标签（仅用于「外观模式」行的右侧值展示）
@@ -177,10 +110,9 @@ export default function SettingsScreen() {
             <SettingRow title="自动下载设置" icon="cloud-download" iconBg="#0A84FF" onPress={() => router.push('/settings/download')} isLast palette={palette} />
           </View>
 
-          {/* 4. 底部操作栏 */}
+          {/* 4. 底部操作栏（注销账号已下沉到「账号安全」页） */}
           <View style={[styles.group, { marginTop: 36, marginBottom: 40 }]}>
             <SettingRow title="切换账号" onPress={() => router.push('/settings/accounts')} isFirst palette={palette} />
-            <SettingRow title="注销账号" hideArrow isDestructive onPress={handleDeleteAccount} palette={palette} />
             <SettingRow title="退出登录" hideArrow isDestructive onPress={handleSignOut} isLast palette={palette} />
           </View>
 

@@ -1,9 +1,15 @@
 // --- START OF FILE src/app/settings/security.js ---
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+
 import { useAppTheme } from '../../context/ThemeContext';
 import { DEVICE_DATA_PROTECTION_NOTES } from '../../constants/security';
-import SettingsPage from '../../components/settings/SettingsPage';
+import { haptic } from '../../constants/haptics';
+import { useAuth } from '../../hooks/useAuth';
+import { supabase } from '../../services/supabase';
+import SettingsPage, { GroupTitle } from '../../components/settings/SettingsPage';
 
 // 🔒 安全审计 #29：账号安全说明
 const SECURITY_SECTIONS = [
@@ -17,7 +23,7 @@ const SECURITY_SECTIONS = [
   },
   {
     title: '数据清除',
-    body: '如需清除本机缓存数据，可在「健康与打卡偏好」中重置今日打卡数据；如需彻底删除云端全部数据，请前往「我的 → 注销账号」，该操作需二次确认且不可逆。',
+    body: '如需清除本机缓存数据，可在「健康与打卡偏好」中重置今日打卡数据，或在「存储空间」中清理本地缓存；如需彻底删除云端全部数据，请使用本页底部的「注销账号」，该操作需二次确认且不可逆。',
   },
   {
     title: '注销账号',
@@ -29,6 +35,72 @@ const SECURITY_SECTIONS = [
 
 export default function SecurityScreen() {
   const { colors } = useAppTheme();
+  const { signOut } = useAuth();
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // 🔒 安全审计 #9：真正的注销执行体（仅在二次确认通过后调用）
+  const performAccountDeletion = async () => {
+    haptic.heavy();
+    setIsDeleting(true);
+
+    const { error } = await supabase.rpc('delete_my_account');
+
+    // 🔒 安全审计 #12：不再透传 error.message，避免泄露数据库函数/表结构
+    if (error) {
+      Alert.alert('注销失败', '注销失败，请稍后重试。');
+      setIsDeleting(false);
+      return;
+    }
+
+    // 🔒 安全审计 #9：注销成功后彻底清除本地缓存，防止残留数据被下一个账号读到
+    try {
+      await AsyncStorage.clear();
+    } catch {
+      // 清缓存失败不阻断注销流程
+    }
+
+    haptic.success();
+
+    // 先结束会话（signOut 内部会抹除云端 expo_push_token），再强制跳转登录页
+    try {
+      await signOut();
+    } catch {
+      // 会话已失效时忽略
+    }
+
+    setIsDeleting(false);
+    Alert.alert('账号已注销', '您在云端的所有数据已被彻底抹除。', [
+      { text: '好的', onPress: () => router.replace('/auth') },
+    ]);
+  };
+
+  // 🔒 安全审计 #9：二次确认 —— 第一次弹窗说明后果，第二次弹窗再次明确「不可逆」
+  const handleDeleteAccount = () => {
+    if (isDeleting) return;
+    haptic.warning();
+    Alert.alert(
+      '永久注销账号',
+      '您的账号、所有聊天记录、图片、健康数据及好友关系将被永久删除且无法恢复！\n\n您确定要进行此操作吗？',
+      [
+        { text: '手滑了', style: 'cancel' },
+        {
+          text: '继续',
+          style: 'destructive',
+          onPress: () => {
+            // 第二次确认：明确警示不可逆，用户再次确认后才真正执行
+            Alert.alert(
+              '⚠️ 最后确认',
+              '此操作不可逆，将永久删除所有聊天与打卡数据，且无法通过任何方式找回。\n\n确认永久注销？',
+              [
+                { text: '取消', style: 'cancel' },
+                { text: '确认永久注销', style: 'destructive', onPress: performAccountDeletion },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <SettingsPage title="账号安全">
@@ -49,6 +121,31 @@ export default function SecurityScreen() {
         </View>
       ))}
 
+      {/* 🔒 危险操作区：注销账号（原「我的 → 注销账号」，现下沉到账号安全页） */}
+      <GroupTitle>危险操作</GroupTitle>
+      <TouchableOpacity
+        style={[
+          styles.dangerBtn,
+          { backgroundColor: colors.card, borderColor: colors.cardBorder },
+          isDeleting && styles.dangerBtnDisabled,
+        ]}
+        onPress={handleDeleteAccount}
+        disabled={isDeleting}
+        activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel="注销账号"
+        accessibilityHint="永久删除账号及全部云端数据，需二次确认"
+      >
+        {isDeleting ? (
+          <ActivityIndicator size="small" color="#FF3B30" />
+        ) : (
+          <Text style={styles.dangerText}>注销账号</Text>
+        )}
+      </TouchableOpacity>
+      <Text style={[styles.dangerHint, { color: colors.textSecondary }]}>
+        注销后账号、聊天记录、媒体文件、健康数据与好友关系将被永久删除，无法恢复。
+      </Text>
+
       <Text style={[styles.footer, { color: colors.textSecondary }]}>
         最后更新：2026 年 10 月{'\n'}如对本说明有任何疑问，可通过「个人资料」页面联系我们。
       </Text>
@@ -63,6 +160,16 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
   cardTitle: { fontSize: 15, fontWeight: '600' },
   cardBody: { fontSize: 13, lineHeight: 21 },
-  footer: { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 8, marginBottom: 40, paddingHorizontal: 8 },
+  dangerBtn: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dangerBtnDisabled: { opacity: 0.5 },
+  dangerText: { fontSize: 16, fontWeight: '600', color: '#FF3B30' },
+  dangerHint: { fontSize: 12, lineHeight: 18, marginTop: 8, paddingHorizontal: 4 },
+  footer: { fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 24, marginBottom: 40, paddingHorizontal: 8 },
 });
 // --- END OF FILE src/app/settings/security.js ---

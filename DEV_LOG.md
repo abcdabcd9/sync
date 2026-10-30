@@ -208,6 +208,33 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（注销账号下沉到「账号安全」页）
+
+「注销账号」从设置页底部操作栏移入 L3 页面「账号安全」，让所有账号级危险操作集中在一处，底部栏只保留「切换账号 / 退出登录」。
+
+**做了啥**：
+
+1. **`src/app/settings/security.js`**（68 → 190 行）
+   - 新增 `useState` / `ActivityIndicator` / `Alert` / `TouchableOpacity` / `AsyncStorage` / `router` / `haptic` / `useAuth` / `supabase` 导入
+   - 迁入 `performAccountDeletion`（`supabase.rpc('delete_my_account')` → `AsyncStorage.clear()` → `signOut()` → `router.replace('/auth')`）与 `handleDeleteAccount`（两次 Alert 确认），逻辑逐字保留，仅把 `Haptics.impactAsync(...)` 换成统一的 `haptic.heavy()` / `haptic.warning()` / `haptic.success()`
+   - 新增 `isDeleting` 状态：执行中按钮禁用 + 显示 `ActivityIndicator`，防止连点重复调用 RPC
+   - 新增「危险操作」分组：`GroupTitle` + 红色文字按钮（`#FF3B30`，`minHeight 52`，圆角 14，与卡片同底色）+ 一行灰色风险提示
+   - 修正「数据清除」文案：原来写「请前往『我的 → 注销账号』」，现在改为「请使用本页底部的『注销账号』」，并补上「存储空间」清理本地缓存的指引
+   - 无障碍：`accessibilityRole="button"` + `accessibilityLabel` + `accessibilityHint`
+
+2. **`src/app/settings.js`**（210 → 145 行）
+   - 删除 `performAccountDeletion` / `handleDeleteAccount` / `isDeleting`
+   - 移除 `useState`、`AsyncStorage`、`supabase` 导入（`useRef` 保留给 `isGoingBack`）
+   - 底部栏从 3 行减为 2 行：切换账号 / 退出登录
+
+**验收**：
+
+- `npx tsc --noEmit` → 0
+- `npx eslint src/app/settings.js src/app/settings/security.js` → 0 problems
+- `npx expo lint` → **158 problems (135 errors, 23 warnings)**，与上轮持平，无回归
+
+---
+
 ## 2026-10-30（切换账号：本地多 profile 快速切换）
 
 设置页最后一个占位项「切换账号」落地。产品形态定为**本地多 profile 快速切换**。
