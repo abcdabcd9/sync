@@ -208,6 +208,49 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 4 修复 2：移除一级页返回箭头）
+
+聊天是一级 tab 页，底栏常驻后左上角返回箭头已无意义（且与 iOS 惯例冲突：tab 页不放返回键）。移除箭头与 `headerBackBtn` 样式，标题居中不变。
+
+iOS 边缘右滑返回首页的手势**保留**（不占视觉空间，属于额外快捷方式）。
+
+**验收**：`npx tsc --noEmit` → 0；`npx eslint` → 0；`npx expo lint` → 139（119e/20w），持平。
+
+---
+
+## 2026-10-30（阶段 4 修复：底栏常驻 + 「+」小弹窗）
+
+阶段 4 交付后用户实测反馈两个问题，均已修复。
+
+**问题 1：聊天 tab 下导航栏消失**
+
+根因在 [`CustomTabBar.js`](src/components/CustomTabBar.js:57)：`toValue: isChatTab ? 250 : 0` —— 旧设计里聊天页自带 BlurView 浮动 Dock，所以全局底栏在聊天 tab 被下移 250px 隐藏。阶段 4 已删除聊天页 Dock，底栏却仍被隐藏，导致用户无法切回其他 tab。
+
+修复：
+- `slideAnim` 目标值恒为 `0`，底栏在所有 tab 常驻
+- 键盘收起时也恢复 `0`（原逻辑有 `if (!isChatTab)` 守卫，一并移除）
+
+**问题 2：右上角「+」直接跳页，不是小弹窗**
+
+改为 ActionSheet 风格小弹窗（`Modal` + `fade`），贴右上角、宽 160、圆角 14、带阴影，两个选项：
+- 联系人 → `/chat/contacts`
+- 添加好友 → `/chat/search`
+
+**顺带清理 `CustomTabBar.js` 的 10 个历史 lint 错误**：
+
+| 问题 | 修复 |
+|---|---|
+| `useRef(new Animated.Value(0)).current`（9 处 `react-hooks/refs`） | 改为 `useState(() => new Animated.Value(0))` |
+| `useEffect` 内同步 `setUnreadCount(0)`（`set-state-in-effect`） | 改为派生值 `displayUnread = isChatTab ? 0 : unreadCount`，删除该 effect |
+
+**验收**：
+
+- `npx tsc --noEmit` → 0
+- `npx eslint "src/app/(tabs)/chat.js" src/components/CustomTabBar.js` → 0 problems
+- `npx expo lint` → **139 problems (119 errors, 20 warnings)**，比上轮 149 **再减 10 个**
+
+---
+
 ## 2026-10-30（阶段 4：聊天页纯 IM 化）
 
 聊天页从「消息 / 通讯录」双 Tab 的混合页，收敛为**纯消息列表**。联系人、搜索加友下沉到 L3 页面，符合执行书 §14 的 IM 化目标。

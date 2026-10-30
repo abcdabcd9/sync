@@ -43,6 +43,8 @@ export default function ChatMainScreen() {
 
   const [selectedChat, setSelectedChat] = useState(null);
   const [menuConfig, setMenuConfig] = useState({ visible: false, top: 0, chat: null });
+  // 右上角「+」的小弹窗（联系人 / 添加好友）
+  const [plusMenuVisible, setPlusMenuVisible] = useState(false);
 
   // 列表入场动画（原 subTabSlideAnim 保留，避免视觉回退）
   // ⚠️ 必须用 useState 惰性初始化：useRef(...).current 在渲染期读取 ref，违反 react-hooks/refs
@@ -156,29 +158,19 @@ export default function ChatMainScreen() {
       ]}
     >
       <View style={[styles.header, { borderBottomColor: palette.chatBorder }]}>
-        <TouchableOpacity
-          style={styles.headerBackBtn}
-          onPress={() => {
-            haptic.light();
-            router.navigate('/');
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="返回首页"
-        >
-          <Ionicons name="chevron-back" size={28} color={palette.primary} />
-        </TouchableOpacity>
-
+        {/* 一级 tab 页不显示返回箭头：底栏常驻，用户可直接切 tab */}
         <Text style={[styles.headerTitle, { color: palette.textPrimary }]}>消息</Text>
 
-        {/* 右上角「+」：进入联系人页（新朋友请求 + 所有联系人 + 搜索入口） */}
+        {/* 右上角「+」：弹出小菜单（联系人 / 添加好友） */}
         <TouchableOpacity
           style={styles.headerActionBtn}
           onPress={() => {
             haptic.light();
-            router.push('/chat/contacts');
+            setPlusMenuVisible(true);
           }}
           accessibilityRole="button"
-          accessibilityLabel="联系人"
+          accessibilityLabel="更多操作"
+          accessibilityHint="打开联系人菜单"
         >
           <Ionicons name="add" size={28} color={palette.primary} />
         </TouchableOpacity>
@@ -277,6 +269,55 @@ export default function ChatMainScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      {/* 右上角「+」小弹窗：联系人 / 添加好友 */}
+      <Modal
+        visible={plusMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPlusMenuVisible(false)}
+      >
+        <Pressable style={styles.plusOverlay} onPress={() => setPlusMenuVisible(false)}>
+          <View
+            style={[
+              styles.plusMenu,
+              { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: palette.cardBorder },
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.plusMenuItem}
+              onPress={() => {
+                setPlusMenuVisible(false);
+                haptic.light();
+                router.push('/chat/contacts');
+              }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="联系人"
+            >
+              <Ionicons name="people-outline" size={20} color={palette.primary} />
+              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>联系人</Text>
+            </TouchableOpacity>
+
+            <View style={[styles.plusMenuLine, { backgroundColor: palette.separator }]} />
+
+            <TouchableOpacity
+              style={styles.plusMenuItem}
+              onPress={() => {
+                setPlusMenuVisible(false);
+                haptic.light();
+                router.push('/chat/search');
+              }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel="添加好友"
+            >
+              <Ionicons name="person-add-outline" size={20} color={palette.primary} />
+              <Text style={[styles.plusMenuText, { color: palette.textPrimary }]}>添加好友</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -295,7 +336,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerBackBtn: { position: 'absolute', left: 12, padding: 4, zIndex: 10 },
   headerActionBtn: { position: 'absolute', right: 12, padding: 4, zIndex: 10 },
   headerTitle: { fontSize: 17, fontWeight: '600' },
   listContent: { paddingTop: 8, paddingBottom: 100 },
@@ -320,5 +360,24 @@ const styles = StyleSheet.create({
   contextText: { fontSize: 15, fontWeight: '400', textAlign: 'center' },
   contextTextDanger: { color: '#FF3B30' },
   menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(150,150,150,0.1)' },
+  // 「+」小弹窗：贴右上角，宽度 160，圆角 14，带阴影
+  plusOverlay: { flex: 1, backgroundColor: 'transparent' },
+  plusMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 96 : 72,
+    right: 16,
+    width: 160,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  plusMenuItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 16 },
+  plusMenuText: { fontSize: 16, fontWeight: '500' },
+  plusMenuLine: { height: StyleSheet.hairlineWidth },
 });
 // --- END OF FILE src/app/(tabs)/chat.js ---

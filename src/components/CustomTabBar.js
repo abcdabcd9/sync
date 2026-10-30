@@ -1,5 +1,5 @@
 // 文件：src/components/CustomTabBar.js
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, Keyboard, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -12,15 +12,21 @@ import { supabase } from '../services/supabase';
 
 export default function CustomTabBar({ state, descriptors, navigation }) {
   const { isDark, colors: palette } = useAppTheme();
-  const slideAnim = useRef(new Animated.Value(0)).current;
+  // ⚠️ useState 惰性初始化：useRef(...).current 在渲染期读取 ref，违反 react-hooks/refs
+  const [slideAnim] = useState(() => new Animated.Value(0));
   const { user } = useAuth();
   const router = useRouter(); // 👈 初始化 router
-  
+
   // 🍎 全局未读消息数量状态
   const [unreadCount, setUnreadCount] = useState(0);
 
   const currentRouteName = state.routes[state.index].name;
   const isChatTab = currentRouteName === 'chat';
+
+  // 进入聊天 tab 时角标归零。
+  // ⚠️ 不在 effect 里同步 setState（react-hooks/set-state-in-effect），
+  //    改为派生值：聊天 tab 下角标恒为 0，其余 tab 显示真实未读数。
+  const displayUnread = isChatTab ? 0 : unreadCount;
 
   // 🍎 全局雷达：自动获取未读数量，并实时监听新消息！
   useEffect(() => {
@@ -48,18 +54,17 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
     return () => { supabase.removeChannel(channel); };
   }, [user, isChatTab]);
 
+  // 底栏在所有 tab 常驻显示。
+  // 旧逻辑在聊天 tab 把底栏下移 250px 隐藏（因为当时聊天页自带浮动 Dock），
+  // 阶段 4 已移除聊天页 Dock，底栏必须常驻，否则用户无法切回其他 tab。
   useEffect(() => {
-    if (isChatTab) setUnreadCount(0);
-  }, [isChatTab]);
-
-  useEffect(() => {
-    Animated.spring(slideAnim, { 
-      toValue: isChatTab ? 250 : 0,  
-      friction: 7, 
-      tension: 50, 
-      useNativeDriver: true 
+    Animated.spring(slideAnim, {
+      toValue: 0,
+      friction: 7,
+      tension: 50,
+      useNativeDriver: true,
     }).start();
-  }, [state.index, isChatTab, slideAnim]);
+  }, [state.index, slideAnim]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -70,9 +75,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
     });
     
     const keyboardHideListener = Keyboard.addListener(hideEvent, () => {
-      if (!isChatTab) {
-        Animated.spring(slideAnim, { toValue: 0, friction: 7, tension: 50, useNativeDriver: true }).start();
-      }
+      Animated.spring(slideAnim, { toValue: 0, friction: 7, tension: 50, useNativeDriver: true }).start();
     });
 
     return () => { keyboardShowListener?.remove(); keyboardHideListener?.remove(); };
@@ -119,9 +122,9 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
                 <Pressable key={route.key} onPress={onPress} style={({ pressed }) => [styles.tabItem, { opacity: pressed ? 0.4 : 1 }]}>
                   <View style={styles.iconContainer}>
                     <Ionicons name={iconName} size={24} color={isFocused ? palette.primary : palette.textSecondary} />
-                    {route.name === 'chat' && unreadCount > 0 && (
+                    {route.name === 'chat' && displayUnread > 0 && (
                       <View style={[styles.badge, { borderColor: Platform.OS === 'ios' ? (isDark ? '#1C1C1E' : '#FFF') : palette.dockBackground }]}>
-                        <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                        <Text style={styles.badgeText}>{displayUnread > 99 ? '99+' : displayUnread}</Text>
                       </View>
                     )}
                   </View>
