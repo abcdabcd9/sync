@@ -208,6 +208,46 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 ---
 
+## 2026-10-30（阶段 3：空间页 4 卡布局）
+
+空间页从「2 个按钮」升级为执行书 §13 规定的 **4 卡布局**：私密空间 / 朋友圈 / 放映厅 / 浏览器。
+
+**做了啥**：
+
+1. **新建 `src/components/space/SpaceCard.js`** — 空间页通用入口卡
+   - 结构：48×48 图标方块（圆角 16）+ 标题（可带角标）+ 副标题 + 右侧 `chevron-forward`
+   - 交互全部委托给 `AppleCard`：按压缩放（`SCALE.pressIn/pressOut`）+ `haptic.medium()`
+   - 图标用 `Ionicons` 而非 emoji（执行书里写的是 emoji，但项目全局图标体系是 Ionicons，保持一致）
+   - 色值一律取自 `useAppTheme().colors`，无硬编码
+
+2. **新建 4 个薄封装入口卡**（`src/components/space/`）
+   | 文件 | 图标 | 标题 | 副标题 | 路由 | 强调色 |
+   |---|---|---|---|---|---|
+   | `PrivateSpaceCard.js` | `lock-closed` | 私密空间 | 只属于你的相册与笔记 | `/private` | `colors.primary` |
+   | `MomentsCard.js` | `sparkles` | 朋友圈 | 记录此刻，与好友分享 | `/moments` | `colors.success` |
+   | `CinemaCard.js` | `film` | 放映厅 | 一起看片，实时同步 | `/cinema` | `colors.primary` |
+   | `BrowserCard.js` | `globe-outline` | 浏览器 | 嗅探媒体，一键投屏 | `/browser` | `colors.iconBackground` |
+
+3. **重写 `src/app/(tabs)/space.js`**（69 → 51 行）
+   - 标题从「互联空间」改为「空间」，副标题改为「私密记录 · 好友分享 · 同步观影 · 媒体嗅探」
+   - 删除原 2 个内联 `TouchableOpacity` 按钮与全部相关样式（`cinemaButton` / `btnLeft` / `iconBox` / `btnTitle` / `btnSub` / `statusDot`）
+   - 删除 `Haptics` / `Ionicons` / `useRouter` 导入（触感与路由已下沉到各卡）
+
+4. **新建占位页**（避免点击 404，阶段 6 实现真实功能）
+   - `src/app/private/index.js` — 「私密空间即将上线」
+   - `src/app/moments/index.js` — 「朋友圈即将上线」
+   - 两者复用 `SettingsPage` 外壳（自带返回栏），居中图标 + 标题 + 说明文案
+
+**验收**：
+
+- `npx tsc --noEmit` → 0
+- `npx eslint "src/app/(tabs)/space.js" src/components/space/ src/app/private/ src/app/moments/` → 0 problems
+- `npx expo lint` → **158 problems (135 errors, 23 warnings)**，与上轮持平，无回归
+
+**遗留**：`/private` 与 `/moments` 目前是占位页，真实功能在阶段 6（私密空间相册/笔记 + 朋友圈发布/时间线）实现。
+
+---
+
 ## 2026-10-30（注销账号下沉到「账号安全」页）
 
 「注销账号」从设置页底部操作栏移入 L3 页面「账号安全」，让所有账号级危险操作集中在一处，底部栏只保留「切换账号 / 退出登录」。
