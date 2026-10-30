@@ -1,7 +1,5 @@
 # TFG 数据
 
-原始记录，只填事实。不解释意义，等写论文时再分析。
-
 ## 研究问题
 
 - RQ1：AI 辅助开发的真实效率倍数
@@ -45,7 +43,18 @@ Markdown 文档 6,119 行 / 9 个文件。文档代码比 0.59:1。
 | 测试数 | 0 |
 | 类型覆盖 | 0% |
 
-ESLint 错误分类：refs 107 / immutability 11 / exhaustive-deps 11 / set-state-in-effect 7 / purity 7 / display-name 5 / rules-of-hooks 2 / import 2。
+ESLint 错误分类：
+
+| 规则 | 数量 |
+|---|---|
+| react-hooks/refs | 107 |
+| react-hooks/immutability | 11 |
+| react-hooks/exhaustive-deps | 11 |
+| react-hooks/set-state-in-effect | 7 |
+| react-hooks/purity | 7 |
+| react/display-name | 5 |
+| react-hooks/rules-of-hooks | 2 |
+| import/no-unresolved + import/namespace | 2 |
 
 ## 阶段增量
 
@@ -70,8 +79,8 @@ ESLint 错误分类：refs 107 / immutability 11 / exhaustive-deps 11 / set-stat
 
 | 日期 | 现象 | 原因 | 耗时 |
 |---|---|---|---|
-| 2026-10-30 | DEV_LOG 写成周报风格 | AI 把「日志」理解成「交付文档」 | 10 min |
-| 2026-10-30 | TFG_DATA 写成论文草稿 | AI 把「数据」理解成「论证」 | 10 min |
+| 2026-10-30 | DEV_LOG 写成周报风格，重写 | 体裁判断错了 | 10 min |
+| 2026-10-30 | TFG_DATA 写成论文草稿，砍到 80 行 | 同上 | 10 min |
 
 ## TODO
 
