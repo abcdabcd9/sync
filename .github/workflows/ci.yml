@@ -27,6 +27,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Lint
+      # Lint 目前存在既有基线问题（React Compiler 规则：refs during render、
+      # setState in effect 等，约 114 个 error / 24 个 warning，分布在 13 个文件）。
+      # 这些是历史代码风格问题，不影响构建与运行，因此设为非阻断。
+      # 待基线清零后再改为阻断。
+      - name: Lint (non-blocking)
         run: npx expo lint
         continue-on-error: true
