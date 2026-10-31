@@ -9,6 +9,11 @@ import { useTimeSync } from './health/useTimeSync';
 import { useHealthStorage } from './health/useHealthStorage';
 import { useHealthCloud } from './health/useHealthCloud';
 import { useStreak } from './health/useStreak';
+import {
+  readProfileCache,
+  writeProfileCache,
+  normalizeProfile,
+} from './profile/useProfileCache';
 
 const HealthContext = createContext();
 
@@ -52,8 +57,80 @@ export function HealthProvider({ children }) {
 
   const [selectedMeal, setSelectedMeal] = useState(null);
 
+  // 👤 个人资料（Cache-First）：断网时永远保留本地缓存，绝不重置为 null
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+
   // 🛡️ 竞态守卫：用户一旦产生任何交互，云端回包就不再允许覆盖本地状态
   const userInteractedRef = useRef(false);
+
+  /**
+   * 👤 个人资料加载（Cache-First，第 0 帧秒开）
+   *
+   * 铁律：
+   *   1. 先读 AsyncStorage @user_profile_cache，命中即 setProfile + loading=false
+   *   2. 缓存中的 bound_partner_id 必须立即同步给 partnerId（离线也能显示搭子卡片）
+   *   3. 云端 profiles 查询失败/超时 → 只 console.warn，绝不 setProfile(null) / setUser(null)
+   *   4. 云端成功 → 回写缓存
+   */
+  // 用 ref 持有最新 userId，保证 loadProfile 引用稳定（避免 effect 反复触发）
+  const profileUserIdRef = useRef(user?.id ?? null);
+  useEffect(() => {
+    profileUserIdRef.current = user?.id ?? null;
+  }, [user?.id]);
+
+  const loadProfile = useCallback(async () => {
+    const uid = profileUserIdRef.current;
+
+    if (!uid) {
+      // 未登录：没有个人资料可展示，但必须结束 loading，避免界面卡死转圈
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+
+    // 1️⃣ 第 0 帧：本地缓存优先（零网络，断网也能瞬间显示头像/昵称/Sync ID）
+    const cached = await readProfileCache(uid);
+    if (cached) {
+      setProfile(cached);
+      setProfileLoading(false);
+
+      // 💞 离线恢复搭子 ID：0 毫秒恢复绑定关系，防止搭子卡片消失 / 聊天记录被清空
+      if (cached.bound_partner_id) {
+        setPartnerId(cached.bound_partner_id);
+      }
+    }
+
+    // 2️⃣ 云端刷新：任何异常都只降级，绝不清空用户状态
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, sync_id, nickname, bound_partner_id')
+        .eq('id', uid)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        const nextProfile = normalizeProfile(data);
+        setProfile(nextProfile);
+        // 云端成功 → 回写缓存，供下次冷启动秒开（含 bound_partner_id）
+        writeProfileCache(nextProfile);
+
+        // 💞 云端绑定关系同步给 partnerId（仅在确实有值时覆盖，绝不用 null 覆盖缓存值）
+        if (nextProfile.bound_partner_id) {
+          setPartnerId(nextProfile.bound_partner_id);
+        }
+      }
+    } catch (e) {
+      // 🚨 断网 30 秒超时 / 任何网络异常：保持本地缓存 state，绝不重置为 null
+      console.warn('离线状态，继续使用本地缓存的个人资料');
+      console.warn('⚠️ profiles 云端查询失败:', e?.message ?? e);
+    } finally {
+      // 无论成功失败，都必须结束 loading，确保 App 维持登录状态、界面不卡死
+      setProfileLoading(false);
+    }
+  }, [setPartnerId]);
 
   const loadAllData = async () => {
     // 🔓 每次强制刷新都解开"本地操作保护锁"：
@@ -72,8 +149,8 @@ export function HealthProvider({ children }) {
     // 2️⃣ 再拉云端，拿到后显式覆盖本地（编排层负责串联 storage ↔ cloud）
     if (user) {
       try {
-        const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
-        let pId = profile?.bound_partner_id || null;
+        const { data: profileRow } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
+        let pId = profileRow?.bound_partner_id || null;
 
         if (!pId) {
           const { data: whoBoundMe } = await supabase.from('profiles').select('id').eq('bound_partner_id', user.id).limit(1);
@@ -90,7 +167,17 @@ export function HealthProvider({ children }) {
           }
         }
 
-        setPartnerId(pId);
+        // 💞 只有云端确实返回了搭子 ID 才覆盖；null 不覆盖，保留缓存恢复的 partnerId
+        if (pId) {
+          setPartnerId(pId);
+          // 同步回写 profile 缓存，保证下次冷启动/断网时搭子关系不丢失
+          setProfile(prev => {
+            if (!prev) return prev;
+            const next = { ...prev, bound_partner_id: pId };
+            writeProfileCache(next);
+            return next;
+          });
+        }
 
         const myData = await fetchMyRecord(currentDayStr);
         // 🛡️ 网络往返期间用户已操作过 → 丢弃云端旧数据，避免覆盖秒级点击
@@ -103,14 +190,24 @@ export function HealthProvider({ children }) {
           applyPartnerRecord(pData);
         }
       } catch (e) {
-        console.warn("云端同步失败，降级使用本地数据", e);
+        // 🚨 离线降级：只记录日志，绝不重置 profile / user / partnerId，
+        //    避免搭子卡片消失与聊天记录被清空
+        console.warn('离线状态，继续使用本地缓存的个人资料');
+        console.warn('云端同步失败，降级使用本地数据', e?.message ?? e);
       }
     }
   };
 
   useEffect(() => {
-    loadAllData();
+    // 包一层微任务：避免在 effect 体内同步触发 setState（React 编译器规则）
+    const t = setTimeout(() => { loadAllData(); }, 0);
+    return () => clearTimeout(t);
   }, [user]);
+
+  // 👤 个人资料独立加载：与健康数据解耦，断网时也能第 0 帧显示缓存
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile, user?.id]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
@@ -268,9 +365,11 @@ export function HealthProvider({ children }) {
 
   const value = useMemo(() => ({
     isInitialized: isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    profile, profileLoading, refreshProfile: loadProfile,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   }), [
     isLoaded, isDoneToday, selectedMeal, mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
+    profile, profileLoading, loadProfile,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   ]);
 
