@@ -23,7 +23,7 @@ Report privately via one of these channels:
 
 1. **GitHub Private Vulnerability Reporting** (preferred)
    Go to the repository's **Security** tab → **Report a vulnerability**.
-2. **Email** — [tangchengzhi641@gmail.com](mailto:tangchengzhi641@gmail.com)
+2. **Email** — [tangchengzhi641@gmail.com](mailto:tangchengzhi641@gmail.com) or [tangchengzhi171@gmail.com](mailto:tangchengzhi171@gmail.com)
 
 Please include:
 
@@ -90,7 +90,7 @@ This repository ships **source code only** — no prebuilt binaries. If you depl
 
 1. **GitHub 私密漏洞报告**（推荐）
    进入仓库的 **Security** 标签页 → **Report a vulnerability**。
-2. **邮件** —— [tangchengzhi641@gmail.com](mailto:tangchengzhi641@gmail.com)
+2. **邮件** —— [tangchengzhi641@gmail.com](mailto:tangchengzhi641@gmail.com) 或 [tangchengzhi171@gmail.com](mailto:tangchengzhi171@gmail.com)
 
 报告请包含：
 
