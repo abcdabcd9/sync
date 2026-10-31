@@ -65,8 +65,12 @@ openssl x509 -in certs/certificate.pem -pubkey -noout | openssl pkey -pubin -out
 
 ## Rollout order (important)
 
+> **OTA code signing is not enabled in this repository.** `certs/` only contains documentation — there is no
+> `certificate.pem`, and the `updates` block in `app.json` has no `codeSigningCertificate` field.
+> To enable it, generate your own key pair and configure it by following the steps below.
+
 1. Generate the key pair first, and commit `certificate.pem` to the repo.
-2. Configure the fields above in `app.json` (already done).
+2. Configure the fields above in `app.json` (**you must do this yourself — it is not enabled in this repo**).
 3. **Rebuild the native binary with EAS Build** once — the certificate is embedded into the native binary at build time,
    and OTA can't push a certificate to an older app version.
 

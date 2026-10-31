@@ -68,8 +68,12 @@ openssl x509 -in certs/certificate.pem -pubkey -noout | openssl pkey -pubin -out
 
 ## 启用顺序（重要）
 
+> **本仓库未启用 OTA 代码签名。** `certs/` 下只有文档，没有 `certificate.pem`，
+> `app.json` 的 `updates` 块也没有 `codeSigningCertificate` 字段。
+> 如需启用，请按下面步骤自行生成密钥对并配置。
+
 1. 先生成密钥对，把 `certificate.pem` 提交到仓库。
-2. 在 `app.json` 中配置上述字段（已完成）。
+2. 在 `app.json` 中配置上述字段（**需自行配置，本仓库未启用**）。
 3. 用 **EAS Build 重新构建** 一次原生包 —— 证书是在构建期嵌入原生二进制的，
    OTA 无法把证书推给旧版本 App。
 
