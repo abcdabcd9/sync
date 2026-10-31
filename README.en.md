@@ -74,6 +74,8 @@ npx supabase functions deploy send-push
 ```
 
 > Without those two files the app still runs, but it can't obtain a push token and notifications are skipped silently. For EAS cloud builds they're injected as EAS Secrets (see the comments in `.gitignore`).
+>
+> For local development, drop `google-services.json` and `GoogleService-Info.plist` into the project root (both are ignored by `.gitignore`). `app.json` no longer references these files, so their absence won't break config resolution.
 
 There are 13 migration scripts, numbered `01_` through `13_`. **Execute them in numeric order**:
 

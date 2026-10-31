@@ -74,6 +74,8 @@ npx supabase functions deploy send-push
 ```
 
 > 没有这两个文件，App 能跑，但拿不到推送 Token，推送会静默跳过。EAS 云端构建时通过 EAS Secret 注入（见 `.gitignore` 里的注释）。
+>
+> 本地开发时把 `google-services.json` 与 `GoogleService-Info.plist` 放到项目根目录（已在 `.gitignore` 中忽略）。`app.json` 不再引用这两个文件，因此缺少它们也不会导致配置解析失败。
 
 迁移脚本共 13 个，文件名以 `01_` ~ `13_` 编号，**按编号顺序执行**：
 

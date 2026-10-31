@@ -56,7 +56,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sync.app",
-      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -66,7 +65,6 @@
     },
     "android": {
       "package": "com.sync.app",
-      "googleServicesFile": "./google-services.json",
       "icon": "./assets/icon-white.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
