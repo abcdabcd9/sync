@@ -275,7 +275,7 @@ export default function BindPartnerScreen() {
       {boundPartnerId && (
         <View style={styles.unbindContainer}>
           <TouchableOpacity style={[styles.unbindBtn, { backgroundColor: palette.card, borderColor: '#FF3B30' }]} onPress={handleUnbind}>
-            <Ionicons name="heart-disallow" size={20} color="#FF3B30" />
+            <Ionicons name="heart-dislike" size={20} color="#FF3B30" />
             <Text style={styles.unbindText}>解除当前守护伴侣</Text>
           </TouchableOpacity>
         </View>

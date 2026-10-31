@@ -331,6 +331,75 @@ export function useChatList(user) {
     return () => supabase.removeChannel(channel);
   }, [user]);
 
+  // =========================================================================
+  // 关系网实时监听：friends / friend_requests / profiles
+  // =========================================================================
+  // 为什么需要：
+  //   1. friends          —— 对方删我好友 / 我加好友成功 → 会话列表与联系人立刻变化
+  //   2. friend_requests  —— 收到好友请求 → 联系人页红点与请求卡片立刻出现
+  //   3. profiles         —— 好友改昵称/头像 → 我这边显示的名字立刻更新
+  //
+  // ⚠️ 为什么用「防抖全量刷新」而不是「增量改本地状态」：
+  //   friends 表的一次关系变化会牵动 friends / friendsMap / requests / 未读数
+  //   四份状态，增量维护极易漏改（例如删好友后 friendsMap 残留、请求卡片不消失）。
+  //   关系变化本身是低频事件，直接调 fetchAll() 全量重拉最稳、最不容易出 bug。
+  //   防抖 400ms 是为了合并「加好友」这类一次操作触发多条变更的抖动。
+  //
+  // ⚠️ 为什么不用 filter：
+  //   friends 表的关系可能落在 user_id 或 friend_id 任一列，Realtime 的 filter
+  //   只能作用于单列，无法表达 (user_id = me OR friend_id = me)。
+  //   因此这里不加 filter，靠 RLS 兜底 —— Realtime 推送前会按订阅者 RLS 逐行校验，
+  //   无权看的行不会推送，不会造成数据泄露。
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const currentUserId = user.id;
+    const channelName = `relation_realtime_${currentUserId}_${Date.now()}`;
+
+    // 清掉可能残留的同名频道（effect 重跑时避免复用已 subscribe 的旧实例）
+    supabase
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
+    // 防抖：合并短时间内的多次变更，只触发一次全量刷新
+    let debounceTimer = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        fetchAll();
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(channelName)
+      // 好友关系增删 → 会话列表 / 联系人列表变化
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friends' },
+        scheduleRefresh
+      )
+      // 好友请求新增 / 状态变更（pending → accepted）→ 红点与请求卡片变化
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friend_requests' },
+        scheduleRefresh
+      )
+      // 好友资料变更（昵称 / 头像）→ 列表里显示的名字变化
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles' },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, fetchAll]);
+
   // 按最新消息时间倒序排列的会话列表
   const conversations = [...friends].sort((a, b) => {
     const timeA = lastMsgTimes[a.id] || 0;

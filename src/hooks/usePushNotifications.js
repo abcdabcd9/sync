@@ -1,8 +1,10 @@
 // --- START OF FILE src/hooks/usePushNotifications.js ---
 import { useEffect, useRef } from 'react';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+// SDK 58：AndroidImportance 是独立导出的枚举，不在 Notifications 命名空间下
+import { AndroidImportance } from 'expo-notifications';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { supabase } from '../services/supabase';
@@ -91,7 +93,7 @@ async function registerForPushNotificationsAsync() {
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'default',
-      importance: Notifications.AndroidImportance.MAX,
+      importance: AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#FF231F7C',
     });

@@ -33,41 +33,90 @@ export default function FriendMomentsScreen() {
   const { id, nickname } = useLocalSearchParams();
 
   const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // 没有好友 id 时无需加载 → 初始值直接为 false，避免在 effect 内同步 setState
+  const [loading, setLoading] = useState(Boolean(id));
   const [unavailable, setUnavailable] = useState(false);
 
   // 读取该好友的动态（异步 IIFE，setState 全部在 await 之后）
+  // 抽成独立函数，供首次加载与实时刷新共用
+  // ⚠️ 空 id 分支不在这里 setState（会在 effect 内同步 setState 触发 lint 报错），
+  //    改由下面的 effect 统一处理。
+  const loadMoments = React.useCallback(async (isCancelled) => {
+    if (!id) return;
+    try {
+      // 🔒 只读该好友本人的动态，且仅公开可见（visibility = 'all' | 'friends'）
+      const { data, error } = await supabase
+        .from('moments')
+        .select('id, content, images, created_at, visibility')
+        .eq('author_id', id)
+        .in('visibility', ['all', 'friends'])
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (isCancelled?.()) return;
+      if (error) throw error;
+      setItems(data || []);
+      setUnavailable(false);
+    } catch {
+      // 表不存在或网络异常：降级为空态
+      if (isCancelled?.()) return;
+      setItems([]);
+      setUnavailable(true);
+    } finally {
+      if (!isCancelled?.()) setLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
+    // 没有好友 id → 无需加载（loading 初始值已为 false，这里不再 setState）
+    if (!id) return undefined;
     let cancelled = false;
+    // 用 async IIFE 包裹：所有 setState 都发生在 await 之后，
+    // 避免 lint 把同步调用 loadMoments() 判定为「effect 内同步 setState」
     (async () => {
-      if (!id) {
-        setLoading(false);
-        return;
-      }
-      try {
-        // 🔒 只读该好友本人的动态，且仅公开可见（visibility = 'all' | 'friends'）
-        const { data, error } = await supabase
-          .from('moments')
-          .select('id, content, images, created_at, visibility')
-          .eq('author_id', id)
-          .in('visibility', ['all', 'friends'])
-          .order('created_at', { ascending: false })
-          .limit(50);
-        if (cancelled) return;
-        if (error) throw error;
-        setItems(data || []);
-        setUnavailable(false);
-      } catch {
-        // 表不存在或网络异常：降级为空态
-        if (cancelled) return;
-        setItems([]);
-        setUnavailable(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await loadMoments(() => cancelled);
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, loadMoments]);
+
+  // =========================================================================
+  // 朋友圈实时刷新：该好友发布 / 删除 / 修改动态时，本页立刻更新
+  // =========================================================================
+  // ⚠️ 用 filter author_id=eq.${id} 做服务端过滤，只收该好友的变更，
+  //    避免全表广播带来的性能浪费（RLS 仍会逐行校验，不会泄露他人动态）。
+  useEffect(() => {
+    if (!id) return undefined;
+
+    const channelName = `moments_realtime_${id}_${Date.now()}`;
+
+    supabase
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
+    // 防抖：合并短时间内的多次变更
+    let debounceTimer = null;
+    const scheduleReload = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        loadMoments();
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'moments', filter: `author_id=eq.${id}` },
+        scheduleReload
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [id, loadMoments]);
 
   const handleBack = () => {
     haptic.light();

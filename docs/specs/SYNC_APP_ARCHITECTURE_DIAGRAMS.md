@@ -41,14 +41,14 @@
 
 ```mermaid
 graph TB
-    subgraph L1["🟦 L1 主 Tab 层（底栏显示）"]
-        T1["🏠 首页<br/>(tabs)/index.js"]
-        T2["🧩 空间<br/>(tabs)/space.js"]
-        T3["💬 聊天<br/>(tabs)/chat.js"]
-        T4["👤 我的<br/>(tabs)/profile.js"]
+    subgraph L1[" L1 主 Tab 层（底栏显示）"]
+        T1[" 首页<br/>(tabs)/index.js"]
+        T2[" 空间<br/>(tabs)/space.js"]
+        T3[" 聊天<br/>(tabs)/chat.js"]
+        T4[" 我的<br/>(tabs)/profile.js"]
     end
 
-    subgraph L2["🟨 L2 根级页面（底栏隐藏）"]
+    subgraph L2[" L2 根级页面（底栏隐藏）"]
         P1["设置 settings/"]
         P2["账号 account_info"]
         P3["邀请 invite_friend"]
@@ -58,16 +58,16 @@ graph TB
         P7["认证 auth"]
     end
 
-    subgraph L3["🟩 L3 模块子页（底栏隐藏）"]
-        M1["🎬 放映厅<br/>cinema/"]
-        M2["🌐 浏览器<br/>browser/"]
-        M3["🔒 私密空间<br/>private/"]
-        M4["✨ 朋友圈<br/>moments/"]
-        M5["💬 聊天子页<br/>chat/"]
-        M6["⚙️ 设置子页<br/>settings/"]
+    subgraph L3[" L3 模块子页（底栏隐藏）"]
+        M1[" 放映厅<br/>cinema/"]
+        M2[" 浏览器<br/>browser/"]
+        M3[" 私密空间<br/>private/"]
+        M4[" 朋友圈<br/>moments/"]
+        M5[" 聊天子页<br/>chat/"]
+        M6[" 设置子页<br/>settings/"]
     end
 
-    subgraph UI["🎨 UI 组件层（阶段 1 新建）"]
+    subgraph UI[" UI 组件层（阶段 1 新建）"]
         U1["AppleCard"]
         U2["AppleButton"]
         U3["AppleListRow"]
@@ -77,7 +77,7 @@ graph TB
         U7["EmptyState"]
     end
 
-    subgraph BIZ["🧱 业务组件层"]
+    subgraph BIZ[" 业务组件层"]
         B1["home/* 首页 4 卡"]
         B2["space/* 空间 5 卡"]
         B3["ChatRoomInner / MessageBubble / ChatInputBar"]
@@ -86,7 +86,7 @@ graph TB
         B6["FloatingPlayer / CustomTabBar"]
     end
 
-    subgraph HOOK["⚙️ 数据 Hook 层（只消费不改）"]
+    subgraph HOOK[" 数据 Hook 层（只消费不改）"]
         H1["useHealthData"]
         H2["useCinema"]
         H3["useSyncRoom"]
@@ -96,28 +96,28 @@ graph TB
         H7["health/* 5 个"]
     end
 
-    subgraph SVC["🔌 服务层"]
+    subgraph SVC[" 服务层"]
         S1["supabase.js"]
         S2["pushService.js"]
     end
 
-    subgraph CONST["📐 常量层（红线）"]
-        C1["colors.js 🔴不可改"]
-        C2["theme.js 🔴不可改"]
-        C3["motion.js 🆕"]
-        C4["haptics.js 🆕"]
-        C5["features.js 🆕"]
-        C6["limits.js 🆕"]
+    subgraph CONST[" 常量层（红线）"]
+        C1["colors.js 不可改"]
+        C2["theme.js 不可改"]
+        C3["motion.js "]
+        C4["haptics.js "]
+        C5["features.js "]
+        C6["limits.js "]
     end
 
-    subgraph CTX["🌗 上下文层"]
-        X1["ThemeContext 🔴不可改"]
+    subgraph CTX[" 上下文层"]
+        X1["ThemeContext 不可改"]
         X2["AuthProvider"]
         X3["HealthProvider"]
         X4["CinemaProvider"]
     end
 
-    subgraph BE["☁️ 后端"]
+    subgraph BE[" 后端"]
         BE1[("Supabase<br/>Postgres + RLS")]
         BE2[("Supabase Storage<br/>private-album")]
         BE3["Edge Function<br/>send-push"]
@@ -189,9 +189,9 @@ graph LR
         end
     end
 
-    G1 -->|"底栏 ✅ 显示"| BAR["CustomTabBar<br/>4 个 Tab"]
-    G2 -->|"底栏 ❌ 自动隐藏"| NOBAR1["无底栏"]
-    G3 -->|"底栏 ❌ 自动隐藏"| NOBAR2["无底栏"]
+    G1 -->|"底栏 显示"| BAR["CustomTabBar<br/>4 个 Tab"]
+    G2 -->|"底栏 自动隐藏"| NOBAR1["无底栏"]
+    G3 -->|"底栏 自动隐藏"| NOBAR2["无底栏"]
 
     style G1 fill:#E3F2FD,stroke:#1976D2
     style G2 fill:#FFF8E1,stroke:#F9A825
@@ -211,7 +211,7 @@ graph LR
 graph TD
     ROOT["/ 根路由<br/>_layout.js<br/>ThemeProvider→Auth→Health→Cinema→Stack"]
 
-    ROOT --> TABS["(tabs) L1<br/>底栏 ✅"]
+    ROOT --> TABS["(tabs) L1<br/>底栏 "]
     ROOT --> L2A["settings/ L2"]
     ROOT --> L2B["account_info L2"]
     ROOT --> L2C["bind_partner L2"]
@@ -225,10 +225,10 @@ graph TD
     ROOT --> L3D["moments/ L3"]
     ROOT --> L3E["chat/ L3"]
 
-    TABS --> T1["🏠 首页 index"]
-    TABS --> T2["🧩 空间 space"]
-    TABS --> T3["💬 聊天 chat"]
-    TABS --> T4["👤 我的 profile"]
+    TABS --> T1[" 首页 index"]
+    TABS --> T2[" 空间 space"]
+    TABS --> T3[" 聊天 chat"]
+    TABS --> T4[" 我的 profile"]
 
     L2A --> S1["index 设置主页"]
     L2A --> S2["account 账号"]
@@ -364,7 +364,7 @@ graph TB
 
 **数据流方向**：
 
-```
+```text
 用户操作 → 页面 → hook action → supabase → 返回 → hook state → 页面重渲染
                                     ↓
                             Realtime 推送 → hook 订阅 → state 更新 → 自动重渲染
@@ -378,13 +378,13 @@ graph TB
 graph LR
     subgraph SRC["src/"]
         direction TB
-        A["app/<br/>🟦 路由层"]
-        B["components/<br/>🟪 组件层"]
-        C["hooks/<br/>🟩 数据层"]
-        D["services/<br/>🟧 服务层"]
-        E["constants/<br/>🟥 常量层"]
-        F["context/<br/>🟨 上下文层"]
-        G["types/<br/>🆕 TS 预留"]
+        A["app/<br/>路由层"]
+        B["components/<br/>组件层"]
+        C["hooks/<br/>数据层"]
+        D["services/<br/>服务层"]
+        E["constants/<br/>常量层"]
+        F["context/<br/>上下文层"]
+        G["types/<br/>TS 预留"]
         H["scripts/<br/>注入脚本"]
         I["navigation/<br/>导航辅助"]
         J["utils/<br/>工具函数"]
@@ -394,9 +394,9 @@ graph LR
     A --> A2["根级 7 个 L2"]
     A --> A3["5 个模块目录 L3"]
 
-    B --> B1["ui/ 🆕 7 个原子组件"]
-    B --> B2["home/ 🆕 4 个首页卡"]
-    B --> B3["space/ 🆕 5 个空间卡"]
+    B --> B1["ui/ 7 个原子组件"]
+    B --> B2["home/ 4 个首页卡"]
+    B --> B3["space/ 5 个空间卡"]
     B --> B4["browser/ 2 个弹窗"]
     B --> B5["聊天 4 个组件"]
     B --> B6["健康 3 个组件"]
@@ -406,12 +406,12 @@ graph LR
     C --> C3["browser/ 5 个"]
     C --> C4["根级 5 个"]
 
-    E --> E1["colors.js 🔴"]
-    E --> E2["theme.js 🔴"]
-    E --> E3["motion.js 🆕"]
-    E --> E4["haptics.js 🆕"]
-    E --> E5["features.js 🆕"]
-    E --> E6["limits.js 🆕"]
+    E --> E1["colors.js "]
+    E --> E2["theme.js "]
+    E --> E3["motion.js "]
+    E --> E4["haptics.js "]
+    E --> E5["features.js "]
+    E --> E6["limits.js "]
 
     style SRC fill:#FAFAFA,stroke:#616161
     style A fill:#E3F2FD,stroke:#1976D2
@@ -431,20 +431,20 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph NEWCONST["🆕 新建常量（阶段 1）"]
+    subgraph NEWCONST[" 新建常量（阶段 1）"]
         M["motion.js<br/>DURATION / SPRING / EASING / SCALE / STAGGER"]
         H["haptics.js<br/>light/medium/heavy/success/warning/error/selection"]
         F["features.js<br/>FEATURES 能力开关"]
         L["limits.js<br/>LIMITS 配额"]
     end
 
-    subgraph EXIST["🔴 现有常量（不可改）"]
+    subgraph EXIST[" 现有常量（不可改）"]
         C["colors.js"]
         T["theme.js"]
         TC["ThemeContext.js"]
     end
 
-    subgraph NEWUI["🆕 新建 UI 组件（阶段 1）"]
+    subgraph NEWUI[" 新建 UI 组件（阶段 1）"]
         U1["AppleCard"]
         U2["AppleButton"]
         U3["AppleListRow"]
@@ -455,12 +455,12 @@ graph TB
         U8["index.js 统一出口"]
     end
 
-    subgraph DEP["📦 依赖"]
-        D1["@shopify/flash-list 🆕"]
-        D2["react-native-reanimated ✅已有"]
-        D3["react-native-svg ✅已有"]
-        D4["expo-linear-gradient ✅已有"]
-        D5["expo-haptics ✅已有"]
+    subgraph DEP[" 依赖"]
+        D1["@shopify/flash-list "]
+        D2["react-native-reanimated 已有"]
+        D3["react-native-svg 已有"]
+        D4["expo-linear-gradient 已有"]
+        D5["expo-haptics 已有"]
     end
 
     U1 --> M
@@ -502,19 +502,19 @@ graph TB
 
 ```mermaid
 graph TD
-    ROOT["🏠 首页 (tabs)/index.js<br/>ScrollView"]
+    ROOT[" 首页 (tabs)/index.js<br/>ScrollView"]
 
     ROOT --> H1["Header<br/>问候 + 日期"]
-    ROOT --> PSC["PartnerStatusCard<br/>🆕 搭子状态卡"]
-    ROOT --> WC["WaterCard<br/>🆕 饮水卡"]
-    ROOT --> MG["MealGrid<br/>🆕 2×2 餐食格"]
-    ROOT --> SC["StreakCard<br/>🆕 连续打卡卡"]
+    ROOT --> PSC["PartnerStatusCard<br/>搭子状态卡"]
+    ROOT --> WC["WaterCard<br/>饮水卡"]
+    ROOT --> MG["MealGrid<br/>2×2 餐食格"]
+    ROOT --> SC["StreakCard<br/>连续打卡卡"]
     ROOT --> SP["bottomSpacer 100px"]
 
     PSC --> PSC1["未绑定：邀请引导<br/>→ /bind_partner"]
     PSC --> PSC2["已绑定：对方昵称+状态"]
 
-    WC --> WP["WaterProgress<br/>✅ 复用现有"]
+    WC --> WP["WaterProgress<br/>复用现有"]
     WP --> WP1["微调：动画曲线"]
     WP --> WP2["微调：触感"]
 
@@ -525,7 +525,7 @@ graph TD
 
     SC --> PR["ProgressRing<br/>外环今日 / 内环周进度"]
 
-    ROOT -.->|"点击餐食"| MDS["MealDetailSheet<br/>✅ 复用现有"]
+    ROOT -.->|"点击餐食"| MDS["MealDetailSheet<br/>复用现有"]
     MDS --> MDS1["微调：SPRING.bouncy"]
     MDS --> MDS2["微调：success/warning 触感"]
 
@@ -549,24 +549,24 @@ graph TD
 
 ```mermaid
 graph TB
-    subgraph SPACE["🧩 空间页 (tabs)/space.js"]
+    subgraph SPACE[" 空间页 (tabs)/space.js"]
         S0["标题 空间"]
-        S1["PrivateSpaceCard 🔒<br/>→ /private"]
-        S2["MomentsCard ✨<br/>→ /moments"]
-        S3["CinemaCard 🎬<br/>→ /cinema"]
-        S4["BrowserCard 🌐<br/>→ /browser"]
+        S1["PrivateSpaceCard <br/>→ /private"]
+        S2["MomentsCard <br/>→ /moments"]
+        S3["CinemaCard <br/>→ /cinema"]
+        S4["BrowserCard <br/>→ /browser"]
         S0 --> S1 --> S2 --> S3 --> S4
     end
 
-    subgraph SETTINGS_OLD["⚙️ 原 settings.js（单文件 352 行）"]
+    subgraph SETTINGS_OLD[" 原 settings.js（单文件 352 行）"]
         OLD["账号 3 项<br/>隐私 5 项<br/>安全 4 项<br/>外观 3 项 + 签名<br/>关于<br/>退出 / 注销"]
     end
 
-    subgraph SETTINGS_NEW["⚙️ 新 settings/ 目录（L3）"]
+    subgraph SETTINGS_NEW[" 新 settings/ 目录（L3）"]
         N0["index.js<br/>3 分组导航"]
         N1["account.js<br/>账号信息 / 邀请 / 搭子"]
-        N2["privacy.js<br/>隐私 5 项 ✅全保留"]
-        N3["security.js<br/>安全 4 项 ✅全保留"]
+        N2["privacy.js<br/>隐私 5 项 全保留"]
+        N3["security.js<br/>安全 4 项 全保留"]
         N4["appearance.js<br/>主题 3 项 + 签名"]
         N5["about.js<br/>版本 / 政策 / 协议"]
         N0 --> N1
@@ -576,7 +576,7 @@ graph TB
         N0 --> N5
     end
 
-    subgraph PROFILE["👤 我的页 (tabs)/profile.js"]
+    subgraph PROFILE[" 我的页 (tabs)/profile.js"]
         PR0["保持结构"]
         PR1["微调：头像按压缩放"]
         PR2["微调：列表改 AppleListRow"]
@@ -618,7 +618,7 @@ graph TB
         A0 -->|"联系人入口"| A1
     end
 
-    subgraph KEEP["🔴 逻辑一律不动（只微调动效/触感）"]
+    subgraph KEEP[" 逻辑一律不动（只微调动效/触感）"]
         K1["ChatRoomInner.js"]
         K2["MessageBubble.js"]
         K3["ChatInputBar.js"]
@@ -647,14 +647,14 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph CINEMA_OLD["🎬 原 cinema.js 511 行"]
+    subgraph CINEMA_OLD[" 原 cinema.js 511 行"]
         CO["播放器 + 弹幕 + 进度条<br/>全部混在一个文件"]
     end
 
-    subgraph CINEMA_NEW["🎬 新 cinema/ 目录"]
+    subgraph CINEMA_NEW[" 新 cinema/ 目录"]
         CN0["index.js 大厅<br/>我的房间 + 最近公开"]
         CN1["room/[roomId].js 房间<br/>播放器逻辑原样迁移"]
-        CN2["search.js 搜索大厅<br/>🆕 公开房间搜索"]
+        CN2["search.js 搜索大厅<br/>公开房间搜索"]
         CN3["create.js 创建房间<br/>公开/私人 + 密码"]
         CN0 --> CN1
         CN0 --> CN2
@@ -663,11 +663,11 @@ graph TB
         CN3 -->|"创建后"| CN1
     end
 
-    subgraph BROWSER_OLD["🌐 原 browser.js 424 行"]
+    subgraph BROWSER_OLD[" 原 browser.js 424 行"]
         BO["WebView + 历史 + 书签 + 嗅探<br/>全部混在一个文件"]
     end
 
-    subgraph BROWSER_NEW["🌐 新 browser/ 目录"]
+    subgraph BROWSER_NEW[" 新 browser/ 目录"]
         BN0["index.js 主页<br/>WebView 主体"]
         BN1["history.js 历史"]
         BN2["bookmarks.js 书签"]
@@ -675,7 +675,7 @@ graph TB
         BN0 --> BN2
     end
 
-    subgraph HOOKS["✅ 5 个领域 Hook 原样复用"]
+    subgraph HOOKS["5 个领域 Hook 原样复用"]
         BH1["useBrowserHistory"]
         BH2["useBrowserSniffer"]
         BH3["useAdBlocker"]
@@ -683,7 +683,7 @@ graph TB
         BH5["useBrowserNavigation"]
     end
 
-    subgraph SQL["🗄️ 新增 SQL"]
+    subgraph SQL[" 新增 SQL"]
         Q1["cinema_rooms 表<br/>visibility: public/private<br/>+ RLS + 触发器"]
     end
 
@@ -709,7 +709,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph PRIVATE["🔒 私密空间 private/"]
+    subgraph PRIVATE[" 私密空间 private/"]
         P0["index.js 主页<br/>相册 / 笔记 双入口 + 统计"]
         P1["album.js 私密相册<br/>FlashList 3 列网格"]
         P2["notes.js 私密笔记<br/>FlashList 列表"]
@@ -717,7 +717,7 @@ graph TB
         P0 --> P2
     end
 
-    subgraph MOMENTS["✨ 朋友圈 moments/"]
+    subgraph MOMENTS[" 朋友圈 moments/"]
         M0["index.js 朋友圈流<br/>FlashList"]
         M1["publish.js 发布<br/>文字 + 9 图 + 可见性"]
         M2["[momentId].js 详情<br/>评论列表 + 输入"]
@@ -725,7 +725,7 @@ graph TB
         M0 --> M2
     end
 
-    subgraph DB["🗄️ 新增 SQL（5 张表）"]
+    subgraph DB[" 新增 SQL（5 张表）"]
         D1[("private_album<br/>owner_id + storage_path")]
         D2[("private_notes<br/>owner_id + title + content")]
         D3[("moments<br/>author_id + content + images[]")]
@@ -735,11 +735,11 @@ graph TB
         D3 --> D5
     end
 
-    subgraph STORAGE["📦 Supabase Storage"]
+    subgraph STORAGE[" Supabase Storage"]
         ST1[("private-album bucket<br/>public: false<br/>RLS: foldername[1] = uid")]
     end
 
-    subgraph LIMITS["📐 配额（limits.js）"]
+    subgraph LIMITS[" 配额（limits.js）"]
         L1["privateAlbumMax 500"]
         L2["privateNotesMax 200"]
         L3["momentsDailyMax 10"]
@@ -794,7 +794,7 @@ graph TB
     R8A -->|"是"| R9["⑨ 深色模式全量走查"]
     R9 --> R10["⑩ 底栏显示规则走查<br/>L1 有 / L2 L3 无"]
     R10 --> R11["⑪ 三条命令全绿<br/>tsc / lint / doctor"]
-    R11 --> DONE["✅ 重构完成"]
+    R11 --> DONE["重构完成"]
 
     style START fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
     style DONE fill:#C8E6C9,stroke:#2E7D32,stroke-width:3px
@@ -922,9 +922,10 @@ erDiagram
 ```
 
 **图例**：
-- 🟢 现有表：`AUTH_USERS` / `HEALTH_RECORDS` / `MESSAGES` / `FRIENDSHIPS`
-- 🆕 新增表（阶段 5）：`CINEMA_ROOMS`
-- 🆕 新增表（阶段 6）：`PRIVATE_ALBUM` / `PRIVATE_NOTES` / `MOMENTS` / `MOMENT_LIKES` / `MOMENT_COMMENTS`
+
+- 现有表：`AUTH_USERS` / `HEALTH_RECORDS` / `MESSAGES` / `FRIENDSHIPS`
+- 新增表（阶段 5）：`CINEMA_ROOMS`
+- 新增表（阶段 6）：`PRIVATE_ALBUM` / `PRIVATE_NOTES` / `MOMENTS` / `MOMENT_LIKES` / `MOMENT_COMMENTS`
 
 ---
 
@@ -932,36 +933,36 @@ erDiagram
 
 ```mermaid
 graph TB
-    subgraph UI_LAYER["🟦 UI 层（禁止直接访问后端）"]
+    subgraph UI_LAYER[" UI 层（禁止直接访问后端）"]
         U1["src/app/** 页面"]
         U2["src/components/** 组件"]
     end
 
-    subgraph HOOK_LAYER["🟩 Hook 层（唯一数据入口）"]
+    subgraph HOOK_LAYER[" Hook 层（唯一数据入口）"]
         H1["useHealthData"]
         H2["useChatMessages"]
         H3["useCinema"]
         H4["useBrowserHistory"]
         H5["useAuth"]
-        H6["🆕 usePrivateAlbum"]
-        H7["🆕 useMoments"]
+        H6[" usePrivateAlbum"]
+        H7[" useMoments"]
     end
 
-    subgraph SVC_LAYER["🟧 服务层（实现可替换）"]
+    subgraph SVC_LAYER[" 服务层（实现可替换）"]
         S1["supabase.js<br/>客户端单点"]
         S2["pushService.js<br/>推送单点"]
-        S3["🆕 partnerService.js<br/>命名中立"]
-        S4["🆕 cinemaService.js<br/>命名中立"]
+        S3[" partnerService.js<br/>命名中立"]
+        S4[" cinemaService.js<br/>命名中立"]
     end
 
-    subgraph ADAPTER["🟨 未来适配层（本次不建）"]
+    subgraph ADAPTER[" 未来适配层（本次不建）"]
         A1["SupabaseAdapter"]
         A2["FirebaseAdapter"]
     end
 
-    subgraph BACKEND["☁️ 后端"]
+    subgraph BACKEND[" 后端"]
         B1[("Supabase<br/>Postgres")]
-        B2[("Firebase<br/>未来可选")]
+        B2[("Firebase<br/>FCM 推送")]
     end
 
     U1 --> HOOK_LAYER
@@ -972,6 +973,7 @@ graph TB
     ADAPTER -.-> B2
     S1 --> B1
     S2 --> B1
+    S2 -->|"Expo Push Service 转发"| B2
 
     style UI_LAYER fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
     style HOOK_LAYER fill:#E0F7FA,stroke:#00838F,stroke-width:2px
@@ -980,7 +982,9 @@ graph TB
     style BACKEND fill:#ECEFF1,stroke:#455A64,stroke-width:2px
 ```
 
-**铁律**：`src/app/**` 与 `src/components/**` 中 **grep `supabase.` 必须为 0 行**。这是未来接 Firebase 的唯一保障。
+**铁律**：`src/app/**` 与 `src/components/**` 中 **grep `supabase.` 必须为 0 行**。这是未来替换数据后端（Firebase / 其他）的唯一保障。
+
+**现状补充**：Firebase 目前只承担**推送**（FCM），不承担数据库。链路是 `usePushNotifications` 取 Expo Push Token → 存 `profiles.expo_push_token` → `pushService` 调 `send-push` 边缘函数 → Expo Push Service 转发到 FCM / APNs。所以上图里 `S2 → B2` 是实线，`ADAPTER → B2` 仍是虚线（数据层未接 Firebase）。
 
 ---
 
@@ -1029,7 +1033,7 @@ sequenceDiagram
 
 ```mermaid
 graph TB
-    subgraph MOTION["🎬 动效体系 constants/motion.js"]
+    subgraph MOTION[" 动效体系 constants/motion.js"]
         M1["DURATION<br/>instant 120 / fast 200<br/>normal 280 / slow 400<br/>skeleton 1200"]
         M2["SPRING<br/>default 20/220/0.9<br/>bouncy 16/180/1<br/>gentle 24/160/1<br/>snap 18/260/0.8"]
         M3["EASING<br/>standard / decelerate / accelerate"]
@@ -1037,7 +1041,7 @@ graph TB
         M5["STAGGER<br/>list 40ms / grid 30ms"]
     end
 
-    subgraph HAPTIC["📳 触感体系 constants/haptics.js"]
+    subgraph HAPTIC[" 触感体系 constants/haptics.js"]
         H1["light<br/>tab 切换 / 卡片点击"]
         H2["medium<br/>按钮 / 长按菜单"]
         H3["heavy<br/>删除 / 危险操作"]
@@ -1059,7 +1063,7 @@ graph TB
         S9["删除确认<br/>→ haptic.heavy"]
     end
 
-    subgraph RULE["🔴 铁律"]
+    subgraph RULE[" 铁律"]
         R1["动画中禁止 setState<br/>必须 useSharedValue"]
         R2["长列表必须 FlashList<br/>+ estimatedItemSize"]
         R3["所有 duration 来自 DURATION.*"]

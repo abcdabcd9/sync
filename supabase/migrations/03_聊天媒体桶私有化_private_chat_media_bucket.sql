@@ -1,6 +1,6 @@
--- --- START OF FILE supabase/migrations/20261029_private_chat_media_bucket.sql ---
+-- --- START OF FILE supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql ---
 -- ============================================================================
--- 🔒 安全审计 #14：私密媒体防泄露 —— 将 chat_media 桶私有化
+-- 安全审计 #14：私密媒体防泄露 —— 将 chat_media 桶私有化
 -- ============================================================================
 -- 背景：
 --   旧实现使用 supabase.storage.from('chat_media').getPublicUrl(fileName) 生成
@@ -13,7 +13,7 @@
 --   3. 通过 RLS 策略限制：仅「消息的发送者」与「消息的接收者」可以读取对象，
 --      仅「已登录用户」可以上传到自己的命名空间。
 --
--- ⚠️ 执行顺序：
+-- 执行顺序：
 --   本迁移必须与前端代码（useMediaUpload.js 的 createSignedUrl 改造）同时上线。
 --   若先执行本 SQL 而前端仍用 getPublicUrl，历史与新消息的媒体都会 403 无法显示。
 -- ============================================================================
@@ -51,6 +51,13 @@ DROP POLICY IF EXISTS "chat_media public read" ON storage.objects;
 DROP POLICY IF EXISTS "Allow public read chat_media" ON storage.objects;
 DROP POLICY IF EXISTS "chat_media_public_select" ON storage.objects;
 
+-- 2026-10-31 线上导出时发现的两条「全开」遗留策略（P0）
+-- 条件为 auth.role() = 'authenticated'，等价于「任何登录用户」。
+-- PERMISSIVE 策略是 OR 关系，只要它们存在，下面第 3、4 节收紧后的策略
+-- 就完全失效（任何登录用户可读全库媒体 / 往别人目录上传）。
+DROP POLICY IF EXISTS "Allow logged-in users to read media"   ON storage.objects;
+DROP POLICY IF EXISTS "Allow logged-in users to upload media" ON storage.objects;
+
 -- ---------------------------------------------------------------------------
 -- 3. 上传策略：登录用户可上传到 chat_media（文件名由客户端生成，前缀区分类型）
 -- ---------------------------------------------------------------------------
@@ -71,7 +78,7 @@ WITH CHECK (bucket_id = 'chat_media');
 --   改为「按对象名反查 messages 表」：只要存在一条消息，其 media_url 或
 --   thumbnail_url 包含该对象名，且当前用户是发送者或接收者，即允许读取。
 --
---   注意：createSignedUrl 本身由服务端签发，不经过 RLS 的 SELECT 校验；
+--   createSignedUrl 本身由服务端签发，不经过 RLS 的 SELECT 校验；
 --   该策略主要用于兜底「直接访问对象路径」的场景（如 SDK 内部重定向、
 --   以及未来可能启用的 download() 调用）。
 DROP POLICY IF EXISTS "chat_media_participants_select" ON storage.objects;
@@ -132,4 +139,4 @@ CREATE INDEX IF NOT EXISTS idx_messages_thumbnail_url
 --   DROP POLICY IF EXISTS "chat_media_owner_delete" ON storage.objects;
 --   DROP POLICY IF EXISTS "chat_media_owner_update" ON storage.objects;
 -- ============================================================================
--- --- END OF FILE supabase/migrations/20261029_private_chat_media_bucket.sql ---
+-- --- END OF FILE supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql ---

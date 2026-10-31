@@ -1,7 +1,7 @@
 // 配额常量：本次固定值，未来按会员等级动态取值
 // 未来 TS 化：export const LIMITS = {...} as const;
 //
-// 关系网络相关配额见 SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md §4
+// 关系网络相关配额见 docs/specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md §4
 
 export const LIMITS = {
   // ---- 私密空间 ----

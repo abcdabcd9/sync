@@ -1,9 +1,9 @@
--- --- START OF FILE supabase/migrations/20261029_media_path_and_rls.sql ---
+-- --- START OF FILE supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql ---
 -- ============================================================================
--- 🔒 P0-2 / P0-3：媒体改存相对对象路径 + 按 user_id 命名空间收紧 RLS
+-- P0-2 / P0-3：媒体改存相对对象路径 + 按 user_id 命名空间收紧 RLS
 -- ============================================================================
 -- 背景：
---   上一版迁移（20261029_private_chat_media_bucket.sql）把 chat_media 桶私有化，
+--   上一版迁移（03_聊天媒体桶私有化_private_chat_media_bucket.sql）把 chat_media 桶私有化，
 --   但前端把「7 天有效期的签名 URL」直接写进了 messages.media_url / thumbnail_url。
 --   后果：
 --     1. 7 天后所有历史图片 / 视频 / 语音全部 403，且无法恢复
@@ -18,7 +18,7 @@
 --      再兜底「按对象名反查 messages」以兼容历史数据。
 --   4. 索引改为精确匹配（去掉 LIKE 全表扫描）。
 --
--- ⚠️ 执行顺序（务必遵守）：
+-- 执行顺序：
 --   1) 先执行本 SQL（回填历史数据 + 收紧 RLS）
 --   2) 再发布前端代码（useMediaUpload / useAudioRecorder 存相对路径，
 --      useSignedMediaUrl 按需签名）
@@ -54,6 +54,19 @@ SET thumbnail_url = COALESCE(
 )
 WHERE thumbnail_url LIKE 'http%'
   AND thumbnail_url LIKE '%/chat_media/%';
+
+-- ---------------------------------------------------------------------------
+-- 1.5 清理「全开」遗留策略（P0，2026-10-31 线上导出时发现）
+-- ---------------------------------------------------------------------------
+-- 这两条是公开桶时代在 Dashboard 手工建的，条件为
+--   auth.role() = 'authenticated'
+-- 等价于「任何登录用户」。PostgreSQL 的 PERMISSIVE 策略是 OR 关系，
+-- 只要它们存在，下面第 2、3 节收紧后的策略就完全失效：
+--   · read media   → 任何登录用户可读全库所有聊天图片/视频/语音
+--   · upload media → 任何登录用户可往别人目录塞文件
+-- 必须在重建策略之前删除，否则等于没改。
+DROP POLICY IF EXISTS "Allow logged-in users to read media"   ON storage.objects;
+DROP POLICY IF EXISTS "Allow logged-in users to upload media" ON storage.objects;
 
 -- ---------------------------------------------------------------------------
 -- 2. 上传策略：对象路径首段必须等于当前用户 ID
@@ -141,4 +154,4 @@ CREATE INDEX IF NOT EXISTS idx_messages_thumbnail_url
 --   -- 3) 数据回填不可逆（签名 URL 已丢失 token，无法还原），
 --   --    但相对路径是更正确的形态，无需回滚。
 -- ============================================================================
--- --- END OF FILE supabase/migrations/20261029_media_path_and_rls.sql ---
+-- --- END OF FILE supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql ---

@@ -37,20 +37,20 @@
 
 | 编号 | 要求 | 落地方式 |
 |---|---|---|
-| **H1** | 流畅与丝滑度必须对标苹果 | 全部动画走 Reanimated worklet（UI 线程）；长列表用 FlashList；页面转场用原生 Stack |
+| **H1** | 流畅度必须对标苹果 | 全部动画走 Reanimated worklet（UI 线程）；长列表用 FlashList；页面转场用原生 Stack |
 | **H2** | 动态动效必须精致 | 统一 spring 参数（见 §4）；按压反馈、Tab 弹跳、Popover 锚点展开 |
 | **H3** | 主题颜色、UI、UX 不修改原有 | 色值/尺寸/主题 API **零改动**；微调仅限「控件形态/动效节奏/间距节奏/层级质感」四维度 |
 | **H4** | 现有页面也可微调为苹果设计风格 | 见 §3 逐页面微调清单 |
 
 ### 0.2 绝对红线（任何阶段都不得违反）
 
-```
-❌ 不得修改 src/constants/colors.js 的任何色值
-❌ 不得修改 src/constants/theme.js 的 SIZES / TYPOGRAPHY
-❌ 不得修改 src/context/ThemeContext.js 的对外 API
-❌ 不得修改品牌主色 #FF2D55 / #FF375F 的使用语义
-❌ 不得手动创建/编辑 ios/ 或 android/ 目录（CNG 生成）
-❌ 不得使用 npm/yarn/pnpm/bun add 安装依赖（必须 npx expo install）
+```text
+不得修改 src/constants/colors.js 的任何色值
+不得修改 src/constants/theme.js 的 SIZES / TYPOGRAPHY
+不得修改 src/context/ThemeContext.js 的对外 API
+不得修改品牌主色 #FF2D55 / #FF375F 的使用语义
+不得手动创建/编辑 ios/ 或 android/ 目录（CNG 生成）
+不得使用 npm/yarn/pnpm/bun add 安装依赖（必须 npx expo install）
 ```
 
 ### 0.3 每个阶段的完成定义（DoD）
@@ -76,19 +76,19 @@ git diff src/constants/ # 必须为空（色值/尺寸零改动）
 | react-native | 0.88.1 | |
 | react | 19.3.0 | |
 | expo-router | 58.0.28 | 文件即路由 |
-| react-native-reanimated | 4.7.1 | ✅ 已装，worklet 可用 |
-| react-native-gesture-handler | 3.3.0 | ✅ 已装 |
-| react-native-worklets | 0.13.0 | ✅ 已装 |
-| expo-haptics | 58.0.7 | ✅ 已装 |
-| expo-linear-gradient | 58.0.3 | ✅ 已装（骨架屏用） |
-| lottie-react-native | 7.5.0 | ✅ 已装 |
-| react-native-svg | 15.16.0 | ✅ 已装（双环进度用） |
-| expo-blur | 58.0.5 | ✅ 已装（毛玻璃） |
-| expo-image | 58.0.18 | ✅ 已装（相册懒加载） |
-| @react-native-async-storage/async-storage | 2.2.0 | ✅ 已装（**非 MMKV**） |
-| @supabase/supabase-js | 2.118.0 | ✅ 已装 |
-| typescript | 6.0.3 | ✅ 已装（devDep，未开 strict） |
-| @shopify/flash-list | — | ❌ **需新增**（唯一新增依赖） |
+| react-native-reanimated | 4.7.1 | 已装，worklet 可用 |
+| react-native-gesture-handler | 3.3.0 | 已装 |
+| react-native-worklets | 0.13.0 | 已装 |
+| expo-haptics | 58.0.7 | 已装 |
+| expo-linear-gradient | 58.0.3 | 已装（骨架屏用） |
+| lottie-react-native | 7.5.0 | 已装 |
+| react-native-svg | 15.16.0 | 已装（双环进度用） |
+| expo-blur | 58.0.5 | 已装（毛玻璃） |
+| expo-image | 58.0.18 | 已装（相册懒加载） |
+| @react-native-async-storage/async-storage | 2.2.0 | 已装（**非 MMKV**） |
+| @supabase/supabase-js | 2.118.0 | 已装 |
+| typescript | 6.0.3 | 已装（devDep，未开 strict） |
+| @shopify/flash-list | — | **需新增**（唯一新增依赖） |
 
 **tsconfig 现状**：
 ```json
@@ -139,9 +139,9 @@ npx expo install @shopify/flash-list
 
 | 层级 | 定义 | 底栏 | 返回箭头 | 路由位置 |
 |---|---|---|---|---|
-| **L1 一级页** | 4 个 Tab 根页 | ✅ 常驻 | ❌ 无 | `src/app/(tabs)/` |
-| **L2 二级页** | 从 L1 push 进入 | ❌ 隐藏 | ✅ 有 | `src/app/` 根目录 |
-| **L3 三级页** | 从 L2 再 push 进入 | ❌ 隐藏 | ✅ 有 | `src/app/<模块>/` 子目录 |
+| **L1 一级页** | 4 个 Tab 根页 | 常驻 | 无 | `src/app/(tabs)/` |
+| **L2 二级页** | 从 L1 push 进入 | 隐藏 | 有 | `src/app/` 根目录 |
+| **L3 三级页** | 从 L2 再 push 进入 | 隐藏 | 有 | `src/app/<模块>/` 子目录 |
 
 **核心机制**：底栏是 [`src/app/(tabs)/_layout.js`](src/app/(tabs)/_layout.js:6) 中 `<Tabs>` 的一部分。任何位于 `(tabs)` 目录**之外**的路由，天然不渲染底栏——**无需任何手动隐藏逻辑**。
 
@@ -161,13 +161,13 @@ graph TD
 ```mermaid
 graph TB
     subgraph ROOT["Root Stack · 原生转场"]
-        subgraph TABS["(tabs) · 底栏常驻 ✅"]
-            T1["🏠 首页"]
-            T2["🧩 空间"]
-            T3["💬 聊天"]
-            T4["👤 我的"]
+        subgraph TABS["(tabs) · 底栏常驻 "]
+            T1[" 首页"]
+            T2[" 空间"]
+            T3[" 聊天"]
+            T4[" 我的"]
         end
-        subgraph L2["L2 · 底栏隐藏 ❌"]
+        subgraph L2["L2 · 底栏隐藏 "]
             H1["/health_detail"]
             H2["/anniversary"]
             S1["/cinema 大厅 Hub"]
@@ -183,9 +183,9 @@ graph TB
             M2["/account_info"]
             M3["/bind_partner"]
         end
-        subgraph L3["L3 · 底栏隐藏 ❌"]
+        subgraph L3["L3 · 底栏隐藏 "]
             L3A["/cinema/room"]
-            L3B["/cinema/search 🆕"]
+            L3B["/cinema/search 新建"]
             L3C["/browser/webview"]
             L3D["/browser/sniffed"]
             L3E["/private_space/album"]
@@ -213,23 +213,23 @@ graph TB
 
 ```mermaid
 graph LR
-    P1["阶段1 底栏改造<br/>🟢 1d"] --> P2["阶段2 设置 L3<br/>🟢 2d"]
-    P2 --> P3["阶段3 首页卡片<br/>🟡 2.5d"]
-    P3 --> P4["阶段4 空间+拆分<br/>🟡 3.5d"]
-    P4 --> P5["阶段5 聊天 IM 化<br/>🔴 3.5d"]
-    P5 --> P6["阶段6 私密空间/朋友圈<br/>🔴 4-10d"]
-    P6 --> P7["阶段7 全局打磨<br/>🟢 1.5d"]
+    P1["阶段1 底栏改造<br/>低 1d"] --> P2["阶段2 设置 L3<br/>低 2d"]
+    P2 --> P3["阶段3 首页卡片<br/>中 2.5d"]
+    P3 --> P4["阶段4 空间+拆分<br/>中 3.5d"]
+    P4 --> P5["阶段5 聊天 IM 化<br/>高 3.5d"]
+    P5 --> P6["阶段6 私密空间/朋友圈<br/>高 4-10d"]
+    P6 --> P7["阶段7 全局打磨<br/>低 1.5d"]
 ```
 
 | 阶段 | 内容 | 风险 | 工期 | 依赖 | 详见 |
 |---|---|---|---|---|---|
-| 1 | 底栏删滑出 + Reanimated + Tab 弹跳 + haptics | 🟢 | 1d | 无 | PART2 §1 |
-| 2 | 设置拆 12 L3 + 行样式苹果风 | 🟢 | 2d | 阶段 1 | PART2 §2 |
-| 3 | 首页三卡 + 双环 + 四宫格 + 按压反馈 | 🟡 | 2.5d | 阶段 1 | PART2 §3 |
-| 4 | 空间 4 卡 + cinema/browser 拆分 + 公开房搜索 | 🟡 | 3.5d | 阶段 1、2 | PART2 §4 |
-| 5 | 聊天纯 IM 化 + FlashList + Popover | 🔴 | 3.5d | 阶段 1 | PART2 §5 |
-| 6 | 私密空间真功能 + 朋友圈（视排期） | 🔴 | 4-10d | 阶段 4、5 | PART2 §6 |
-| 7 | 全局打磨收口 | 🟢 | 1.5d | 全部 | PART2 §7 |
+| 1 | 底栏删滑出 + Reanimated + Tab 弹跳 + haptics | 低 | 1d | 无 | PART2 §1 |
+| 2 | 设置拆 12 L3 + 行样式苹果风 | 低 | 2d | 阶段 1 | PART2 §2 |
+| 3 | 首页三卡 + 双环 + 四宫格 + 按压反馈 | 中 | 2.5d | 阶段 1 | PART2 §3 |
+| 4 | 空间 4 卡 + cinema/browser 拆分 + 公开房搜索 | 中 | 3.5d | 阶段 1、2 | PART2 §4 |
+| 5 | 聊天纯 IM 化 + FlashList + Popover | 高 | 3.5d | 阶段 1 | PART2 §5 |
+| 6 | 私密空间真功能 + 朋友圈（视排期） | 高 | 4-10d | 阶段 4、5 | PART2 §6 |
+| 7 | 全局打磨收口 | 低 | 1.5d | 全部 | PART2 §7 |
 
 **总工期**：18-24 个工作日（朋友圈降级则 18-19 天）。
 
@@ -251,7 +251,7 @@ graph TB
 
     CP --> C1["useSyncRoom"]
     CP --> C2["useVideoPlayer"]
-    CP --> C3["🆕 useCinemaRooms（阶段4）"]
+    CP --> C3["新建 useCinemaRooms（阶段4）"]
 ```
 
 ---
@@ -439,46 +439,46 @@ graph TB
 
 | 路由 | 状态 | 来源 | 阶段 |
 |---|---|---|---|
-| `/health_detail` | 🆕 | 原 `index.js` 迁移 | 3 |
-| `/anniversary` | 🆕 | 新建占位 | 3 |
-| `/cinema` | 🔀 | `cinema.js` 拆分（大厅） | 4 |
-| `/browser` | 🔀 | `browser.js` 拆分（Hub） | 4 |
-| `/private_space` | 🆕 | 新建 | 6 |
-| `/moments` | 🆕 | 新建 | 6 |
-| `/chat_room` | ✅ | 已有 | — |
-| `/contact_profile` | ✅ | 已有 | — |
-| `/contacts` | 🆕 | 迁移 `renderContactsView` | 5 |
-| `/friend_requests` | 🆕 | 新建 | 5 |
-| `/add_friend` | 🆕 | 迁移搜索逻辑 | 5 |
-| `/settings` | 🔀 | `settings.js` → `settings/index.js` | 2 |
-| `/account_info` | ✅ | 已有 | — |
-| `/bind_partner` | ✅ | 已有 | — |
+| `/health_detail` | 新建 | 原 `index.js` 迁移 | 3 |
+| `/anniversary` | 新建 | 新建占位 | 3 |
+| `/cinema` | 拆分 | `cinema.js` 拆分（大厅） | 4 |
+| `/browser` | 拆分 | `browser.js` 拆分（Hub） | 4 |
+| `/private_space` | 新建 | 新建 | 6 |
+| `/moments` | 新建 | 新建 | 6 |
+| `/chat_room` | 已有 | 已有 | — |
+| `/contact_profile` | 已有 | 已有 | — |
+| `/contacts` | 新建 | 迁移 `renderContactsView` | 5 |
+| `/friend_requests` | 新建 | 新建 | 5 |
+| `/add_friend` | 新建 | 迁移搜索逻辑 | 5 |
+| `/settings` | 拆分 | `settings.js` → `settings/index.js` | 2 |
+| `/account_info` | 已有 | 已有 | — |
+| `/bind_partner` | 已有 | 已有 | — |
 
 ### 5.3 L3（21 个）
 
 | 模块 | 路由 | 状态 | 阶段 |
 |---|---|---|---|
-| 放映厅 | `/cinema/room` | 🔀 拆分 | 4 |
-| 放映厅 | `/cinema/search` | 🆕 公开房搜索 | 4 |
-| 浏览器 | `/browser/webview` | 🔀 拆分 | 4 |
-| 浏览器 | `/browser/sniffed` | 🔀 拆分 | 4 |
-| 私密空间 | `/private_space/album` | 🆕 | 6 |
-| 私密空间 | `/private_space/notes` | 🆕 | 6 |
-| 朋友圈 | `/moments/detail` | 🆕 | 6 |
-| 朋友圈 | `/moments/publish` | 🆕 | 6 |
-| 设置 | `/settings/privacy` | 🔀 迁移 | 2 |
-| 设置 | `/settings/security` | 🔀 迁移 | 2 |
-| 设置 | `/settings/theme` | 🔀 迁移 | 2 |
-| 设置 | `/settings/health` | 🔀 迁移 | 2 |
-| 设置 | `/settings/notifications` | 🆕 占位 | 2 |
-| 设置 | `/settings/friend_permissions` | 🆕 占位 | 2 |
-| 设置 | `/settings/storage` | 🆕 占位 | 2 |
-| 设置 | `/settings/more` | 🆕 占位 | 2 |
-| 设置 | `/settings/chat` | 🆕 占位 | 2 |
-| 设置 | `/settings/downloads` | 🆕 占位 | 2 |
-| 设置 | `/settings/switch_account` | 🆕 占位 | 2 |
-| 健康 | `/health_detail/meal/:type` | 🆕 可选 | 3 |
-| 邀请 | `/invite_friend` | ✅ 已有（L3 定位） | — |
+| 放映厅 | `/cinema/room` | 拆分 拆分 | 4 |
+| 放映厅 | `/cinema/search` | 新建 公开房搜索 | 4 |
+| 浏览器 | `/browser/webview` | 拆分 拆分 | 4 |
+| 浏览器 | `/browser/sniffed` | 拆分 拆分 | 4 |
+| 私密空间 | `/private_space/album` | 新建 | 6 |
+| 私密空间 | `/private_space/notes` | 新建 | 6 |
+| 朋友圈 | `/moments/detail` | 新建 | 6 |
+| 朋友圈 | `/moments/publish` | 新建 | 6 |
+| 设置 | `/settings/privacy` | 拆分 迁移 | 2 |
+| 设置 | `/settings/security` | 拆分 迁移 | 2 |
+| 设置 | `/settings/theme` | 拆分 迁移 | 2 |
+| 设置 | `/settings/health` | 拆分 迁移 | 2 |
+| 设置 | `/settings/notifications` | 新建 占位 | 2 |
+| 设置 | `/settings/friend_permissions` | 新建 占位 | 2 |
+| 设置 | `/settings/storage` | 新建 占位 | 2 |
+| 设置 | `/settings/more` | 新建 占位 | 2 |
+| 设置 | `/settings/chat` | 新建 占位 | 2 |
+| 设置 | `/settings/downloads` | 新建 占位 | 2 |
+| 设置 | `/settings/switch_account` | 新建 占位 | 2 |
+| 健康 | `/health_detail/meal/:type` | 新建 可选 | 3 |
+| 邀请 | `/invite_friend` | 已有（L3 定位） | — |
 
 ---
 
@@ -512,7 +512,7 @@ graph TB
 
 **本地存储**：[`useHealthStorage`](src/hooks/health/useHealthStorage.js:36) 的 8 个 AsyncStorage key + 跨天重置——全部保留。
 
-> ⚠️ **MMKV 说明**：备忘录提到 MMKV，但 `package.json` 中**未安装** `react-native-mmkv`，当前用的是 AsyncStorage 2.2.0。**本期不引入**，AsyncStorage 已满足离线缓存需求。
+> 注意：**MMKV 说明**：备忘录提到 MMKV，但 `package.json` 中**未安装** `react-native-mmkv`，当前用的是 AsyncStorage 2.2.0。**本期不引入**，AsyncStorage 已满足离线缓存需求。
 
 ### 6.2 聊天数据
 
@@ -529,7 +529,7 @@ graph TB
 |---|---|
 | [`useCinema`](src/hooks/useCinema.js:12) | 全局 `useVideoPlayer`、`SYNC_THRESHOLD=2.5`、500ms 轮询、`mixWithOthers` 音频 |
 | [`useSyncRoom`](src/hooks/useSyncRoom.js:46) | `broadcast`+`presence`、`sync_command`/`danmaku`、`MAX_DANMAKU_COUNT=100` |
-| `useCinemaRooms`（🆕 阶段 4） | `cinema_rooms` 表 CRUD + 搜索 + realtime |
+| `useCinemaRooms`（新建 阶段 4） | `cinema_rooms` 表 CRUD + 搜索 + realtime |
 
 ### 6.4 浏览器数据（5 个领域 Hook 已拆分，直接复用）
 
@@ -549,9 +549,9 @@ graph TB
 
 ### 7.1 目录结构预留（现在建空目录 + README，不写实现）
 
-```
+```text
 src/
-├── types/                    ← 🆕 现在建目录，放 README.md 说明未来契约
+├── types/                    ←  现在建目录，放 README.md 说明未来契约
 │   ├── README.md
 │   ├── user.ts               ← 未来：User / SyncId / PartnerStatus
 │   ├── health.ts             ← 未来：WaterRecord / MealCheck
@@ -580,22 +580,22 @@ src/
 
 ### 7.3 双后端（Supabase + Firebase）兼容预留
 
-> 未来可能引入 Firebase（推送 / 分析 / 远程配置）。本次**不引入任何 Firebase 代码**，只做「**数据访问隔离**」，保证未来替换或并存时只改一层。
+> 推送链路已经落在 Firebase 上：客户端用 `expo-notifications` 取 Expo Push Token，Expo Push Service 在底层转发到 **FCM（Android）/ APNs（iOS）**，Firebase 配置文件 `google-services.json` / `GoogleService-Info.plist` 由 EAS Secret 注入（见 [`app.json`](app.json:59)）。本节讨论的是**数据访问层**的隔离——Firebase 只承担推送，不承担数据库，所以 `supabase.from(...)` 的收敛规则依然成立。
 
 **核心原则：UI 层永远不直接 `import { supabase }`。**
 
-```
+```text
 UI (src/app/**)  →  hooks (src/hooks/**)  →  services (src/services/**)  →  supabase / firebase
 ```
 
 | 预留动作 | 现在怎么做 | 未来收益 |
 |---|---|---|
-| **数据访问单点** | 所有 `supabase.from(...)` 只允许出现在 `src/hooks/**` 与 `src/services/**`；`src/app/**` 与 `src/components/**` 禁止直接调用 | 未来加 Firebase 时只改 hooks/services |
+| **数据访问单点** | 所有 `supabase.from(...)` 只允许出现在 `src/hooks/**` 与 `src/services/**`；`src/app/**` 与 `src/components/**` 禁止直接调用 | 未来数据层若换后端（Firestore / 其他）只改 hooks/services |
 | **服务层命名中立** | 新增文件用 `src/services/<domain>Service.js`（如 `partnerService.js`），不叫 `supabasePartner.js` | 未来内部可切换实现 |
-| **推送抽象** | 现有 [`pushService.js`](src/services/pushService.js:1) 保持为唯一推送出口；新页面一律调它，不直接调 Expo Push | 未来接 FCM 只改此文件 |
+| **推送抽象** | 现有 [`pushService.js`](src/services/pushService.js:1) 保持为唯一推送出口；新页面一律调它，不直接调 Expo Push | 换推送通道（FCM 直连 / 其他厂商）只改此文件 + `send-push` 边缘函数 |
 | **实时订阅封装** | Realtime 订阅写在 hook 内（如 [`useChatMessages`](src/hooks/chat/useChatMessages.js:52)），页面只消费状态 | 未来换 Firestore onSnapshot 只改 hook |
 | **鉴权抽象** | 页面只用 [`useAuth`](src/hooks/useAuth.js:7) 暴露的 `user` / `signOut`，不直接调 `supabase.auth` | 未来接 Firebase Auth 只改 AuthProvider |
-| **环境变量集中** | 密钥只从 `src/services/supabase.js` 读取 `process.env.EXPO_PUBLIC_*` | 未来加 Firebase 配置同处管理 |
+| **环境变量集中** | 密钥只从 `src/services/supabase.js` 读取 `process.env.EXPO_PUBLIC_*` | 新增后端配置同处管理 |
 
 **本次落地检查项（阶段 7 收口时执行）**：
 
@@ -642,18 +642,18 @@ export const FEATURES = {
 
 | # | 风险 | 触发阶段 | 影响 | 概率 | 应对措施 |
 |---|---|---|---|---|---|
-| R1 | **改动色值 / 尺寸导致视觉回归** | 全部 | 🔴 高（违反红线） | 中 | 所有颜色只从 `useAppTheme().colors` 取；禁止硬编码 hex；阶段 7 全量 grep `#[0-9A-Fa-f]{6}` 审查 |
-| R2 | **动效掉帧（< 60fps）** | 3/4/5 | 🔴 高（违反硬性要求） | 中 | 只用 Reanimated worklet；禁止在动画中 `setState`；长列表必须 FlashList；真机（非模拟器）验收 |
-| R3 | **`(tabs)` 外新增路由误显示底栏** | 2/3 | 🟡 中 | 低 | 新页面一律放 `src/app/` 根或 `src/app/<module>/`，**绝不**放 `(tabs)/`；验收时逐页检查 |
-| R4 | **设置页拆分后丢失原有项** | 3 | 🔴 高（用户明确要求全保留） | 中 | 拆分前先列清单（见 §3.3 设置页），逐项打勾；拆分后与原 [`settings.js`](src/app/settings.js:46) 逐条比对 |
-| R5 | **聊天页 IM 化后破坏现有消息流** | 4 | 🔴 高 | 中 | 只改「列表层 + 入口」，`ChatRoomInner` / `MessageBubble` / `useChatMessages` 不动；回归测试收发文字/图片/语音 |
-| R6 | **FlashList 与现有 ScrollView 嵌套冲突** | 4/5 | 🟡 中 | 中 | FlashList 只用于最外层列表；内部不再套 ScrollView；`estimatedItemSize` 必填 |
-| R7 | **私密空间 / 朋友圈 RLS 配置错误导致越权** | 6 | 🔴 高（安全） | 中 | 严格按 §6 的 SQL 建表；每条策略都用两个账号实测（A 不能读 B） |
-| R8 | **放映厅公开房间被恶意刷屏** | 6 | 🟡 中 | 中 | 公开房间写入加频率限制（`created_at` 去重）；举报入口预留 |
-| R9 | **TS 预留目录被误写 .ts 文件** | 7 | 🟡 中 | 低 | `src/types/` 只放 `README.md`；CI 检查该目录无 `.ts` |
-| R10 | **新增依赖导致 Expo 版本不兼容** | 1 | 🟡 中 | 低 | 唯一新增 `@shopify/flash-list`，必须用 `npx expo install`；装完跑 `npx expo-doctor` |
-| R11 | **深色模式遗漏（新页面只写浅色）** | 全部 | 🟡 中 | 高 | 所有新页面必须用 `useAppTheme()`；验收时切换系统深色模式逐页检查 |
-| R12 | **触感反馈在 Android 无效果** | 全部 | 🟢 低 | 高 | `expo-haptics` 在 Android 为 no-op，属预期；不因此加判断分支 |
+| R1 | **改动色值 / 尺寸导致视觉回归** | 全部 | 高（违反红线） | 中 | 所有颜色只从 `useAppTheme().colors` 取；禁止硬编码 hex；阶段 7 全量 grep `#[0-9A-Fa-f]{6}` 审查 |
+| R2 | **动效掉帧（< 60fps）** | 3/4/5 | 高（违反硬性要求） | 中 | 只用 Reanimated worklet；禁止在动画中 `setState`；长列表必须 FlashList；真机（非模拟器）验收 |
+| R3 | **`(tabs)` 外新增路由误显示底栏** | 2/3 | 中 | 低 | 新页面一律放 `src/app/` 根或 `src/app/<module>/`，**绝不**放 `(tabs)/`；验收时逐页检查 |
+| R4 | **设置页拆分后丢失原有项** | 3 | 高（用户明确要求全保留） | 中 | 拆分前先列清单（见 §3.3 设置页），逐项打勾；拆分后与原 [`settings.js`](src/app/settings.js:46) 逐条比对 |
+| R5 | **聊天页 IM 化后破坏现有消息流** | 4 | 高 | 中 | 只改「列表层 + 入口」，`ChatRoomInner` / `MessageBubble` / `useChatMessages` 不动；回归测试收发文字/图片/语音 |
+| R6 | **FlashList 与现有 ScrollView 嵌套冲突** | 4/5 | 中 | 中 | FlashList 只用于最外层列表；内部不再套 ScrollView；`estimatedItemSize` 必填 |
+| R7 | **私密空间 / 朋友圈 RLS 配置错误导致越权** | 6 | 高（安全） | 中 | 严格按 §6 的 SQL 建表；每条策略都用两个账号实测（A 不能读 B） |
+| R8 | **放映厅公开房间被恶意刷屏** | 6 | 中 | 中 | 公开房间写入加频率限制（`created_at` 去重）；举报入口预留 |
+| R9 | **TS 预留目录被误写 .ts 文件** | 7 | 中 | 低 | `src/types/` 只放 `README.md`；CI 检查该目录无 `.ts` |
+| R10 | **新增依赖导致 Expo 版本不兼容** | 1 | 中 | 低 | 唯一新增 `@shopify/flash-list`，必须用 `npx expo install`；装完跑 `npx expo-doctor` |
+| R11 | **深色模式遗漏（新页面只写浅色）** | 全部 | 中 | 高 | 所有新页面必须用 `useAppTheme()`；验收时切换系统深色模式逐页检查 |
+| R12 | **触感反馈在 Android 无效果** | 全部 | 低 | 高 | `expo-haptics` 在 Android 为 no-op，属预期；不因此加判断分支 |
 
 ---
 

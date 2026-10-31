@@ -78,7 +78,7 @@ export default function ProfileScreen() {
             </View>
 
             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
-              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 }}>Sync App v2.1</Text>
+              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 }}>Sync App v3.0</Text>
               <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 }}>© 2026 Sync Inc.</Text>
             </View>
 

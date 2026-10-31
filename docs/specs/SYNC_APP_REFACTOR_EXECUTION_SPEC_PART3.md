@@ -85,7 +85,7 @@ export default function ChatListScreen() {
         estimatedItemSize={72}
         ListEmptyComponent={
           <EmptyState
-            icon="💬"
+            icon=""
             title="还没有会话"
             subtitle="去联系人里找好友聊聊吧"
           />
@@ -138,7 +138,7 @@ export default function ChatTabRedirect() {
 }
 ```
 
-> ⚠️ **更优方案**：直接把 `src/app/(tabs)/chat.js` 的内容替换为「消息列表」实现（即把 14.2 的代码放进 tab 页），联系人/搜索仍放 L3。这样 tab 切换无重定向闪烁。
+> 注意：**更优方案**：直接把 `src/app/(tabs)/chat.js` 的内容替换为「消息列表」实现（即把 14.2 的代码放进 tab 页），联系人/搜索仍放 L3。这样 tab 切换无重定向闪烁。
 > **推荐**：采用此方案。即 `(tabs)/chat.js` = 消息列表；`src/app/chat/contacts.js` + `src/app/chat/search.js` = L3 子页。
 
 ### 14.6 微调 `src/components/ChatRoomInner.js`
@@ -339,7 +339,7 @@ export default function CinemaLobby() {
         renderItem={renderItem}
         keyExtractor={(i) => i.id}
         estimatedItemSize={88}
-        ListEmptyComponent={<EmptyState icon="🎬" title="还没有房间" subtitle="创建一个，邀请好友一起看" />}
+        ListEmptyComponent={<EmptyState icon="" title="还没有房间" subtitle="创建一个，邀请好友一起看" />}
         contentContainerStyle={styles.list}
       />
     </View>
@@ -525,7 +525,7 @@ create policy "owner delete own notes"
 
 **Storage bucket**（在 Supabase Dashboard 手动建）：
 
-```
+```text
 bucket: private-album
 public: false
 RLS: (storage.foldername(name))[1] = auth.uid()::text
@@ -640,7 +640,7 @@ create policy "users delete own comments"
   on public.moment_comments for delete using (author_id = auth.uid());
 ```
 
-> ⚠️ `friendships` 表名需按项目实际表名调整（执行前先查 Supabase 现有表）。
+> 注意：`friendships` 表名需按项目实际表名调整（执行前先查 Supabase 现有表）。
 
 ### 16.8 新建 `src/app/moments/index.js` / `publish.js` / `[momentId].js`
 
@@ -777,9 +777,9 @@ Expo Router 中 `src/app/xxx.js` 与 `src/app/xxx/index.js` **不能共存**。�
 
 | 层级 | 路径 | 底栏 |
 |---|---|---|
-| L1 | `src/app/(tabs)/*` | ✅ 显示 |
-| L2 | `src/app/*.js` | ❌ 不显示 |
-| L3 | `src/app/<module>/*` | ❌ 不显示 |
+| L1 | `src/app/(tabs)/*` | 显示 |
+| L2 | `src/app/*.js` | 不显示 |
+| L3 | `src/app/<module>/*` | 不显示 |
 
 **无需任何代码**，由 `(tabs)` 分组自动决定。
 
@@ -823,7 +823,7 @@ Expo Router 中 `src/app/xxx.js` 与 `src/app/xxx/index.js` **不能共存**。�
 
 未来在**新聊天窗口**处理单个任务时，按以下模板发起：
 
-```
+```text
 请阅读以下三份文档：
 - SYNC_APP_REFACTOR_EXECUTION_SPEC.md（第 1 部分：总纲）
 - SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md（第 2 部分：阶段 1-3）
@@ -843,13 +843,13 @@ Expo Router 中 `src/app/xxx.js` 与 `src/app/xxx/index.js` **不能共存**。�
 
 | 阶段 | 交付物 | 可独立验收 |
 |---|---|---|
-| 1 | 常量 4 个 + UI 组件 7 个 + types/README + flash-list | ✅ |
-| 2 | 首页 4 个组件 + index.js 重写 + 3 个组件微调 | ✅ |
-| 3 | 空间 5 个组件 + space.js 重写 + settings/ 6 页 + profile 微调 | ✅ |
-| 4 | chat 列表 + contacts + search + 4 个组件微调 | ✅ |
-| 5 | cinema/ 4 页 + browser/ 3 页 + 3 个 SQL/迁移 + 3 个组件微调 | ✅ |
-| 6 | private/ 3 页 + moments/ 3 页 + 2 个 SQL/迁移 | ✅ |
-| 7 | 审查报告 + 性能验收记录 | ✅ |
+| 1 | 常量 4 个 + UI 组件 7 个 + types/README + flash-list | 是 |
+| 2 | 首页 4 个组件 + index.js 重写 + 3 个组件微调 | 是 |
+| 3 | 空间 5 个组件 + space.js 重写 + settings/ 6 页 + profile 微调 | 是 |
+| 4 | chat 列表 + contacts + search + 4 个组件微调 | 是 |
+| 5 | cinema/ 4 页 + browser/ 3 页 + 3 个 SQL/迁移 + 3 个组件微调 | 是 |
+| 6 | private/ 3 页 + moments/ 3 页 + 2 个 SQL/迁移 | 是 |
+| 7 | 审查报告 + 性能验收记录 | 是 |
 
 ### 18.7 常见坑位速查
 

@@ -1,16 +1,22 @@
 {
   "expo": {
-    "name": "Sync test",
+    "name": "Sync",
     "slug": "my-app",
-    "version": "2.1",
+    "version": "3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-white.png",
     "scheme": "mycoupleapp",
     "plugins": [
       "expo-router",
       "expo-audio",
-      "expo-video",
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
+        }
+      ],
       "expo-secure-store",
       "expo-font",
       "expo-asset",
@@ -27,7 +33,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/icon-white.png",
           "color": "#FF2D55",
           "defaultChannel": "default",
           "enableBackgroundRemoteNotifications": false
@@ -36,20 +42,20 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-light.png",
-          "imageWidth": 200,
+          "image": "./assets/splash-light-inverted.png",
+          "imageWidth": 227,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#000000",
           "dark": {
-            "image": "./assets/splash-dark.png",
-            "backgroundColor": "#000000"
+            "image": "./assets/splash-dark-inverted.png",
+            "backgroundColor": "#ffffff"
           }
         }
       ]
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mycoupleapp.app",
+      "bundleIdentifier": "com.sync.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "UIBackgroundModes": [
@@ -59,11 +65,13 @@
       }
     },
     "android": {
-      "package": "com.mycoupleapp.app",
+      "package": "com.sync.app",
       "googleServicesFile": "./google-services.json",
+      "icon": "./assets/icon-white.png",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "monochromeImage": "./assets/adaptive-monochrome.png",
+        "backgroundColor": "#ffffff"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",
@@ -84,19 +92,12 @@
       }
     },
     "owner": "abcd_abcd9",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "2.1",
     "updates": {
       "url": "https://u.expo.dev/7314ce1c-a3c0-4484-bb43-88dd98829353",
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0,
-      "codeSigningCertificate": "./certs/certificate.pem",
-      "codeSigningMetadata": {
-        "keyid": "main",
-        "alg": "rsa-v1_5-sha256"
-      }
+      "fallbackToCacheTimeout": 0
     }
   }
 }

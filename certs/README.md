@@ -1,8 +1,10 @@
 # OTA 代码签名证书目录（安全审计 #24）
 
+[English](README.en.md) · [中文](README.zh.md)
+
 本目录存放 **Expo Updates 代码签名** 所需的公钥证书。
 
-## 为什么需要它
+## 证书用途
 
 `expo-updates` 的 OTA 热更新包默认只依赖 HTTPS 传输安全。一旦 CDN、DNS 或
 更新服务器被攻破，攻击者可以下发任意 JS bundle，在用户设备上执行任意代码
@@ -13,10 +15,10 @@ manifest 签名，签名不匹配则拒绝更新，从根本上阻断这条攻�
 
 | 文件 | 是否提交 Git | 说明 |
 | --- | --- | --- |
-| `certificate.pem` | ✅ 提交 | **公钥**证书，会被打包进 App，用于验签。公开无害。 |
-| `private-key.pem` | ❌ **绝不提交** | 私钥，用于签名更新包。泄露即可伪造更新。已在 `.gitignore` 中忽略 `*.pem`。 |
+| `certificate.pem` | 提交 | **公钥**证书，会被打包进 App，用于验签。公开无害。 |
+| `private-key.pem` | **绝不提交** | 私钥，用于签名更新包。泄露即可伪造更新。已在 `.gitignore` 中忽略 `*.pem`。 |
 
-> ⚠️ 注意：`.gitignore` 中的 `*.pem` 规则会同时忽略 `certificate.pem`。
+> 注意：`.gitignore` 中的 `*.pem` 规则会同时忽略 `certificate.pem`。
 > 首次生成后需强制加入版本控制：
 > ```bash
 > git add -f certs/certificate.pem
@@ -44,6 +46,7 @@ openssl x509 -in certs/certificate.pem -pubkey -noout | openssl pkey -pubin -out
 
 1. **EAS 托管（推荐）**：`eas credentials` → 选择 iOS/Android → `Update credentials`
    → 上传私钥，由 EAS 在构建与 `eas update` 时自动签名。
+
 2. **CI Secret**：在 CI 中以文件型 Secret 注入，构建前写入 `certs/private-key.pem`，
    构建后立即删除。
 
@@ -69,5 +72,6 @@ openssl x509 -in certs/certificate.pem -pubkey -noout | openssl pkey -pubin -out
 2. 在 `app.json` 中配置上述字段（已完成）。
 3. 用 **EAS Build 重新构建** 一次原生包 —— 证书是在构建期嵌入原生二进制的，
    OTA 无法把证书推给旧版本 App。
+
 4. 之后所有 `eas update` 都会自动签名，旧版本 App（未内置证书）仍可正常接收
    未签名的更新，不会因此崩溃。

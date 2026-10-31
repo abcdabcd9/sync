@@ -1,4 +1,4 @@
--- --- START OF FILE supabase/migrations/20261030_unbind_partner_rpc.sql ---
+-- --- START OF FILE supabase/migrations/05_双向解绑伴侣RPC_unbind_partner_rpc.sql ---
 -- 双向解绑伴侣 RPC
 -- 目的：以 SECURITY DEFINER 权限在服务端原子完成双向解绑，
 --       避免客户端直接 UPDATE 对方 profiles 行（受 RLS 限制）导致单向残留，
@@ -23,4 +23,4 @@ BEGIN
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
--- --- END OF FILE supabase/migrations/20261030_unbind_partner_rpc.sql ---
+-- --- END OF FILE supabase/migrations/05_双向解绑伴侣RPC_unbind_partner_rpc.sql ---

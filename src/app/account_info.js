@@ -24,6 +24,9 @@ const SYNC_ID_MIN = 3;
 const SYNC_ID_MAX = 15;
 const SYNC_ID_PATTERN = /^[A-Za-z0-9_]+$/;
 
+// 云端 profiles 查询超时（毫秒）。超时即降级到本地缓存，绝不让界面永久转圈。
+const PROFILE_FETCH_TIMEOUT_MS = 8000;
+
 /**
  * 校验昵称：非空、≤20 字符
  * @returns {string|null} 错误提示，null 表示通过
@@ -85,12 +88,20 @@ export default function AccountInfoScreen() {
       }
 
       // 2️⃣ 云端刷新：任何异常都只降级，绝不清空 profile
+      //    ⚠️ 必须带超时保护：Supabase 请求若挂住（弱网 / DNS 卡死），
+      //    裸 await 会让 loadingProfile 永远为 true，界面永久转圈。
       try {
-        const { data: myProfile, error } = await supabase
+        const queryPromise = supabase
           .from('profiles')
           .select('id, username, sync_id, nickname, last_id_modified_at')
           .eq('id', user.id)
           .single();
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('profile-fetch-timeout')), PROFILE_FETCH_TIMEOUT_MS);
+        });
+
+        const { data: myProfile, error } = await Promise.race([queryPromise, timeoutPromise]);
 
         if (error) throw error;
 
@@ -184,6 +195,106 @@ export default function AccountInfoScreen() {
     fetchProfileData();
     return () => { isMounted = false; };
   }, [user]);
+
+  // =========================================================================
+  // 💞 实时同步：守护伴侣绑定关系 + 对方昵称
+  // =========================================================================
+  // 场景：
+  //   1. 我在别的设备/别处绑定了搭子 → 本页「守护伴侣」行立刻显示对方名字
+  //   2. 对方解绑 → 本页立刻回到「未绑定」
+  //   3. 对方改昵称 → 本页显示的名字立刻更新
+  //
+  // ⚠️ 为什么订阅 profiles 而不是只订阅自己那一行：
+  //   伴侣的昵称存在「伴侣自己的 profiles 行」里，只订阅自己那一行收不到对方改名。
+  //   这里订阅整表 UPDATE，靠 RLS 兜底（Realtime 推送前按订阅者 RLS 逐行校验），
+  //   无权看的行不会推送，不会泄露他人资料。
+  //
+  // ⚠️ 为什么收到事件后重新查一次而不是直接用 payload：
+  //   payload.new 只有变更的那一行，而「守护伴侣」需要两跳查询
+  //   （我的 bound_partner_id → 伴侣的 nickname）。重新查一次最简单可靠。
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const currentUserId = user.id;
+    const channelName = `account_info_realtime_${currentUserId}_${Date.now()}`;
+
+    supabase
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase.removeChannel(ch));
+
+    // 防抖：合并短时间内的多次 UPDATE
+    let debounceTimer = null;
+    const syncPartner = async () => {
+      try {
+        const { data: mine } = await supabase
+          .from('profiles')
+          .select('id, username, sync_id, nickname, last_id_modified_at, bound_partner_id')
+          .eq('id', currentUserId)
+          .single();
+
+        if (!mine) return;
+
+        // 自己的资料（昵称 / Sync ID）实时同步到界面
+        const nextProfile = normalizeProfile(mine);
+        setProfile(nextProfile);
+        writeProfileCache(nextProfile);
+
+        // 伴侣昵称：两跳查询
+        if (mine.bound_partner_id) {
+          const { data: partner } = await supabase
+            .from('profiles')
+            .select('nickname, username')
+            .eq('id', mine.bound_partner_id)
+            .single();
+          const partnerName = partner?.nickname || partner?.username;
+          if (partnerName) {
+            setBoundPartnerName(partnerName);
+            writeProfileCache({
+              ...nextProfile,
+              bound_partner_id: mine.bound_partner_id,
+              bound_partner_nickname: partnerName,
+            });
+          } else {
+            setBoundPartnerName('守护伴侣');
+          }
+        } else {
+          // 已解绑 → 立刻回到「未绑定」
+          setBoundPartnerName('未绑定');
+          writeProfileCache({
+            ...nextProfile,
+            bound_partner_id: null,
+            bound_partner_nickname: null,
+          });
+        }
+      } catch (e) {
+        // 实时同步失败不影响主流程，静默降级
+        console.warn('守护伴侣实时同步失败:', e?.message ?? e);
+      }
+    };
+
+    const scheduleSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        syncPartner();
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles' },
+        scheduleSync
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   const handleCopyId = async () => {
     if (!profile?.sync_id) return;

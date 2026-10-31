@@ -4,7 +4,7 @@
 // 已实现的功能 = true
 // 预留但未实现的功能 = false（代码里可以写，但 UI 不显示）
 //
-// 关系网络相关开关见 SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md §4
+// 关系网络相关开关见 docs/specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md §4
 
 export const FEATURES = {
   // ---- 已实现 ----

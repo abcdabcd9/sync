@@ -1,13 +1,23 @@
 {
-  "name": "my-app",
+  "name": "sync",
   "version": "1.0.0",
+  "description": "A personal mobile app built with Expo + React Native: health check-ins, chat, a movie room and a browser in one shell.",
+  "license": "MIT",
+  "author": "abcdabcd9",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abcdabcd9/sync.git"
+  },
+  "homepage": "https://github.com/abcdabcd9/sync#readme",
+  "bugs": {
+    "url": "https://github.com/abcdabcd9/sync/issues"
+  },
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "lint": "expo lint",
-    "save": "git add . && git commit -m \"auto-backup\" && git push"
+    "lint": "expo lint"
   },
   "dependencies": {
     "@expo/metro-runtime": "58.0.15",

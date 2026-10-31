@@ -3,6 +3,18 @@
 # dependencies
 node_modules/
 
+# 构建产物与日志（体积大、无源码价值）
+build_log.txt
+*.log
+
+# 安全审计报告：记录了 30 条已知漏洞与攻击路径，仅本地留存，不公开
+security-audit.md
+security-audit.pdf
+
+# 设计文档的 PDF 导出（Markdown 源文件在 docs/ 里，PDF 只是渲染产物）
+# 用 ** 递归匹配，覆盖 docs/ 与 docs/specs/ 等任意子目录
+docs/**/*.pdf
+
 # Expo
 .expo/
 dist/
@@ -31,7 +43,7 @@ yarn-error.*
 *.pem
 
 # ============================================================
-# 🔒 安全审计 #21：敏感文件忽略保护（绝对不允许提交到 Git）
+# 安全审计 #21：敏感文件忽略保护（绝对不允许提交到 Git）
 # ============================================================
 # 环境变量文件：包含 SUPABASE_URL / SUPABASE_ANON_KEY / 服务端密钥等
 # 一旦泄露，攻击者可直接以你的身份访问数据库与 Storage。

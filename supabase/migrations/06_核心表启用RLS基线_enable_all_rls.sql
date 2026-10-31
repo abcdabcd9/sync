@@ -1,6 +1,6 @@
--- --- START OF FILE supabase/migrations/2026103101_enable_all_rls.sql ---
+-- --- START OF FILE supabase/migrations/06_核心表启用RLS基线_enable_all_rls.sql ---
 -- ============================================================================
--- 🔒 安全防线 P0：为核心业务表补齐 RLS（行级安全策略）
+-- 安全防线 P0：为核心业务表补齐 RLS（行级安全策略）
 -- ============================================================================
 -- 覆盖表：profiles / messages / health_records / friends / complaints / moments
 --
@@ -245,9 +245,9 @@ WITH CHECK (auth.uid() = author_id);
 --   ALTER TABLE public.complaints DISABLE ROW LEVEL SECURITY;
 --   ALTER TABLE public.moments DISABLE ROW LEVEL SECURITY;
 --   （对应 DROP POLICY IF EXISTS ... 亦可单独移除某条策略）
---   注意：本迁移新建的 complaints / moments 表如需彻底回滚，需额外执行
+--   本迁移新建的 complaints / moments 表如需彻底回滚，需额外执行
 --   DROP TABLE IF EXISTS public.complaints;
 --   DROP TABLE IF EXISTS public.moments;
 --   （会连同表内数据一并删除，请先备份）
 -- ============================================================================
--- --- END OF FILE supabase/migrations/2026103101_enable_all_rls.sql ---
+-- --- END OF FILE supabase/migrations/06_核心表启用RLS基线_enable_all_rls.sql ---

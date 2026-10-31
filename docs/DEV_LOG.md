@@ -126,7 +126,7 @@ RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是
 
 **② 位置消息：发的是纯文本 + 裸 Google Maps 链接**
 
-`ChatRoomInner` 把位置当 `type: 'text'` 发出去，内容是 `📍 地址\nhttps://maps.google.com/?q=lat,lng`。在聊天里就是一段文字，点不动、也「搜不到」。
+`ChatRoomInner` 把位置当 `type: 'text'` 发出去，内容是 ` 地址\nhttps://maps.google.com/?q=lat,lng`。在聊天里就是一段文字，点不动、也「搜不到」。
 
 **③ Android 全屏预览空白：`removeClippedSubviews` + `flex: 1` 双杀**
 
@@ -589,12 +589,14 @@ if (top < 8) top = 8;
 根因在 [`CustomTabBar.js`](src/components/CustomTabBar.js:57)：`toValue: isChatTab ? 250 : 0` —— 旧设计里聊天页自带 BlurView 浮动 Dock，所以全局底栏在聊天 tab 被下移 250px 隐藏。阶段 4 已删除聊天页 Dock，底栏却仍被隐藏，导致用户无法切回其他 tab。
 
 修复：
+
 - `slideAnim` 目标值恒为 `0`，底栏在所有 tab 常驻
 - 键盘收起时也恢复 `0`（原逻辑有 `if (!isChatTab)` 守卫，一并移除）
 
 **问题 2：右上角「+」直接跳页，不是小弹窗**
 
 改为 ActionSheet 风格小弹窗（`Modal` + `fade`），贴右上角、宽 160、圆角 14、带阴影，两个选项：
+
 - 联系人 → `/chat/contacts`
 - 添加好友 → `/chat/search`
 
@@ -624,7 +626,7 @@ if (top < 8) top = 8;
    - `fetchAll` 原样迁移：friends → friend_requests（accepted 补好友 / pending 收请求）→ profiles → 未读数 → 最近 200 条消息生成预览与时间
    - 实时监听原样迁移：`INSERT` 更新预览/时间/未读 +1，`UPDATE` 同步撤回后的预览；频道名带 `Date.now()` 保证唯一
    - 导出 `conversations`（按最新消息时间倒序）、`refresh`、`getDisplayName`（remark 优先）
-   - ⚠️ `userIdRef` 改为在 `useEffect` 中同步，避免渲染期写 ref
+   - 注意：`userIdRef` 改为在 `useEffect` 中同步，避免渲染期写 ref
 
 2. **新建 `src/components/chat/ConversationRow.js`**（121 行）— 会话行
    - 与 `renderMessagesView` 逐项对齐：46×46 圆角 10 头像、未读角标（静音时降级为小红点）、`[N条]` 预览前缀、静音图标
@@ -643,7 +645,7 @@ if (top < 8) top = 8;
    - 删除 `activeTab` 双 Tab、浮动 Dock（BlurView）、`renderContactsView`、搜索相关全部状态与逻辑
    - 保留：平板双栏（`isTablet` + `ChatRoomInner`）、iOS 边缘右滑返回首页、长按上下文菜单（4 项仍为占位）、列表入场动画
    - 右上角新增「+」→ `/chat/contacts`
-   - ⚠️ `Animated.Value` 与 `PanResponder` 改用 `useState(() => ...)` 惰性初始化，修复 `react-hooks/refs`
+   - 注意：`Animated.Value` 与 `PanResponder` 改用 `useState(() => ...)` 惰性初始化，修复 `react-hooks/refs`
 
 **验收**：
 
@@ -963,7 +965,7 @@ Supabase 的会话由 `supabase-js` 存在 AsyncStorage 的固定 key 下，**�
 
 ## 模板（复制用）
 
-```
+```text
 ## YYYY-MM-DD
 
 **做了啥**：

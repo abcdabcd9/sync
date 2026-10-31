@@ -22,13 +22,13 @@
 
 | 阶段 | 名称 | 预估 | 依赖 | 可独立交付 |
 |---|---|---|---|---|
-| **1** | 地基：常量 + UI 组件库 + 依赖 | 2-3 天 | 无 | ✅ |
-| **2** | 首页重写（搭子卡 + 饮水 + 2×2 餐食 + 打卡） | 3-4 天 | 阶段 1 | ✅ |
-| **3** | 空间页 4 卡 + 设置页拆 L3 + 我的页微调 | 3-4 天 | 阶段 1 | ✅ |
-| **4** | 聊天页纯 IM 化 + 聊天相关页微调 | 3-4 天 | 阶段 1 | ✅ |
-| **5** | 放映厅拆分 + 搜索大厅 + 浏览器拆分 | 4-5 天 | 阶段 1、3 | ✅ |
-| **6** | 私密空间 + 朋友圈（新建 + SQL） | 4-6 天 | 阶段 1、3 | ✅ |
-| **7** | 全局收口：动效统一 / 触感统一 / 红线审查 | 2-3 天 | 阶段 1-6 | ✅ |
+| **1** | 地基：常量 + UI 组件库 + 依赖 | 2-3 天 | 无 | 是 |
+| **2** | 首页重写（搭子卡 + 饮水 + 2×2 餐食 + 打卡） | 3-4 天 | 阶段 1 | 是 |
+| **3** | 空间页 4 卡 + 设置页拆 L3 + 我的页微调 | 3-4 天 | 阶段 1 | 是 |
+| **4** | 聊天页纯 IM 化 + 聊天相关页微调 | 3-4 天 | 阶段 1 | 是 |
+| **5** | 放映厅拆分 + 搜索大厅 + 浏览器拆分 | 4-5 天 | 阶段 1、3 | 是 |
+| **6** | 私密空间 + 朋友圈（新建 + SQL） | 4-6 天 | 阶段 1、3 | 是 |
+| **7** | 全局收口：动效统一 / 触感统一 / 红线审查 | 2-3 天 | 阶段 1-6 | 是 |
 
 **总计：21-29 天**（单人全职；若只做 1-5 阶段约 15-20 天）
 
@@ -49,7 +49,7 @@ graph LR
 
 ### 10.3 每个阶段的通用执行流程
 
-```
+```text
 1. 读第 1 部分对应章节（视觉守则 / 动效规范 / 路由总表）
 2. 按本文件该阶段「改动清单」逐文件改
 3. 每改完一个文件 → 保存 → 热重载目视检查
@@ -75,7 +75,7 @@ npx expo-doctor
 
 **验收**：`package.json` 出现 `@shopify/flash-list`，`expo-doctor` 无 error。
 
-> ⚠️ 必须用 `npx expo install`（不是 `npm install`），确保解析到 SDK 58 兼容版本。
+> 注意：必须用 `npx expo install`（不是 `npm install`），确保解析到 SDK 58 兼容版本。
 
 ### 11.2 新建 `src/constants/motion.js`
 
@@ -203,7 +203,7 @@ export const LIMITS = {
 ```markdown
 # src/types —— TS 转型契约预留目录
 
-> ⚠️ 本目录**当前只放 README**，不写任何 `.ts` 文件。
+> 注意：本目录**当前只放 README**，不写任何 `.ts` 文件。
 > 未来全面 JS→TS 迁移时，类型定义集中在此目录。
 
 ## 未来文件规划
@@ -698,7 +698,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useAppTheme } from '../../context/ThemeContext';
 
 // 空状态：图标 + 标题 + 副标题 + 可选按钮
-export default function EmptyState({ icon = '📭', title, subtitle, action }) {
+export default function EmptyState({ icon = '', title, subtitle, action }) {
   const { colors } = useAppTheme();
   return (
     <View style={styles.wrap}>
@@ -827,7 +827,7 @@ export default function PartnerStatusCard({ partner, partnerData }) {
             {partner.nickname || '健康搭子'}
           </Text>
           <Text style={[styles.status, { color: colors.textSecondary }]}>
-            {done ? '今日已打卡 ✓' : '今日还未打卡'}
+            {done ? '今日已打卡 ' : '今日还未打卡'}
           </Text>
         </View>
         <View
@@ -1013,6 +1013,7 @@ const styles = StyleSheet.create({
 ### 12.6 重写 `src/app/(tabs)/index.js`
 
 **改动要点**：
+
 - 保留原有 `useHealthData()` 消费方式（`waterAmount` / `maxWater` / `meals` / `checked` / `streak` / `partner` / `partnerData`）
 - 保留原有 `MealDetailSheet` 交互
 - 布局改为：问候 → 搭子卡 → 饮水卡 → 2×2 餐食 → 打卡卡
@@ -1121,7 +1122,7 @@ const styles = StyleSheet.create({
 });
 ```
 
-> ⚠️ **字段名以 [`useHealthData`](src/hooks/useHealthData.js:15) 实际返回为准**。执行时先读该文件第 235-241 行的 `value` 对象，把上面用到的 `health.xxx` 一一对齐；**不改数据层**。
+> 注意：**字段名以 [`useHealthData`](src/hooks/useHealthData.js:15) 实际返回为准**。执行时先读该文件第 235-241 行的 `value` 对象，把上面用到的 `health.xxx` 一一对齐；**不改数据层**。
 
 ### 12.7 微调 `src/components/WaterProgress.js`
 
@@ -1262,7 +1263,7 @@ export default function PrivateSpaceCard() {
   const { colors } = useAppTheme();
   return (
     <SpaceCard
-      icon="🔒"
+      icon=""
       title="私密空间"
       subtitle="只属于你的相册与笔记"
       accentColor={colors.primary}
@@ -1282,7 +1283,7 @@ export default function MomentsCard() {
   const { colors } = useAppTheme();
   return (
     <SpaceCard
-      icon="✨"
+      icon=""
       title="朋友圈"
       subtitle="记录此刻，与好友分享"
       accentColor={colors.success}
@@ -1302,7 +1303,7 @@ export default function CinemaCard() {
   const { colors } = useAppTheme();
   return (
     <SpaceCard
-      icon="🎬"
+      icon=""
       title="放映厅"
       subtitle="一起看片，实时同步"
       accentColor={colors.primary}
@@ -1322,7 +1323,7 @@ export default function BrowserCard() {
   const { colors } = useAppTheme();
   return (
     <SpaceCard
-      icon="🌐"
+      icon=""
       title="浏览器"
       subtitle="嗅探媒体，一键投屏"
       accentColor={colors.iconBackground}
@@ -1388,7 +1389,7 @@ const styles = StyleSheet.create({
 | 底部 | 退出登录（`handleSignOut`） | `settings/index.js` |
 | 底部 | 注销账号（`performAccountDeletion`） | `settings/index.js` |
 
-> ⚠️ 执行时必须先打开 [`settings.js`](src/app/settings.js:46) 逐行核对 `PRIVACY_SECTIONS`（84-105 行）与 `SECURITY_SECTIONS`（108-127 行）的**每一项 title**，全部搬过去，不得遗漏。
+> 注意：执行时必须先打开 [`settings.js`](src/app/settings.js:46) 逐行核对 `PRIVACY_SECTIONS`（84-105 行）与 `SECURITY_SECTIONS`（108-127 行）的**每一项 title**，全部搬过去，不得遗漏。
 
 #### 13.5.2 新建 `src/app/settings/index.js`
 
@@ -1408,21 +1409,21 @@ export default function SettingsHome() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <AppleSectionHeader title="账号" />
         <View style={styles.group}>
-          <AppleListRow title="账号信息" icon="👤" isFirst onPress={() => router.push('/account_info')} />
-          <AppleListRow title="邀请好友" icon="✉️" onPress={() => router.push('/invite_friend')} />
-          <AppleListRow title="健康搭子" icon="🤝" isLast onPress={() => router.push('/bind_partner')} />
+          <AppleListRow title="账号信息" icon="" isFirst onPress={() => router.push('/account_info')} />
+          <AppleListRow title="邀请好友" icon="" onPress={() => router.push('/invite_friend')} />
+          <AppleListRow title="健康搭子" icon="" isLast onPress={() => router.push('/bind_partner')} />
         </View>
 
         <AppleSectionHeader title="偏好" />
         <View style={styles.group}>
-          <AppleListRow title="隐私" icon="🔐" isFirst onPress={() => router.push('/settings/privacy')} />
-          <AppleListRow title="安全" icon="🛡️" onPress={() => router.push('/settings/security')} />
-          <AppleListRow title="外观与主题" icon="🎨" isLast onPress={() => router.push('/settings/appearance')} />
+          <AppleListRow title="隐私" icon="" isFirst onPress={() => router.push('/settings/privacy')} />
+          <AppleListRow title="安全" icon="" onPress={() => router.push('/settings/security')} />
+          <AppleListRow title="外观与主题" icon="" isLast onPress={() => router.push('/settings/appearance')} />
         </View>
 
         <AppleSectionHeader title="其他" />
         <View style={styles.group}>
-          <AppleListRow title="关于 Sync" icon="ℹ️" isFirst isLast onPress={() => router.push('/settings/about')} />
+          <AppleListRow title="关于 Sync" icon="" isFirst isLast onPress={() => router.push('/settings/about')} />
         </View>
 
         <View style={styles.bottomSpacer} />
@@ -1476,7 +1477,7 @@ export default function SettingsRedirect() {
 }
 ```
 
-> ⚠️ Expo Router 中 `src/app/settings.js` 与 `src/app/settings/index.js` 会冲突。**正确做法**：删除 `src/app/settings.js`，只保留 `src/app/settings/index.js`。所有 `router.push('/settings')` 调用无需改动（路径不变）。
+> 注意：Expo Router 中 `src/app/settings.js` 与 `src/app/settings/index.js` 会冲突。**正确做法**：删除 `src/app/settings.js`，只保留 `src/app/settings/index.js`。所有 `router.push('/settings')` 调用无需改动（路径不变）。
 
 ### 13.6 微调 `src/app/(tabs)/profile.js`
 
