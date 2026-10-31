@@ -11,9 +11,10 @@ import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { SIZES } from '../constants/theme'; 
+import { SIZES } from '../constants/theme';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../services/supabase';
+import { readProfileCache, writeProfileCache, normalizeProfile } from '../hooks/profile/useProfileCache';
 
 // 🔒 安全审计 #18：输入长度与格式的硬性约束（与数据库 CHECK 约束保持一致）
 // 注：motto（首页寄语）的编辑入口在 settings.js，其长度校验在那边实现。
@@ -64,20 +65,36 @@ export default function AccountInfoScreen() {
   useEffect(() => {
     let isMounted = true;
     const fetchProfileData = async () => {
-      if (!user) return;
-      
-      const { data: myProfile, error } = await supabase
-        .from('profiles')
-        .select('id, username, sync_id, nickname, last_id_modified_at')
-        .eq('id', user.id)
-        .single();
+      if (!user) {
+        if (isMounted) setLoadingProfile(false);
+        return;
+      }
 
-      if (!error && myProfile && isMounted) {
-        setProfile({
-          ...myProfile,
-          sync_id: myProfile.sync_id || myProfile.username,
-          nickname: myProfile.nickname || myProfile.username,
-        });
+      // 1️⃣ 第 0 帧：本地缓存优先，命中即秒开（断网也能显示昵称 / Sync ID）
+      const cached = await readProfileCache(user.id);
+      if (cached && isMounted) {
+        setProfile(cached);
+        setLoadingProfile(false);
+      }
+
+      // 2️⃣ 云端刷新：任何异常都只降级，绝不清空 profile
+      try {
+        const { data: myProfile, error } = await supabase
+          .from('profiles')
+          .select('id, username, sync_id, nickname, last_id_modified_at')
+          .eq('id', user.id)
+          .single();
+
+        if (error) throw error;
+
+        if (myProfile) {
+          const nextProfile = normalizeProfile(myProfile);
+          if (isMounted) setProfile(nextProfile);
+          // 云端成功 → 回写缓存，供下次冷启动秒开
+          writeProfileCache(nextProfile);
+        }
+      } catch (e) {
+        console.warn('离线状态，继续使用本地缓存的个人资料', e?.message ?? e);
       }
 
       try {
@@ -88,7 +105,9 @@ export default function AccountInfoScreen() {
         } else if (isMounted) {
           setBoundPartnerName('未绑定');
         }
-      } catch (e) {}
+      } catch {
+        // 伴侣信息拉取失败（离线/超时）→ 静默降级，不影响个人资料展示
+      }
 
       if (isMounted) setLoadingProfile(false);
     };
@@ -197,7 +216,10 @@ export default function AccountInfoScreen() {
       return;
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setProfile({ ...profile, ...updatePayload });
+      const nextProfile = normalizeProfile({ ...profile, ...updatePayload });
+      setProfile(nextProfile);
+      // 保存成功 → 同步回写本地缓存，保证下次冷启动/断网时看到的是最新资料
+      writeProfileCache(nextProfile);
       setActiveModal(null);
     }
   };

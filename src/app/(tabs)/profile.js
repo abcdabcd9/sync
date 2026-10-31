@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/(tabs)/profile.js ---
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, useWindowDimensions
@@ -12,7 +12,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAppTheme } from '../../context/ThemeContext';
 import { SIZES, TYPOGRAPHY } from '../../constants/theme';
 import { useAuth } from '../../hooks/useAuth';
-import { supabase } from '../../services/supabase';
+import { useProfileCache } from '../../hooks/profile/useProfileCache';
 
 export default function ProfileScreen() {
   const { colors: palette } = useAppTheme();
@@ -20,28 +20,14 @@ export default function ProfileScreen() {
   const { user } = useAuth();
   const { width } = useWindowDimensions(); // 🍎 引入屏幕宽度检测
 
-  const [profile, setProfile] = useState(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
+  // 👤 Cache-First：第 0 帧读本地缓存秒开，云端失败只降级、绝不清空
+  const { profile, loading: loadingProfile, refresh } = useProfileCache(user);
 
+  // 每次回到「我的」页时静默刷新云端（缓存已在第 0 帧渲染，不会闪白/转圈）
   useFocusEffect(
     React.useCallback(() => {
-      let isMounted = true;
-      const fetchProfileData = async () => {
-        if (!user) { if (isMounted) setProfile(null); return; }
-        setLoadingProfile(true);
-        const { data: myProfile, error } = await supabase.from('profiles').select('id, username, sync_id, nickname').eq('id', user.id).single();
-        if (!error && myProfile && isMounted) {
-          setProfile({
-            ...myProfile,
-            sync_id: myProfile.sync_id || myProfile.username,
-            nickname: myProfile.nickname || myProfile.username,
-          });
-        }
-        if (isMounted) setLoadingProfile(false);
-      };
-      fetchProfileData();
-      return () => { isMounted = false; };
-    }, [user])
+      refresh();
+    }, [refresh])
   );
 
   const handleAuthAction = () => {
