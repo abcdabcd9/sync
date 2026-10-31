@@ -13,6 +13,7 @@ import {
 import { supabase } from '../../services/supabase';
 import { sendPushNotification } from '../../services/pushService';
 import { uploadToSupabase } from './useMediaUpload';
+import { persistMedia, resolveLocalMedia } from '../../services/mediaCache';
 
 /**
  * 🎙️ 录音域 Hook（任务 7 阶段 3）
@@ -174,10 +175,18 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
 
       setTimeout(async () => {
         const msgId = Crypto.randomUUID();
+
+        // 🗄️ 第一步：先把录音临时文件永久落盘到沙盒（documentDirectory）。
+        //    录音器给出的 tempUri 位于 cacheDirectory，系统随时可能清理，
+        //    必须立刻复制到沙盒，才能保证断网 / 重启后仍可播放。
+        const localUri = await persistMedia(tempUri, msgId, 'audio');
+
+        // 乐观消息：优先使用沙盒永久路径；落盘失败才退回临时路径（至少本次会话可播）
         saveAndSend({
           id: msgId,
           type: 'audio',
-          mediaUrl: tempUri,
+          mediaUrl: localUri || tempUri,
+          localUri: localUri || tempUri,
           duration: durationSec,
           isMe: true,
           timestamp: Date.now(),
@@ -189,9 +198,9 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
         //    渲染时由 useSignedMediaUrl 按需重新签名，因此历史语音永不失效。
         const audioResult = await uploadToSupabase(tempUri, 'audio', user.id);
         if (!audioResult?.path) {
-          // 上传失败：乐观消息里的本地 URI 无法签名 → 点不动、退出重进就消失。
-          // 明确告知用户，而不是静默留一条「幽灵消息」。
-          console.warn('语音上传失败，消息未落库');
+          // 上传失败：本地沙盒文件仍在，消息保留本地可播放状态（红叹号由 UI 层标记）。
+          // 绝不删除本地文件、绝不把 mediaUrl 置空。
+          console.warn('语音上传失败，消息未落库（本地文件已保留）');
           Alert.alert('语音发送失败', '语音上传未完成，请检查网络后重试。');
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           return;
@@ -210,8 +219,14 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
           return;
         }
 
-        // 回填乐观消息：本地 file:// → 真实对象路径，保证本次会话内即可播放
-        patchMessage?.(msgId, { mediaUrl: audioResult.path });
+        // 🔑 关键防覆盖：只回填云端对象路径到 remotePath，
+        //    **绝不覆写 mediaUrl / localUri 中的本地 file:// 路径**。
+        //    渲染层优先级：本地沙盒 > localUri > 签名 URL，确保离线永远可播。
+        const sandboxUri = localUri || (await resolveLocalMedia(msgId, 'audio'));
+        patchMessage?.(msgId, {
+          remotePath: audioResult.path,
+          localUri: sandboxUri || localUri || tempUri,
+        });
 
         // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
         sendPushNotification(targetId, '', '[语音消息]', {

@@ -11,6 +11,7 @@ import * as Crypto from 'expo-crypto';
 
 import { supabase } from '../../services/supabase';
 import { sendPushNotification } from '../../services/pushService';
+import { persistMedia, resolveLocalMedia } from '../../services/mediaCache';
 
 /**
  * 🖼️ 媒体上传域 Hook（任务 7 阶段 2）
@@ -260,17 +261,30 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage, dele
         } catch (_) {}
       }
 
-      // ③ 乐观发送（本地 URI 立即可见）
+      // ②-b 🗄️ 物理落盘：把相册临时文件永久复制进沙盒（documentDirectory）。
+      //     相册返回的 uri 可能是 ph:// / content:// 或 cacheDirectory 临时文件，
+      //     系统随时可能回收；必须先落盘，才能保证断网 / 重启后仍可渲染。
+      //     落盘失败不阻断发送（退回原 uri，至少本次会话可见）。
+      const sandboxMediaUri = await persistMedia(asset.uri, msgId, isVideo ? 'video' : 'image');
+      const sandboxThumbUri = localThumbUri
+        ? await persistMedia(localThumbUri, msgId, 'thumb')
+        : null;
+
+      // ③ 乐观发送（本地沙盒 URI 立即可见，且永久有效）
       // 🖼️ 同时带上真实宽高：MessageBubble 用它一次性算出正确气泡比例，
       //    避免「先按 4:3 渲染 → 图片加载完再跳变」的抖动，
       //    也彻底解决横屏照片被 220×300 竖框裁切的问题。
       const assetW = Number(asset.width) || 0;
       const assetH = Number(asset.height) || 0;
+      const localMediaUri = sandboxMediaUri || asset.uri;
+      const localThumbFinal = sandboxThumbUri || localThumbUri;
       saveAndSend({
         id: msgId,
         type: msgType,
-        mediaUrl: asset.uri,
-        thumbnailUrl: localThumbUri,
+        mediaUrl: localMediaUri,
+        localUri: localMediaUri,
+        thumbnailUrl: localThumbFinal,
+        localThumbUri: localThumbFinal,
         mediaWidth: assetW,
         mediaHeight: assetH,
         isMe: true,
@@ -306,11 +320,16 @@ export function useMediaUpload({ targetId, user, saveAndSend, patchMessage, dele
       });
       if (insertError) throw insertError;
 
-      // ⑥-b 回填乐观消息：把本地 file:// URI 换成真实对象路径，
-      //      否则本次会话内图片 / 视频无法渲染（必须退出重进才恢复）。
+      // ⑥-b 🔑 关键防覆盖：只回填云端对象路径到 remotePath / remoteThumbPath，
+      //      **绝不覆写 mediaUrl / thumbnailUrl / localUri 中的本地 file:// 路径**。
+      //      渲染层优先级：本地沙盒 > localUri > 签名 URL，确保离线永远可渲染。
+      const sandboxMedia = sandboxMediaUri || (await resolveLocalMedia(msgId, isVideo ? 'video' : 'image'));
+      const sandboxThumb = sandboxThumbUri || (await resolveLocalMedia(msgId, 'thumb'));
       patchMessage?.(msgId, {
-        mediaUrl: mediaResult.path,
-        thumbnailUrl: thumbResult?.path ?? localThumbUri,
+        remotePath: mediaResult.path,
+        remoteThumbPath: thumbResult?.path ?? null,
+        localUri: sandboxMedia || localMediaUri,
+        localThumbUri: sandboxThumb || localThumbFinal,
       });
 
       // ⑦ 推送通知

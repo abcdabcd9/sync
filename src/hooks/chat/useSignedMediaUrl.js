@@ -89,6 +89,46 @@ function isAbsoluteUrl(value) {
 }
 
 /**
+ * 🌐 公共存储 URL 安全构建（兜底通道）
+ *
+ * 背景：
+ *   私有桶 chat_media 的签名 URL 需要联网 createSignedUrl 才能拿到。
+ *   当「签名请求失败 / 尚未回调 / 离线但 CDN 有缓存」时，若直接返回 null，
+ *   对方发来的视频与语音就会表现为「点不开 / 播不出」。
+ *
+ * 策略：
+ *   用 EXPO_PUBLIC_SUPABASE_URL 拼出 public 对象地址作为最后兜底。
+ *   该地址在桶为 public 时可直接播放；桶为 private 时会被 400/403 拒绝，
+ *   但调用方仍会优先使用签名 URL，因此不会造成回归。
+ *
+ * @param {string|null|undefined} value 相对对象路径或历史完整 URL
+ * @returns {string|null}
+ */
+export function buildPublicStorageUrl(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  // 已是完整 URL / 本地 URI：无需构建
+  if (/^(https?|file|content|data|blob|ph|assets-library):/i.test(trimmed)) return null;
+
+  const base = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  if (!base) return null;
+
+  const objectPath = toStoragePath(trimmed);
+  if (!objectPath) return null;
+
+  const cleanBase = base.replace(/\/+$/, '');
+  const encodedPath = objectPath
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+
+  return `${cleanBase}/storage/v1/object/public/${STORAGE_BUCKET}/${encodedPath}`;
+}
+
+/**
  * 判断是否为「本地文件 URI」（需要直接透传渲染，不能拿去签名）。
  *
  * 乐观发送阶段 mediaUrl 是本地 URI（iOS: file:///...，Android: content:// 或 file://），
@@ -153,8 +193,11 @@ export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
       if (url) cacheSet(path, url, ttlSeconds);
       return url;
     } catch (e) {
-      console.warn('⚠️ 生成签名 URL 失败:', path, e?.message ?? e);
-      return null;
+      // 🚨 离线降级：网络失败 / 超时时绝不返回「空」覆盖调用方已有状态。
+      //    优先回退到缓存里可能仍存在的旧签名 URL（即使已过期，也比黑屏好），
+      //    让调用方继续渲染旧缓存 / 本地地址，而不是把图片清空。
+      console.warn('网络请求签名失败(可能处于离线)，继续保留旧缓存/本地地址', e);
+      return cacheGet(path) ?? null;
     } finally {
       inflight.delete(path);
     }
@@ -169,6 +212,40 @@ export function clearSignedUrlCache() {
   cache.clear();
   inflight.clear();
 }
+
+/**
+ * ⚡ 同步读取内存缓存中的签名 URL（0.0 秒秒开专用）
+ *
+ * 用途：
+ *   全屏预览 / 聊天气泡在「首帧渲染」时，需要立刻拿到可渲染的 URL，
+ *   不能等 useEffect 里的异步 createSignedUrl 返回（那会造成 0.3~3 秒黑屏）。
+ *   本函数同步返回模块级 LRU 缓存里已有的签名 URL，命中即 0 毫秒出图。
+ *
+ * 行为：
+ *   - 空值 / 非法值            → null
+ *   - 已是完整 URL（http(s) / file / content / data）→ 原样返回（无需签名）
+ *   - 相对对象路径             → 查 LRU 缓存，命中且未过期返回签名 URL，否则 null
+ *   - ph:// / assets-library:// → null（iOS 原生句柄，expo-image 无法直接加载）
+ *
+ * @param {string|null|undefined} path 相对对象路径或完整 URL
+ * @returns {string|null}
+ */
+export const getMemoryCachedSignedUrl = (path) => {
+  if (typeof path !== 'string') return null;
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+
+  // 已是完整 URL：直接返回（本地 URI 也原样透传，交给 Image / Video 读取）
+  if (/^(https?|file|content|data):/i.test(trimmed)) return trimmed;
+
+  // iOS 相册原生句柄：expo-image 无法加载，必须返回 null 让调用方走占位图
+  if (/^(ph|assets-library|blob):/i.test(trimmed)) return null;
+
+  // 相对对象路径：同步读 LRU 缓存（cacheGet 内部会处理过期与 LRU 顺序刷新）
+  const objectPath = toStoragePath(trimmed);
+  if (!objectPath) return null;
+  return cacheGet(objectPath);
+};
 
 /**
  * React Hook：根据「相对路径」或「历史签名 URL」返回可渲染的 URL。
@@ -201,9 +278,15 @@ export function useSignedMediaUrl(value, ttlSeconds = SIGNED_URL_TTL) {
 
     let cancelled = false;
 
-    getSignedUrl(path, ttlSeconds).then((signed) => {
-      if (!cancelled && signed) setUrl(signed);
-    });
+    // 🚨 离线降级：请求失败时 getSignedUrl 会回退到缓存（可能为 null），
+    //    这里只在拿到有效 URL 时才 setUrl，绝不 setUrl(null) 清空已有图片。
+    getSignedUrl(path, ttlSeconds)
+      .then((signed) => {
+        if (!cancelled && signed) setUrl(signed);
+      })
+      .catch((error) => {
+        console.warn('网络请求签名失败(可能处于离线)，继续保留旧缓存/本地地址', error);
+      });
 
     return () => { cancelled = true; };
   }, [isAbsolute, isLocal, path, ttlSeconds]);
