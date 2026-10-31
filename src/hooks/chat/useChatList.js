@@ -1,8 +1,37 @@
 // --- START OF FILE src/hooks/chat/useChatList.js ---
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { supabase } from '../../services/supabase';
+
+/** 会话列表本地缓存 key（按用户隔离，切换账号不会串数据） */
+const chatListCacheKey = (userId) => `@chatList_${userId}`;
+
+/** 读取本地缓存的会话列表（只读磁盘，零网络） */
+const readChatListCache = async (userId) => {
+  if (!userId) return null;
+  try {
+    const raw = await AsyncStorage.getItem(chatListCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch (e) {
+    console.warn('⚠️ 读取会话列表缓存失败:', e?.message ?? e);
+    return null;
+  }
+};
+
+/** 写入本地缓存的会话列表（失败不影响主流程） */
+const writeChatListCache = async (userId, payload) => {
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(chatListCacheKey(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.warn('⚠️ 写入会话列表缓存失败:', e?.message ?? e);
+  }
+};
 
 /**
  * 把数据库里的密语翻译成人类可读的预览文本（按 subtype 协议字段判断）
@@ -60,14 +89,28 @@ export function useChatList(user) {
       return;
     }
 
+    // 1️⃣ 第 0 帧：本地缓存优先（零网络，断网也能瞬间显示会话列表）
+    const cached = await readChatListCache(currentUserId);
+    if (cached) {
+      if (Array.isArray(cached.friends)) setFriends(cached.friends);
+      if (cached.friendsMap && typeof cached.friendsMap === 'object') setFriendsMap(cached.friendsMap);
+      if (Array.isArray(cached.requests)) setRequests(cached.requests);
+      if (cached.latestMessages && typeof cached.latestMessages === 'object') setLatestMessages(cached.latestMessages);
+      if (cached.lastMsgTimes && typeof cached.lastMsgTimes === 'object') setLastMsgTimes(cached.lastMsgTimes);
+      if (cached.unreadCounts && typeof cached.unreadCounts === 'object') setUnreadCounts(cached.unreadCounts);
+      // 缓存已渲染 → 立刻结束 loading，绝不卡在转圈状态
+      setLoading(false);
+    }
+
     try {
       const allFriendIds = new Set();
       const fMap = {};
 
-      const { data: fData } = await supabase
+      const { data: fData, error: fError } = await supabase
         .from('friends')
         .select('*')
         .or(`user_id.eq.${currentUserId},friend_id.eq.${currentUserId}`);
+      if (fError) throw fError;
 
       if (fData) {
         fData.forEach((r) => {
@@ -77,10 +120,11 @@ export function useChatList(user) {
         });
       }
 
-      const { data: reqData } = await supabase
+      const { data: reqData, error: reqError } = await supabase
         .from('friend_requests')
         .select('*')
         .or(`sender_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
+      if (reqError) throw reqError;
 
       const pendingReceived = [];
       if (reqData) {
@@ -95,12 +139,16 @@ export function useChatList(user) {
 
       // 好友资料
       const uniqueFriendIds = [...allFriendIds];
+      let nextFriends = [];
+      let nextRequests = [];
       if (uniqueFriendIds.length > 0) {
-        const { data: profilesData } = await supabase
+        const { data: profilesData, error: pError } = await supabase
           .from('profiles')
           .select('id, username, nickname, sync_id')
           .in('id', uniqueFriendIds);
-        setFriends(profilesData || []);
+        if (pError) throw pError;
+        nextFriends = profilesData || [];
+        setFriends(nextFriends);
         setFriendsMap(fMap);
       } else {
         setFriends([]);
@@ -110,41 +158,43 @@ export function useChatList(user) {
       // 待处理的好友请求（带发送者资料）
       if (pendingReceived.length > 0) {
         const senderIds = pendingReceived.map((r) => r.sender_id);
-        const { data: pData } = await supabase
+        const { data: pData, error: sError } = await supabase
           .from('profiles')
           .select('id, username, nickname')
           .in('id', senderIds);
-        setRequests(
-          pendingReceived.map((req) => ({
-            ...req,
-            sender_profile: pData?.find((p) => p.id === req.sender_id),
-          }))
-        );
+        if (sError) throw sError;
+        nextRequests = pendingReceived.map((req) => ({
+          ...req,
+          sender_profile: pData?.find((p) => p.id === req.sender_id),
+        }));
+        setRequests(nextRequests);
       } else {
         setRequests([]);
       }
 
       // 未读数量
-      const { data: unreadData } = await supabase
+      let nextUnread = {};
+      const { data: unreadData, error: uError } = await supabase
         .from('messages')
         .select('user_id')
         .eq('receiver_id', currentUserId)
         .eq('is_read', false);
+      if (uError) throw uError;
       if (unreadData) {
-        const counts = {};
         unreadData.forEach((msg) => {
-          counts[msg.user_id] = (counts[msg.user_id] || 0) + 1;
+          nextUnread[msg.user_id] = (nextUnread[msg.user_id] || 0) + 1;
         });
-        setUnreadCounts(counts);
+        setUnreadCounts(nextUnread);
       }
 
       // 批量抓取最近 200 条消息，用于渲染真实预览
-      const { data: recentMsgs } = await supabase
+      const { data: recentMsgs, error: mError } = await supabase
         .from('messages')
         .select('*')
         .or(`user_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`)
         .order('created_at', { ascending: false })
         .limit(200);
+      if (mError) throw mError;
 
       const latestMap = {};
       const timeMap = {};
@@ -159,8 +209,21 @@ export function useChatList(user) {
       }
       setLatestMessages(latestMap);
       setLastMsgTimes(timeMap);
-    } catch {
-      // 网络异常时保持上一次的数据，不打断界面
+
+      // 3️⃣ 云端成功 → 合并写回本地缓存，供下次冷启动/断网秒开
+      writeChatListCache(currentUserId, {
+        friends: nextFriends,
+        friendsMap: fMap,
+        requests: nextRequests,
+        latestMessages: latestMap,
+        lastMsgTimes: timeMap,
+        unreadCounts: nextUnread,
+        cachedAt: Date.now(),
+      });
+    } catch (e) {
+      // 🚨 离线降级：绝不清空已加载的本地会话列表，仅记录日志
+      console.warn('离线状态，使用本地缓存会话列表');
+      console.warn('⚠️ 会话列表云端查询失败:', e?.message ?? e);
     } finally {
       setLoading(false);
     }

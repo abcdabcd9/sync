@@ -67,66 +67,100 @@ export function useChatMessages(targetId, user) {
 
     let cancelled = false;
 
-    const fetchMessages = async () => {
-      // ① 先渲染本地缓存，避免白屏
+    // 🚀 Cache-First（离线秒开）：
+    //   切换聊天对象 / 组件挂载时，立即从 AsyncStorage 读取本地缓存并渲染，
+    //   保证第 0 帧（哪怕完全断网）用户就能看到历史聊天记录。
+    //   云端查询随后在后台异步进行，失败时绝不覆盖已渲染的本地消息。
+    const loadCachedMessages = async () => {
       try {
         const cachedStr = await AsyncStorage.getItem(CACHE_MSG_KEY);
-        if (cachedStr && !cancelled) setMessages(JSON.parse(cachedStr));
-      } catch (_) {}
+        if (!cachedStr || cancelled) return;
+        const cachedMsgs = JSON.parse(cachedStr);
+        if (!Array.isArray(cachedMsgs) || cachedMsgs.length === 0) return;
 
-      // ② 拉取云端最近 50 条
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .or(`and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`)
-        .order('created_at', { ascending: false })
-        .limit(FETCH_LIMIT);
-
-      if (data && !cancelled) {
+        // 过滤本地已删除黑名单，避免已删消息「复活」
         const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
-        const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
-        const deletedSet = new Set(deletedIds);
-        const remoteMessages = data
-          .map(r => formatDbMsg(r, user.id))
-          .filter(m => !deletedSet.has(m.id));
+        const deletedSet = new Set(deletedStr ? JSON.parse(deletedStr) : []);
+        const visible = cachedMsgs.filter(m => !deletedSet.has(m.id));
 
-        // 🚨 关键修复（「位置卡片发送后不立刻出现，必须退出重进」）：
-        //   旧实现直接 setMessages(remoteMessages) 覆盖整个列表。
-        //   但 /chat/location 页用 router.replace 回到聊天室，会重新挂载
-        //   ChatRoomInner → 新的 useChatMessages 实例 → messages 从 [] 开始，
-        //   而此刻乐观插入的位置消息已随旧实例卸载而丢失。
-        //   若 DB insert 尚未提交，fetch 结果里也没有它 → 卡片不显示；
-        //   等用户退出重进时 DB 已有数据，才「突然出现」。
-        //   修复：把「本地已有但云端还没返回」的消息（乐观消息）合并保留。
-        //
-        // 🚨 二次修复（「消息删不掉 / 顺序错乱」）：
-        //   1. 删不掉：旧实现 localOnly 只过滤 deletedIds，但 remoteMessages 与
-        //      本地缓存写入都没有统一过滤；且本地缓存里可能残留已删除消息。
-        //      现在合并后统一按 deletedSet 再过滤一次，并回写「干净」缓存。
-        //   2. 顺序错乱：旧实现 [...localOnly, ...remoteMessages] 直接拼接，
-        //      localOnly 是旧缓存顺序、remoteMessages 是云端倒序，两者混在一起
-        //      时间轴完全错乱。现在合并后按 timestamp 降序统一排序
-        //      （列表是 inverted，最新在上）。
-        setMessages((prev) => {
-          const remoteIds = new Set(remoteMessages.map(m => m.id));
-          const localOnly = prev.filter(m => !remoteIds.has(m.id) && !deletedSet.has(m.id));
-          const merged = [...localOnly, ...remoteMessages]
-            .filter(m => !deletedSet.has(m.id))
-            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-          AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(merged.slice(0, CACHE_LIMIT)));
-          return merged;
-        });
+        if (cancelled) return;
+        setMessages(visible);
+        // 缓存已就绪，立即结束 loading，避免骨架屏/白屏等待网络
+        setLoading(false);
+      } catch (_) {
+        // 缓存损坏时静默降级，等待云端结果
+      }
+    };
+
+    const fetchMessages = async () => {
+      // ① 先渲染本地缓存（第 0 帧秒开）
+      await loadCachedMessages();
+      if (cancelled) return;
+
+      // ② 后台异步拉取云端最近 50 条（非阻塞 + 错误降级）
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .or(`and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`)
+          .order('created_at', { ascending: false })
+          .limit(FETCH_LIMIT);
+
+        if (error) throw error;
+
+        if (data && !cancelled) {
+          const deletedStr = await AsyncStorage.getItem(CACHE_DEL_KEY);
+          const deletedIds = deletedStr ? JSON.parse(deletedStr) : [];
+          const deletedSet = new Set(deletedIds);
+          const remoteMessages = data
+            .map(r => formatDbMsg(r, user.id))
+            .filter(m => !deletedSet.has(m.id));
+
+          // 🚨 关键修复（「位置卡片发送后不立刻出现，必须退出重进」）：
+          //   旧实现直接 setMessages(remoteMessages) 覆盖整个列表。
+          //   但 /chat/location 页用 router.replace 回到聊天室，会重新挂载
+          //   ChatRoomInner → 新的 useChatMessages 实例 → messages 从 [] 开始，
+          //   而此刻乐观插入的位置消息已随旧实例卸载而丢失。
+          //   若 DB insert 尚未提交，fetch 结果里也没有它 → 卡片不显示；
+          //   等用户退出重进时 DB 已有数据，才「突然出现」。
+          //   修复：把「本地已有但云端还没返回」的消息（乐观消息）合并保留。
+          //
+          // 🚨 二次修复（「消息删不掉 / 顺序错乱」）：
+          //   1. 删不掉：旧实现 localOnly 只过滤 deletedIds，但 remoteMessages 与
+          //      本地缓存写入都没有统一过滤；且本地缓存里可能残留已删除消息。
+          //      现在合并后统一按 deletedSet 再过滤一次，并回写「干净」缓存。
+          //   2. 顺序错乱：旧实现 [...localOnly, ...remoteMessages] 直接拼接，
+          //      localOnly 是旧缓存顺序、remoteMessages 是云端倒序，两者混在一起
+          //      时间轴完全错乱。现在合并后按 timestamp 降序统一排序
+          //      （列表是 inverted，最新在上）。
+          setMessages((prev) => {
+            const remoteIds = new Set(remoteMessages.map(m => m.id));
+            const localOnly = prev.filter(m => !remoteIds.has(m.id) && !deletedSet.has(m.id));
+            const merged = [...localOnly, ...remoteMessages]
+              .filter(m => !deletedSet.has(m.id))
+              .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            AsyncStorage.setItem(CACHE_MSG_KEY, JSON.stringify(merged.slice(0, CACHE_LIMIT)));
+            return merged;
+          });
+        }
+      } catch (_) {
+        // 🚨 离线降级：断网 / 超时 / 查询失败时，保留已加载的本地缓存消息，
+        //    绝不 setMessages([]) 或覆盖，确保断网下历史记录依然完整可见。
+        console.warn('离线状态，使用本地缓存消息');
       }
 
       // ③ 已读标定：把对方发给我的未读消息置为已读
       // 🔒 安全审计 #8：三重归属校验，只能标记「发给自己」的消息，杜绝越权改他人已读态
+      //    离线时该请求同样可能失败，静默忽略，不阻塞 UI。
       if (user?.id && targetId) {
-        await supabase
-          .from('messages')
-          .update({ is_read: true })
-          .eq('user_id', targetId)
-          .eq('receiver_id', user.id)
-          .eq('is_read', false);
+        try {
+          await supabase
+            .from('messages')
+            .update({ is_read: true })
+            .eq('user_id', targetId)
+            .eq('receiver_id', user.id)
+            .eq('is_read', false);
+        } catch (_) {}
       }
 
       if (!cancelled) setLoading(false);
