@@ -9,7 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
-import { useSignedMediaUrl } from '../hooks/chat/useSignedMediaUrl';
+import { useSignedMediaUrl, getMemoryCachedSignedUrl, buildPublicStorageUrl } from '../hooks/chat/useSignedMediaUrl';
+import { getMemoryLocalMedia, resolveLocalMedia, isLocalUri, normalizeFileUri, downloadToSandbox } from '../services/mediaCache';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -74,8 +75,25 @@ const handleDownloadMedia = async (url, onSuccess, onError) => {
   }
 };
 
-const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
+const CustomVideoPlayer = ({ url, posterUrl, isActive, showToast, onSeekingChange }) => {
+  // ⚡ 性能优化：视频播放器按需懒加载。
+  //    只有当前激活卡片（isActive === true）才真正挂载 VideoPlayerCore，
+  //    非激活卡片只渲染缩略图封面，避免打开弹窗时后台同时创建多个播放器卡爆 JS 线程。
+  if (!isActive) {
+    return <View style={styles.mediaContainer} />;
+  }
+  return <VideoPlayerCore url={url} posterUrl={posterUrl} isActive={isActive} showToast={showToast} onSeekingChange={onSeekingChange} />;
+};
+
+const VideoPlayerCore = ({ url, posterUrl, isActive, showToast, onSeekingChange }) => {
+  // 🔧 双端路径兜底清洗：视频源同样必须收敛为单重 file:///（Android 重复前缀会直接黑屏）。
+  const safeVideoUrl = normalizeFileUri(url) || url;
+  const safePosterUrl = normalizeFileUri(posterUrl) || posterUrl;
+
   const [isPlaying, setIsPlaying] = useState(isActive);
+  // ⚡ 视频封面占位：缓冲期间先显示封面图，真正开始播放后才隐藏，避免纯黑屏等待。
+  //    封面源与视频源相同时（本地视频 / 秒开源）不叠加，避免重复解码拖慢首帧。
+  const [posterVisible, setPosterVisible] = useState(!!safePosterUrl && safePosterUrl !== safeVideoUrl);
   const [showControls, setShowControls] = useState(false);
   const [controlsOpacity] = useState(() => new Animated.Value(0));
   
@@ -95,8 +113,8 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
   useEffect(() => { progressRef.current = progress; }, [progress]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
-  const player = useVideoPlayer(url, (p) => { 
-    p.loop = true; 
+  const player = useVideoPlayer(safeVideoUrl, (p) => {
+    p.loop = true;
     if (isActive) p.play();
   });
 
@@ -108,6 +126,16 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
     }
     Animated.timing(controlsOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => setShowControls(false));
   }, [isActive, player, controlsOpacity]);
+
+  // ⚡ 监听播放器状态：真正开始播放（playing === true）时才隐藏封面
+  useEffect(() => {
+    const sub = player.addListener('playingChange', ({ isPlaying: playing }) => {
+      if (playing) setPosterVisible(false);
+    });
+    return () => {
+      try { sub?.remove?.(); } catch (_) {}
+    };
+  }, [player]);
 
   useEffect(() => {
     let interval;
@@ -217,13 +245,24 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
     <View style={styles.mediaContainer}>
       <TouchableWithoutFeedback onPress={toggleControls}>
         <View style={StyleSheet.absoluteFill}>
-          <VideoView 
-            style={styles.fullScreenMedia} 
-            player={player} 
-            allowsFullscreen={false} 
-            nativeControls={false} 
-            contentFit="contain" 
+          <VideoView
+            style={styles.fullScreenMedia}
+            player={player}
+            allowsFullscreen={false}
+            nativeControls={false}
+            contentFit="contain"
           />
+          {/* ⚡ 封面占位层：视频缓冲期间显示，开始播放后卸载，第 0 毫秒绝不黑屏 */}
+          {posterVisible && safePosterUrl && (
+            <Image
+              source={{ uri: safePosterUrl }}
+              style={[StyleSheet.absoluteFill, styles.fullScreenMedia]}
+              resizeMode="contain"
+              contentFit="contain"
+              transition={0}
+              cachePolicy="memory-disk"
+            />
+          )}
           {!isPlaying && !showControls && (
             <View style={styles.purePlayIcon}>
               <Ionicons name="play" size={42} color="rgba(255,255,255,0.8)" style={{ marginLeft: 6 }} />
@@ -264,39 +303,49 @@ const CustomVideoPlayer = ({ url, isActive, showToast, onSeekingChange }) => {
   );
 };
 
-const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) => {
+const CustomImagePlayer = ({ url, placeholderUrl, isZoomed, setIsZoomed, showToast, onClose }) => {
   const scrollRef = useRef(null);
   const lastTap = useRef(0);
   const tapTimer = useRef(null);
+  // ⚡ 性能优化：高清原图加载完成前，先用聊天框现成缩略图占位，
+  //    保证 Modal 打开的第 0 毫秒就有图，绝不留纯黑屏等待。
+  const [highResLoaded, setHighResLoaded] = useState(false);
 
-  // 🖼️ 全屏预览「图片被截断」的真根因：
-  //    旧实现把 <Image> 直接写成 width: SCREEN_WIDTH / height: SCREEN_HEIGHT，
-  //    再配 contentFit="contain"。expo-image 在「容器尺寸 == 屏幕尺寸」且外层
-  //    ScrollView 有 maximumZoomScale 时，Android 会按容器裁剪（iOS 偶发同样表现），
-  //    于是横屏照片左右被切、竖屏照片上下被切 —— 看起来就是「截断」。
-  //    修复：先拿到图片真实宽高，按「等比缩放 + 不超出屏幕」算出显示尺寸，
-  //    再把 Image 的宽高设成这个尺寸。这样 contain 无事可做，绝不会裁切。
-  const [naturalSize, setNaturalSize] = useState(null);
+  // 🔧 双端路径兜底清洗：即使上游漏了规范化，这里也保证交给原生引擎的
+  //    一定是单重 `file:///...`（Android Glide 遇 `file://file:///` 直接空白）。
+  //    content:// / data: / http(s) 原样透传，绝不改写。
+  const safeUrl = normalizeFileUri(url) || url;
+  const safePlaceholder = normalizeFileUri(placeholderUrl) || placeholderUrl;
 
-  const displaySize = useMemo(() => {
-    if (!naturalSize || !naturalSize.width || !naturalSize.height) {
-      // 尺寸未知时先铺满屏幕（contain 兜底），拿到尺寸后立刻替换
-      return { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
-    }
-    const scale = Math.min(
-      SCREEN_WIDTH / naturalSize.width,
-      SCREEN_HEIGHT / naturalSize.height
-    );
-    return {
-      width: Math.round(naturalSize.width * scale),
-      height: Math.round(naturalSize.height * scale),
-    };
-  }, [naturalSize]);
+  // 🚨 分层渲染铁律：底层小图必须「无条件」渲染，绝不因任何判断被隐藏。
+  //    上一版用 `placeholderIsSame` 判断「占位源 == 主图源」就隐藏占位层，
+  //    结果当秒开源恰好等于主图源时占位层被彻底卸载，组件只能死等 10MB 高清大图
+  //    网络下载 → 3~5 秒纯黑屏。此处彻底废弃该条件。
+  //    小图地址优先级：占位源（缩略图 / 同步缓存）> 主图源，保证永远有值可渲染。
+  const thumbUri = safePlaceholder || safeUrl;
+  // 仅当「小图地址」与「高清地址」确实是同一张图时，才跳过重复叠加解码（纯性能优化，
+  // 不影响可见性：此时高清层本身就是那张小图，第 0 帧照样有画面）。
+  const thumbIsSameAsHighRes = !!thumbUri && thumbUri === safeUrl;
+  // 底层小图渲染条件：有地址 + 高清未就绪 + 不是同一张图（避免重复解码）
+  const showThumbLayer = !!thumbUri && !highResLoaded && !thumbIsSameAsHighRes;
 
+  // 🖼️ 全屏看图（彻底解决拉伸 / 裁剪）：
+  //    不做任何 JS 尺寸手算（不读 naturalSize、不调 Image.getSize、不写 scale 公式）。
+  //    容器固定为整屏 + 居中 + 纯黑背景，图片固定 100% x 100% 并强制 contain，
+  //    完全交给 iOS / Android 原生渲染引擎等比缩放：
+  //      · 电脑 1080p 横图 → 居中显示，左右贴边或留极小边，上下自然露出黑边；
+  //      · 竖长图 → 上下留黑边，整张图 100% 完整可见；
+  //      · 绝不 cover 截断、绝不拉伸变形、绝不切角裁边。
   const handleImagePress = () => {
     const now = Date.now();
-    if (now - lastTap.current < 300) {
-      clearTimeout(tapTimer.current); 
+    // 双击判定窗口 250ms（原 300ms 偏长，容易把两次单击误判成双击）
+    if (now - lastTap.current < 250) {
+      // 🚨 关键修复：第一击挂载的「单击关闭」定时器必须在此彻底清除，
+      //    否则双击放大后定时器仍会触发 onClose()，导致预览被误关。
+      if (tapTimer.current) {
+        clearTimeout(tapTimer.current);
+        tapTimer.current = null;
+      }
       if (Platform.OS === 'ios') {
          const responder = scrollRef.current?.getScrollResponder();
          if (isZoomed) {
@@ -306,23 +355,26 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
              responder?.scrollResponderZoomTo({ x: SCREEN_WIDTH/4, y: SCREEN_HEIGHT/4, width: SCREEN_WIDTH/2, height: SCREEN_HEIGHT/2, animated: true });
              setIsZoomed(true);
          }
-      } else { 
-        setIsZoomed(!isZoomed); 
+      } else {
+        setIsZoomed(!isZoomed);
       }
     } else {
-      tapTimer.current = setTimeout(() => { onClose(); }, 300); 
+      tapTimer.current = setTimeout(() => {
+        tapTimer.current = null;
+        onClose();
+      }, 250);
     }
     lastTap.current = now;
   };
 
   return (
-    <View style={styles.mediaContainer}>
+    <View style={styles.imageStage}>
       <ScrollView
         ref={scrollRef}
         // ⚠️ Android 关键修复：contentContainerStyle 里绝不能用 `flex: 1`。
         //    ScrollView 的内容容器在 Android 上高度由内容决定，`flex: 1` 会解析为 0，
         //    导致图片被压成 0 高度 → 全屏预览「完全看不到东西」（iOS 无此问题）。
-        //    这里改用显式宽高 + 居中，两端行为一致。
+        //    这里改用显式整屏宽高 + 居中，两端行为一致。
         contentContainerStyle={styles.imageScrollContent}
         maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} bouncesZoom={true}
         onScroll={(e) => {
@@ -332,30 +384,38 @@ const CustomImagePlayer = ({ url, isZoomed, setIsZoomed, showToast, onClose }) =
         scrollEventThrottle={16}
       >
         <TouchableWithoutFeedback onPress={handleImagePress}>
-          <Image
-            source={{ uri: url }}
-            style={[
-              { width: displaySize.width, height: displaySize.height },
-              Platform.OS === 'android' && isZoomed && { transform: [{ scale: 2 }] },
-            ]}
-            contentFit="contain"
-            transition={120}
-            cachePolicy="memory-disk"
-            onLoad={(e) => {
-              const src = e?.source || {};
-              if (src.width && src.height) {
-                setNaturalSize((prev) => (
-                  prev && prev.width === src.width && prev.height === src.height
-                    ? prev
-                    : { width: src.width, height: src.height }
-                ));
-              }
-            }}
-          />
+          <View style={styles.imageFull}>
+            {/* 底层小图秒开层：第 0 毫秒无条件呈现（高清未就绪时），onLoad 后卸载 */}
+            {showThumbLayer && (
+              <Image
+                source={{ uri: thumbUri }}
+                style={[StyleSheet.absoluteFill, styles.imageFull]}
+                resizeMode="contain"
+                contentFit="contain"
+                transition={0}
+                cachePolicy="memory-disk"
+              />
+            )}
+            <Image
+              source={{ uri: safeUrl }}
+              style={[
+                styles.imageFull,
+                Platform.OS === 'android' && isZoomed && { transform: [{ scale: 2 }] },
+              ]}
+              // 🚨 双保险：expo-image 认 contentFit，RN 原生 Image 认 resizeMode。
+              //    两个都显式传入，杜绝某些平台/版本忽略 contentFit 后降级为 cover 顶满裁剪。
+              resizeMode="contain"
+              contentFit="contain"
+              // ⚡ 关闭淡入动画，避免加载时闪烁 / 黑屏过渡
+              transition={0}
+              cachePolicy="memory-disk"
+              onLoad={() => setHighResLoaded(true)}
+            />
+          </View>
         </TouchableWithoutFeedback>
       </ScrollView>
 
-      <TouchableOpacity style={styles.imageFloatingDownload} onPress={() => handleDownloadMedia(url, showToast, showToast)} activeOpacity={0.7}>
+      <TouchableOpacity style={styles.imageFloatingDownload} onPress={() => handleDownloadMedia(safeUrl, showToast, showToast)} activeOpacity={0.7}>
         <Ionicons name="download-outline" size={22} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
@@ -370,29 +430,166 @@ const GalleryItem = React.memo(function GalleryItem({ item, isActive, isZoomed, 
   const { url: signedMediaUrl } = useSignedMediaUrl(item.mediaUrl);
   const { url: signedThumbUrl } = useSignedMediaUrl(item.thumbnailUrl);
 
+  // 🗄️ 本地沙盒优先（第 0 帧同步读取内存索引，绝不阻塞渲染）。
+  //    离线时签名 URL 必然为 null，但沙盒 file:// 仍可 100% 渲染。
+  const mediaKind = item.type === 'video' ? 'video' : item.type === 'audio' ? 'audio' : 'image';
+  const [sandboxUri, setSandboxUri] = useState(() => getMemoryLocalMedia(item.id, mediaKind));
+  const [sandboxThumbUri, setSandboxThumbUri] = useState(() => getMemoryLocalMedia(item.id, 'thumb'));
+
+  // 内存索引未命中时异步探测磁盘（不阻塞首帧，命中后仅 setState 一次）
+  useEffect(() => {
+    if (!item.id) return;
+    let cancelled = false;
+    if (!sandboxUri) {
+      resolveLocalMedia(item.id, mediaKind).then((uri) => {
+        if (!cancelled && uri) setSandboxUri(uri);
+      }).catch(() => {});
+    }
+    if (!sandboxThumbUri) {
+      resolveLocalMedia(item.id, 'thumb').then((uri) => {
+        if (!cancelled && uri) setSandboxThumbUri(uri);
+      }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [item.id, mediaKind, sandboxUri, sandboxThumbUri]);
+
+  // ⚡ 0.0 毫秒首帧秒开算法（同步内存缓存）
+  //    ⚠️ 诊断：相对路径（如 chats/123.jpg）直接交给 expo-image，iOS 原生引擎会
+  //    陷入约 3 秒的网络等待后才失败/回退 —— 这是图片秒开的最大元凶。
+  //    ⚠️ iOS 的 ph:// / assets-library:// 是相册原生句柄，expo-image 无法直接加载，
+  //    会卡约 5 秒后超时黑屏 —— getMemoryCachedSignedUrl 内部已对它们返回 null。
+  //
+  //    🚀 核心：这张图在聊天列表（MessageBubble）里刚刚渲染过，签名 URL 早已写入
+  //    模块级 LRU 缓存。这里在「渲染函数第 0 帧」同步读取，无需等 useEffect 的
+  //    异步 createSignedUrl，因此 Modal 打开的第 0 毫秒就能拿到可渲染地址。
+  const instantUrl = getMemoryCachedSignedUrl(item.mediaUrl)
+    || getMemoryCachedSignedUrl(item.thumbnailUrl)
+    || getMemoryCachedSignedUrl(item.uri)
+    || getMemoryCachedSignedUrl(item.url);
+
+  // 🖼️ 首选渲染源（断网 / 飞行模式下 100% 本地物理文件）
+  //
+  // 🚨 核心修复 ①（iOS）：旧实现把「签名 URL / 云端网络 URL」排在前面，
+  //    飞行模式下 signedMediaUrl 为 null，iOS 拿到空地址 → 全屏预览直接空白。
+  //    现在严格按「本地物理文件优先」解析：
+  //      ① 沙盒物理文件（resolveLocalMedia 磁盘探测，最权威）
+  //      ② item.localUri（发送时落盘的本地路径）
+  //      ③ item.uri（历史本地路径）
+  //    只有本地全部缺失（对方发来且尚未下载）才回落到签名 URL / 原始 mediaUrl。
+  //
+  // 🚨 核心修复 ②（Android）：Android 上 documentDirectory 本身已带 `file:///`，
+  //    若业务层再拼一次 `file://` 会得到 `file://file:///data/user/0/...` 重复前缀。
+  //    iOS 加载器能容忍，但 Android 原生 Glide / ExpoImage 会直接报错返回空白。
+  //    因此这里统一用 isLocalUri 判定（兼容 content:// / data: / ph://），
+  //    并用 normalizeFileUri 清洗为单重 `file:///...` 规范路径。
+  const rawLocalPath = sandboxUri || item.localUri || item.uri || null;
+  const isLocalFile = isLocalUri(rawLocalPath);
+  // 规范化后的本地路径（file:// 收敛为单重前缀；content:// 原样保留）
+  const localSandboxPath = isLocalFile ? normalizeFileUri(rawLocalPath) : null;
+
+  // 🎬 视频 / 图片云端兜底链（本地全部缺失时，例如对方发来的视频尚未落盘）：
+  //    ① signedMediaUrl（Hook 异步签名结果，最权威）
+  //    ② instantUrl（第 0 帧同步缓存，Modal 秒开）
+  //    ③ buildPublicStorageUrl(item.mediaUrl)（公共存储 URL 兜底，避免彻底打不开）
+  //    ④ item.mediaUrl（历史数据可能已是完整签名 URL）
+  const cloudMediaUri = signedMediaUrl
+    || instantUrl
+    || buildPublicStorageUrl(item.mediaUrl)
+    || item.mediaUrl
+    || null;
+
+  const primaryUri = isLocalFile ? localSandboxPath : cloudMediaUri;
+
+  // 🎬 对方视频「后台静默落盘 → 本地秒播」闭环
+  //
+  // 背景：对方首次发来的视频在本地沙盒中并不存在，只能在线播放（受网络波动影响）。
+  //      这里在「视频卡片被激活（isActive）」时，后台静默把云端视频下载到沙盒
+  //      `chat_media/video/${item.id}.mp4`（downloadToSandbox 内部使用
+  //      Paths.document 跨平台适配，绝不硬编码 iOS / Android 绝对路径）。
+  //      下载成功后立刻把播放源切换为本地 file:// 物理文件 → 双端 100% 稳定秒播；
+  //      下次打开或飞行模式下也会直接命中沙盒，达成 100% 离线播放。
+  //
+  // 🚨 UI 锁死：本逻辑只影响「播放源字符串」，不触碰任何样式 / 尺寸 / contain 比例。
+  const [offlineVideoUri, setOfflineVideoUri] = useState(null);
+
+  useEffect(() => {
+    if (item.type !== 'video' || !item.id) return undefined;
+    // 已是本地物理文件：无需下载
+    if (isLocalFile) return undefined;
+    // 非激活卡片不触发下载（避免打开弹窗时并发下载多个视频）
+    if (!isActive) return undefined;
+    // 没有可用的云端地址（离线且无缓存）：跳过
+    if (!cloudMediaUri || !/^https?:\/\//i.test(cloudMediaUri)) return undefined;
+
+    let cancelled = false;
+    downloadToSandbox(cloudMediaUri, item.id, 'video')
+      .then((localUri) => {
+        if (cancelled || !localUri) return;
+        const normalized = normalizeFileUri(localUri);
+        if (normalized) setOfflineVideoUri(normalized);
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [item.type, item.id, isActive, isLocalFile, cloudMediaUri]);
+
+  // 🎬 最终播放源：本地沙盒（含刚下载完成的）绝对优先，其次云端地址
+  const videoPlayUri = isLocalFile
+    ? localSandboxPath
+    : (offlineVideoUri || cloudMediaUri);
+
+  // 即时占位源：本地沙盒缩略图 → localThumbUri → 本地主图 → 同步缓存 → 已签名缩略图
+  // 🎬 视频封面兜底：对方发来的视频 thumbnailUrl 是云端相对路径，签名未回调时
+  //    用 buildPublicStorageUrl 拼公共地址，避免封面彻底空白。
+  const rawThumbPath = sandboxThumbUri || item.localThumbUri || null;
+  const placeholderUrl = (isLocalUri(rawThumbPath) ? normalizeFileUri(rawThumbPath) : null)
+    || (isLocalFile ? localSandboxPath : null)
+    || instantUrl
+    || signedThumbUrl
+    || buildPublicStorageUrl(item.thumbnailUrl)
+    || null;
+
+  // 🚀 0.0 秒首帧：Modal 打开瞬间就把占位图挂上去（不等签名 URL 返回）。
+  //    用「本地沙盒 > 同步缓存 > 已签名缩略图 > 首选源」的顺序，保证第 0 帧必有画面。
+  const instantPoster = placeholderUrl || primaryUri;
+
   return (
     <View style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
       {item.type === 'image' ? (
-        signedMediaUrl ? (
-          <CustomImagePlayer url={signedMediaUrl} isZoomed={isZoomed} setIsZoomed={setIsZoomed} showToast={showToast} onClose={onClose} />
+        primaryUri ? (
+          <CustomImagePlayer
+            url={primaryUri}
+            placeholderUrl={instantPoster}
+            isZoomed={isZoomed}
+            setIsZoomed={setIsZoomed}
+            showToast={showToast}
+            onClose={onClose}
+          />
         ) : (
           <View style={styles.mediaContainer} />
         )
       ) : (
         isActive ? (
-          signedMediaUrl ? (
-            <CustomVideoPlayer url={signedMediaUrl} isActive={isActive} showToast={showToast} onSeekingChange={onSeekingChange} />
+          videoPlayUri ? (
+            <CustomVideoPlayer
+              url={videoPlayUri}
+              posterUrl={instantPoster}
+              isActive={isActive}
+              showToast={showToast}
+              onSeekingChange={onSeekingChange}
+            />
           ) : (
             <View style={styles.mediaContainer} />
           )
         ) : (
           <View style={styles.mediaContainer}>
-            {(signedThumbUrl || signedMediaUrl) && (
+            {instantPoster && (
               <Image
-                source={{ uri: signedThumbUrl || signedMediaUrl }}
+                source={{ uri: instantPoster }}
                 style={styles.fullScreenMedia}
+                resizeMode="contain"
                 contentFit="contain"
-                transition={120}
+                transition={0}
                 cachePolicy="memory-disk"
               />
             )}
@@ -438,12 +635,28 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
   const [toastMsg, setToastMsg] = useState('');
   const [toastAnim] = useState(() => new Animated.Value(0));
 
+  // 关闭去重：避免动画期间重复触发（双击 / 手势连击）
+  const closingRef = useRef(false);
+
   const smoothClose = (dy, dx, vy) => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+
+    // ⚡ 零延迟退出：第 0 毫秒立即触发震动反馈，绝不放在动画结束回调里
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // ⚡ 极速解封：动画启动的同时立刻同步解封界面状态，
+    //    让聊天界面瞬间恢复可操作（不等动画结束回调）。
+    setIsZoomed(false);
+    setIsScrubbing(false);
+    isScrubbingRef.current = false;
+
+    // 干脆利落的 150ms 退出动画（原生驱动，不阻塞 JS 线程）
     Animated.parallel([
-      Animated.spring(pan, { 
-        toValue: { x: dx * 2 || 0, y: dy > 0 ? SCREEN_HEIGHT : -SCREEN_HEIGHT }, 
-        velocity: { x: 0, y: vy || 0 }, 
-        friction: 20, tension: 100, useNativeDriver: true 
+      Animated.timing(pan, {
+        toValue: { x: dx * 2 || 0, y: dy > 0 ? SCREEN_HEIGHT : -SCREEN_HEIGHT },
+        duration: 150,
+        useNativeDriver: true,
       }),
       Animated.timing(entryAnim, { toValue: 0, duration: 150, useNativeDriver: true })
     ]).start(() => onClose());
@@ -516,7 +729,7 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
           
           windowSize={3}
           maxToRenderPerBatch={2}
-          initialNumToRender={2}
+          initialNumToRender={1}
 
           // ⚠️ Android 全屏预览空白的关键根因：
           //    removeClippedSubviews 会在 item 被判定「移出可视区」时把原生视图
@@ -550,8 +763,12 @@ export default function InteractiveMediaViewer({ mediaList, initialIndex, onClos
 
 const styles = StyleSheet.create({
   mediaContainer: { flex: 1, width: SCREEN_WIDTH, height: SCREEN_HEIGHT, justifyContent: 'center', alignItems: 'center' },
+  // 图片舞台：整屏 + 居中 + 纯黑背景，交给原生引擎做 contain 等比缩放
+  imageStage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
   // 图片 ScrollView 的内容容器：显式尺寸，绝不用 flex（Android 会解析为 0）
   imageScrollContent: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT, justifyContent: 'center', alignItems: 'center' },
+  // 图片本体：100% 铺满容器，配合 contentFit="contain" 由原生等比缩放，绝不裁切
+  imageFull: { width: '100%', height: '100%' },
   fullScreenMedia: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
   purePlayIcon: { position: 'absolute', width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   bottomControlBar: { position: 'absolute', bottom: Platform.OS === 'ios' ? 44 : 32, alignSelf: 'center', width: SCREEN_WIDTH - 32 },

@@ -1,13 +1,13 @@
 // --- START OF FILE src/components/ChatRoomInner.js ---
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Keyboard, Modal, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Crypto from 'expo-crypto';
 import * as Clipboard from 'expo-clipboard';
 import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
-import { useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { useRouter } from 'expo-router';
 
 import { supabase } from '../services/supabase';
@@ -20,6 +20,7 @@ import { useAudioRecorder } from '../hooks/chat/useAudioRecorder';
 import { useChatPrefs } from '../hooks/chat/useChatPrefs';
 import { useChatFavorites } from '../hooks/chat/useChatFavorites';
 import { getSignedUrl, toStoragePath } from '../hooks/chat/useSignedMediaUrl';
+import { downloadToSandbox, isLocalUri, normalizeFileUri } from '../services/mediaCache';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -28,6 +29,62 @@ import ChatContextMenu from './ChatContextMenu';
 import { useCinema } from '../hooks/useCinema';
 
 const formatDuration = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+
+// ===== 微信同款时间格式化（全球时区 / 地区格式自动适配）=====
+// 今天 → 14:25 或 2:25 PM / 昨天 → 昨天 14:25 或 Yesterday 2:25 PM
+// 7 天内 → 星期三 14:25 或 Wed 2:25 PM / 今年内 → 10月25日 14:25 或 Oct 25 2:25 PM
+// 跨年 → 2025年10月25日 14:25 或 Oct 25, 2025 2:25 PM
+const formatWeChatTime = (timestamp) => {
+  if (!timestamp) return '';
+  // 1. 自动转换为手机本地所在时区的时间
+  const date = new Date(typeof timestamp === 'number' ? timestamp : String(timestamp));
+  if (isNaN(date.getTime())) return '';
+
+  const now = new Date();
+
+  // 判断是否为当地时间的“今天”
+  const isToday = date.toDateString() === now.toDateString();
+
+  // 判断是否为当地时间的“昨天”
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  // 自动获取手机系统的 12/24 小时制与本地时间格式 (如 "14:25" 或 "2:25 PM")
+  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) {
+    return timeStr;
+  }
+
+  if (isYesterday) {
+    // 自动适配当地语言的“昨天” (如中文“昨天”，英文“Yesterday”)
+    try {
+      const yesterdayLabel = new Intl.RelativeTimeFormat([], { numeric: 'auto' }).format(-1, 'day');
+      return `${yesterdayLabel} ${timeStr}`;
+    } catch (_e) {
+      return `昨天 ${timeStr}`;
+    }
+  }
+
+  // 7 天以内：自动适配当地语言的星期几 (如中文“星期三”，英文“Wed”)
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 7 && diffDays > 0) {
+    const weekdayStr = date.toLocaleDateString([], { weekday: 'short' });
+    return `${weekdayStr} ${timeStr}`;
+  }
+
+  // 今年以内：自动适配当地月日格式 (如“10月25日” 或 “Oct 25” 或 “25 Oct”)
+  const isSameYear = date.getFullYear() === now.getFullYear();
+  if (isSameYear) {
+    const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateStr} ${timeStr}`;
+  }
+
+  // 跨年：自动适配当地年月日格式
+  const fullDateStr = date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  return `${fullDateStr} ${timeStr}`;
+};
 
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
@@ -78,9 +135,43 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     if (!user || !targetId) return;
     const msgId = Crypto.randomUUID();
     saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
-    await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
+    try {
+      const { error } = await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
+      // ❗ 离线/写入失败：标记为 failed，气泡旁显示红色感叹号，可点击重发
+      if (error) throw error;
+    } catch (e) {
+      console.warn('离线状态，消息发送失败，已标记为待重发', e?.message ?? e);
+      patchMessage(msgId, { status: 'failed' });
+      return;
+    }
     sendPushNotification(targetId, '', text, { type: 'chat', targetId: user.id });
-  }, [user, targetId, saveAndSend]);
+  }, [user, targetId, saveAndSend, patchMessage]);
+
+  // ❗ 点击红色感叹号重发：先清除失败标记，再重新走一次发送流程
+  const handleResendMessage = useCallback(async (msg) => {
+    if (!msg || !user || !targetId) return;
+    patchMessage(msg.id, { status: 'sending' });
+    try {
+      const { error } = await supabase.from('messages').insert({
+        id: msg.id,
+        user_id: user.id,
+        receiver_id: targetId,
+        type: msg.type || 'text',
+        text: msg.text || '',
+        media_url: msg.mediaUrl || null,
+        thumbnail_url: msg.thumbnailUrl || null,
+        subtype: msg.subtype || null,
+      });
+      if (error) throw error;
+      patchMessage(msg.id, { status: 'sent' });
+      if (msg.type === 'text' && msg.text) {
+        sendPushNotification(targetId, '', msg.text, { type: 'chat', targetId: user.id });
+      }
+    } catch (e) {
+      console.warn('离线状态，重发仍然失败', e?.message ?? e);
+      patchMessage(msg.id, { status: 'failed' });
+    }
+  }, [user, targetId, patchMessage]);
 
   const handleAcceptPartner = async (msg) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -109,16 +200,64 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   }, [handleSendText]);
 
   // ===== 语音播放（与影院播放器互不打断）=====
-  const handleToggleAudio = useCallback((id, url) => {
+  //
+  // 🚨 断网（飞行模式）播放核心修复：
+  //   1. 播放前显式 setAudioModeAsync 解锁扬声器（allowsRecording: false → iOS 切回
+  //      .playback 类别，否则录音后残留的 .playAndRecord 会让声音走听筒 / 静音）。
+  //   2. 传入的 url 若已是本地 file:// 物理文件（由 MessageBubble 解析），
+  //      音频引擎直接读磁盘，飞行模式下零网络、100% 可播。
+  //   3. 若传入的仍是网络 URL（本地缺失的对方语音），先尝试静默下载到沙盒再播放，
+  //      下载失败（离线）则保持原 URL 由引擎自行处理，绝不崩溃。
+  const handleToggleAudio = useCallback(async (id, url, options = {}) => {
     if (playingAudioId === id) {
       globalAudioPlayer.pause();
       setPlayingAudioId(null);
       return;
     }
+    if (!url) return;
+
+    // 🔓 解锁扬声器：录音结束后 iOS 音频会话可能仍停留在 playAndRecord，
+    //    必须显式切回播放模式，否则飞行模式下播放会静默失败。
+    try {
+      if (typeof setAudioModeAsync === 'function') {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          interruptionMode: 'mixWithOthers',
+          shouldRouteThroughEarpiece: false,
+        });
+      }
+    } catch (e) {
+      console.warn('语音播放前设置音频模式失败(忽略):', e?.message ?? e);
+    }
+
+    // 🗄️ 网络 URL → 尝试静默落盘为本地 file://（离线时失败则保持原 URL）
+    //
+    // 🔧 双端兼容：用 isLocalUri 判定（兼容 content:// / data: / ph://），
+    //    并用 normalizeFileUri 收敛为单重 file:///（Android 重复前缀会让音频引擎报错）。
+    //    options.isLocal 由 MessageBubble 传入，表示 url 已是本地物理文件，无需再落盘。
+    let playUri = url;
+    const alreadyLocal = options.isLocal || isLocalUri(url);
+    if (alreadyLocal) {
+      playUri = normalizeFileUri(url) || url;
+    } else {
+      try {
+        const local = await downloadToSandbox(url, id, 'audio');
+        if (local) playUri = normalizeFileUri(local) || local;
+      } catch (_) {}
+    }
+
     wasCinemaPlayingRef.current = cinemaPlayer ? cinemaPlayer.playing : false;
     setPlayingAudioId(id);
-    globalAudioPlayer.replace(url);
-    globalAudioPlayer.play();
+    try {
+      globalAudioPlayer.replace(playUri);
+      globalAudioPlayer.play();
+    } catch (e) {
+      console.warn('语音播放失败:', e?.message ?? e);
+      setPlayingAudioId(null);
+      return;
+    }
     if (wasCinemaPlayingRef.current) {
       setTimeout(() => { if (cinemaPlayer && !cinemaPlayer.playing) cinemaPlayer.play(); }, 250);
     }
@@ -284,18 +423,34 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
           )}
           <FlatList
             ref={flatListRef} data={messages} keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <MessageBubble
-                item={item} palette={palette} onPreviewMedia={handleOpenMedia}
-                isPlaying={playingAudioId === item.id} onToggleAudio={handleToggleAudio} onAudioFinish={handleAudioFinish}
-                onLongPressMessage={handleLongPressMessage} onJoinCinema={(roomId) => router.push({ pathname: '/cinema', params: { roomId } })}
-                onAcceptPartner={handleAcceptPartner} onRejectPartner={handleRejectPartner}
-              />
-            )}
+            renderItem={({ item, index }) => {
+              // 列表为 inverted 倒序渲染：视觉上的「上一条」在数据里是 index + 1
+              const prevMsg = messages[index + 1];
+              const shouldShowTime = !prevMsg || Math.abs(item.timestamp - prevMsg.timestamp) >= 15 * 60 * 1000;
+              return (
+                <View>
+                  {shouldShowTime && (
+                    <View style={styles.timeDividerContainer}>
+                      <Text style={styles.timeDividerText}>{formatWeChatTime(item.timestamp)}</Text>
+                    </View>
+                  )}
+                  <MessageBubble
+                    item={item} palette={palette} onPreviewMedia={handleOpenMedia}
+                    isPlaying={playingAudioId === item.id} onToggleAudio={handleToggleAudio} onAudioFinish={handleAudioFinish}
+                    onLongPressMessage={handleLongPressMessage} onJoinCinema={(roomId) => router.push({ pathname: '/cinema', params: { roomId } })}
+                    onAcceptPartner={handleAcceptPartner} onRejectPartner={handleRejectPartner}
+                    onResendMessage={handleResendMessage}
+                  />
+                </View>
+              );
+            }}
             inverted contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} keyboardDismissMode="on-drag"
             onScrollBeginDrag={dismissAllPanels} onTouchStart={dismissAllPanels} keyboardShouldPersistTaps="handled"
             initialNumToRender={15} maxToRenderPerBatch={10} windowSize={3}
-            removeClippedSubviews={Platform.OS === 'android'}
+            // 🚨 Android 闪烁修复：removeClippedSubviews 会在滚动时把 item 的原生视图
+            //    从视图树摘掉再挂回，导致图片/视频气泡反复重新解码 → 肉眼可见的闪烁与抖动。
+            //    这里显式关闭，改由 windowSize 控制内存占用。
+            removeClippedSubviews={false}
             updateCellsBatchingPeriod={50}
           />
           <ChatInputBar
@@ -330,6 +485,8 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   uploadBar: { height: 22, justifyContent: 'center', overflow: 'hidden' },
   uploadBarFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
-  uploadBarText: { fontSize: 11, textAlign: 'center', fontWeight: '500' }
+  uploadBarText: { fontSize: 11, textAlign: 'center', fontWeight: '500' },
+  timeDividerContainer: { alignItems: 'center', marginVertical: 10 },
+  timeDividerText: { color: 'rgba(255, 255, 255, 0.45)', fontSize: 12, backgroundColor: 'rgba(0, 0, 0, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }
 });
 // --- END OF FILE src/components/ChatRoomInner.js ---
