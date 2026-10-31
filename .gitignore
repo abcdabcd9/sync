@@ -98,3 +98,5 @@ sync.json
 #           eas secret:create --scope project --name GOOGLE_SERVICE_INFO_PLIST --type file --value ./GoogleService-Info.plist
 google-services.json
 GoogleService-Info.plist
+# 内部审计报告，不对外公开
+plans/
