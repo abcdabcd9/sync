@@ -17,10 +17,6 @@ import { supabase } from '../../services/supabase';
 const EMPTY_MEALS = { '早餐': false, '午餐': false, '晚餐': false };
 const DEBOUNCE_MS = 1500;
 
-/**
- * @param {object|null} user 当前登录用户
- * @param {() => string} getDateStr 返回校准后的今日日期字符串
- */
 export function useHealthCloud(user, getDateStr) {
   const [partnerData, setPartnerData] = useState({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
   const [partnerId, setPartnerId] = useState(null);
@@ -76,7 +72,8 @@ export function useHealthCloud(user, getDateStr) {
         .eq('user_id', user.id)
         .eq('record_date', date)
         .single();
-      if (error) throw error;
+      // PGRST116 代表没有数据（用户今天还没打卡），属于正常情况不抛错
+      if (error && error.code !== 'PGRST116') throw error;
       return data || null;
     } catch (e) {
       console.warn('⚠️ 拉取本人 health_records 失败(离线状态)', e?.message || e);
@@ -85,13 +82,13 @@ export function useHealthCloud(user, getDateStr) {
   }, [user]);
 
   /** 
-   * 拉取伴侣的今日记录 (Cache-First 离线秒开架构) 
+   * ⚡ 核心修复：拉取伴侣的今日记录 (Cache-First 离线秒开架构) 
    */
   const fetchPartnerRecord = useCallback(async (pId, date) => {
     if (!pId) return null;
     const cacheKey = `@partner_health_${pId}_${date}`;
 
-    // 1. 离线缓存优先加载（第 0 帧秒开，绝不显示 0）
+    // 1. 离线缓存优先加载（第 0 帧秒开，断网绝不显示 0）
     try {
       const cachedStr = await AsyncStorage.getItem(cacheKey);
       if (cachedStr) {
@@ -108,7 +105,7 @@ export function useHealthCloud(user, getDateStr) {
         .eq('record_date', date)
         .single();
       
-      if (error) throw error;
+      if (error && error.code !== 'PGRST116') throw error;
 
       if (data) {
         const newData = {
@@ -122,7 +119,7 @@ export function useHealthCloud(user, getDateStr) {
       }
     } catch (e) {
       // 🚨 断网降级保护：绝对禁止重置为 0，保持本地缓存数据！
-      console.warn('离线状态，使用本地缓存的搭子健康数据');
+      console.warn('离线状态，使用本地缓存的搭子健康数据', e?.message || e);
     }
     return null;
   }, []);
@@ -140,7 +137,7 @@ export function useHealthCloud(user, getDateStr) {
     setPartnerData({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
   }, []);
 
-  /** 订阅伴侣的 health_records 变更 */
+  /** ⚡ 核心修复：订阅伴侣变更（支持离线防崩与缓存回写） */
   const subscribePartner = useCallback((pId, date) => {
     if (!pId) return () => {};
 
@@ -164,7 +161,7 @@ export function useHealthCloud(user, getDateStr) {
                 waterAmount: payload.new.water_amount || 0,
                 mealsStatus: payload.new.meals_status || EMPTY_MEALS,
               };
-              // 实时更新内存并同步本地磁盘镜像
+              // 实时更新内存并同步存入本地磁盘
               setPartnerData(newData);
               AsyncStorage.setItem(cacheKey, JSON.stringify(newData)).catch(() => {});
             }

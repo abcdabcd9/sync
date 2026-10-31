@@ -11,6 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { useHealthData } from '../hooks/useHealthData';
+import { PROFILE_CACHE_KEY } from '../hooks/profile/useProfileCache';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
 
@@ -19,7 +20,8 @@ export default function BindPartnerScreen() {
   const router = useRouter();
   const { user } = useAuth();
   // 🌐 全局健康上下文：解绑/绑定后必须同步刷新，否则首页伴侣卡片要等冷启动才更新
-  const { refreshPartner } = useHealthData();
+  //    partnerId 同时作为断网兜底数据源：全局已恢复的绑定关系可直接复用，无需等网络
+  const { refreshPartner, partnerId: globalPartnerId } = useHealthData();
 
   const [friends, setFriends] = useState([]);
   const [boundPartnerId, setBoundPartnerId] = useState(null);
@@ -28,43 +30,160 @@ export default function BindPartnerScreen() {
   useEffect(() => {
     if (!user) return;
     const loadData = async () => {
-      const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
-      let currentPartnerId = profile?.bound_partner_id || null;
+      // 💾 守护伴侣页本地缓存 key（按用户隔离，切换账号不会串数据）
+      const partnerPageCacheKey = `@partner_page_data_${user.id}`;
+      // 💾 全局好友列表缓存 key（与 useChatList 写入的 @friends_list_ 保持一致）
+      const globalFriendsCacheKey = `@friends_list_${user.id}`;
+      // 💾 全局会话列表缓存 key（兜底：老版本只写过 @chatList_，其中 friends 字段同样可用）
+      const globalChatListCacheKey = `@chatList_${user.id}`;
 
-      if (!currentPartnerId) {
-        const { data: acceptedMsgs } = await supabase.from('messages')
-          .select('receiver_id')
-          .eq('user_id', user.id)
-          .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (acceptedMsgs && acceptedMsgs.length > 0) {
-          currentPartnerId = acceptedMsgs[0].receiver_id;
-          await supabase.from('profiles').update({ bound_partner_id: currentPartnerId }).eq('id', user.id);
+      // 1️⃣ 第 0 步：本地缓存优先（零网络，断网也能瞬间显示守护伴侣与好友列表）
+      let hasLocalData = false;
+      try {
+        const cachedRaw = await AsyncStorage.getItem(partnerPageCacheKey);
+        if (cachedRaw) {
+          const cachedData = JSON.parse(cachedRaw);
+          if (cachedData && typeof cachedData === 'object') {
+            if (Array.isArray(cachedData.friends) && cachedData.friends.length > 0) {
+              setFriends(cachedData.friends);
+              hasLocalData = true;
+            }
+            if (cachedData.boundPartnerId !== undefined && cachedData.boundPartnerId !== null) {
+              setBoundPartnerId(cachedData.boundPartnerId);
+              hasLocalData = true;
+            }
+          }
+          // 缓存已渲染 → 立刻结束 loading，绝不卡在转圈状态
+          setLoading(false);
         }
+      } catch (cacheError) {
+        console.warn('⚠️ 读取守护伴侣页缓存失败:', cacheError?.message ?? cacheError);
       }
 
-      setBoundPartnerId(currentPartnerId);
-
-      let allFriendIds = new Set();
-      const { data: fData } = await supabase.from('friends').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
-      if (fData) fData.forEach(r => allFriendIds.add(r.user_id === user.id ? r.friend_id : r.user_id));
-      
-      const { data: reqData } = await supabase.from('friend_requests').select('sender_id, receiver_id').eq('status', 'accepted').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-      if (reqData) reqData.forEach(r => allFriendIds.add(r.sender_id === user.id ? r.receiver_id : r.sender_id));
-
-      const uniqueIds = [...allFriendIds];
-      if (uniqueIds.length > 0) {
-        const { data: profilesData } = await supabase.from('profiles').select('id, username').in('id', uniqueIds);
-        setFriends(profilesData || []);
-      } else {
-        setFriends([]);
+      // 1️⃣-a 全局伴侣 ID 兜底：页面缓存缺失时，优先复用全局健康上下文已恢复的 partnerId
+      //      （useHealthData 的 loadProfile 已从 @user_profile_cache 第 0 帧恢复绑定关系）
+      if (globalPartnerId) {
+        setBoundPartnerId((prev) => prev || globalPartnerId);
+        hasLocalData = true;
       }
-      setLoading(false);
+
+      // 1️⃣-b 全局伴侣 ID 兜底：再读 @user_profile_cache 中的 bound_partner_id（零网络）
+      try {
+        const profileRaw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+        if (profileRaw) {
+          const cachedProfile = JSON.parse(profileRaw);
+          // 缓存归属校验：只认当前登录用户自己的资料，避免换号后串数据
+          if (cachedProfile && cachedProfile.id === user.id && cachedProfile.bound_partner_id) {
+            setBoundPartnerId((prev) => prev || cachedProfile.bound_partner_id);
+            hasLocalData = true;
+          }
+        }
+      } catch (profileCacheError) {
+        console.warn('⚠️ 读取个人资料缓存（伴侣 ID）失败:', profileCacheError?.message ?? profileCacheError);
+      }
+
+      // 1️⃣-c 全局好友列表兜底：页面缓存为空时，复用 @friends_list_${user.id}
+      try {
+        const friendsRaw = await AsyncStorage.getItem(globalFriendsCacheKey);
+        if (friendsRaw) {
+          const cachedFriends = JSON.parse(friendsRaw);
+          if (Array.isArray(cachedFriends) && cachedFriends.length > 0) {
+            setFriends((prev) => (prev && prev.length > 0 ? prev : cachedFriends));
+            hasLocalData = true;
+          }
+        }
+      } catch (friendsCacheError) {
+        console.warn('⚠️ 读取全局好友列表缓存失败:', friendsCacheError?.message ?? friendsCacheError);
+      }
+
+      // 1️⃣-d 全局会话列表兜底：@chatList_${user.id} 内同样保存了 friends 数组
+      try {
+        const chatListRaw = await AsyncStorage.getItem(globalChatListCacheKey);
+        if (chatListRaw) {
+          const cachedChatList = JSON.parse(chatListRaw);
+          if (cachedChatList && Array.isArray(cachedChatList.friends) && cachedChatList.friends.length > 0) {
+            setFriends((prev) => (prev && prev.length > 0 ? prev : cachedChatList.friends));
+            hasLocalData = true;
+          }
+        }
+      } catch (chatListCacheError) {
+        console.warn('⚠️ 读取全局会话列表缓存失败:', chatListCacheError?.message ?? chatListCacheError);
+      }
+
+      // 本地已有任何可用数据 → 立刻结束 loading，断网下 0 秒呈现，绝不显示空白页
+      if (hasLocalData) {
+        setLoading(false);
+      }
+
+      try {
+        const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
+        let currentPartnerId = profile?.bound_partner_id || null;
+
+        if (!currentPartnerId) {
+          const { data: acceptedMsgs } = await supabase.from('messages')
+            .select('receiver_id')
+            .eq('user_id', user.id)
+            .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (acceptedMsgs && acceptedMsgs.length > 0) {
+            currentPartnerId = acceptedMsgs[0].receiver_id;
+            await supabase.from('profiles').update({ bound_partner_id: currentPartnerId }).eq('id', user.id);
+          }
+        }
+
+        setBoundPartnerId(currentPartnerId);
+
+        let allFriendIds = new Set();
+        const { data: fData } = await supabase.from('friends').select('user_id, friend_id').or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
+        if (fData) fData.forEach(r => allFriendIds.add(r.user_id === user.id ? r.friend_id : r.user_id));
+        
+        const { data: reqData } = await supabase.from('friend_requests').select('sender_id, receiver_id').eq('status', 'accepted').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+        if (reqData) reqData.forEach(r => allFriendIds.add(r.sender_id === user.id ? r.receiver_id : r.sender_id));
+
+        const uniqueIds = [...allFriendIds];
+        let nextFriends = [];
+        if (uniqueIds.length > 0) {
+          const { data: profilesData } = await supabase.from('profiles').select('id, username').in('id', uniqueIds);
+          nextFriends = profilesData || [];
+          setFriends(nextFriends);
+        } else {
+          setFriends([]);
+        }
+
+        // 3️⃣ 云端成功 → 回写本地缓存，供下次冷启动/断网秒开
+        try {
+          await AsyncStorage.setItem(
+            partnerPageCacheKey,
+            JSON.stringify({ friends: nextFriends, boundPartnerId: currentPartnerId, cachedAt: Date.now() })
+          );
+        } catch (writeError) {
+          console.warn('⚠️ 写入守护伴侣页缓存失败:', writeError?.message ?? writeError);
+        }
+
+        // 3️⃣-b 云端成功 → 同步回写全局好友列表缓存，让其他页面（联系人/会话）也能断网秒开
+        if (nextFriends.length > 0) {
+          try {
+            await AsyncStorage.setItem(globalFriendsCacheKey, JSON.stringify(nextFriends));
+          } catch (globalWriteError) {
+            console.warn('⚠️ 写入全局好友列表缓存失败:', globalWriteError?.message ?? globalWriteError);
+          }
+        }
+      } catch (e) {
+        // 🚨 离线降级：绝不重置 state，保持本地缓存读取到的守护伴侣与好友列表
+        console.warn('离线，使用缓存守护伴侣数据');
+        console.warn('⚠️ 守护伴侣页云端查询失败:', e?.message ?? e);
+        // 断网时立即结束加载：0 秒呈现全局缓存中的守护伴侣与好友列表，绝不显示空白页
+        setLoading(false);
+      } finally {
+        setLoading(false);
+      }
     };
     loadData();
-  }, [user]);
+    // ⚠️ 依赖 globalPartnerId：全局上下文从 @user_profile_cache 恢复绑定关系后，
+    //    需要重新执行一次兜底读取，确保断网进入本页时守护伴侣不丢失
+  }, [user, globalPartnerId]);
 
   const handleBindPartner = async (friendId, friendName) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

@@ -33,6 +33,34 @@ const writeChatListCache = async (userId, payload) => {
   }
 };
 
+/** 好友列表本地缓存 key（按用户隔离，切换账号不会串数据） */
+const friendsListCacheKey = (userId) => `@friends_list_${userId}`;
+
+/** 读取本地缓存的好友列表（只读磁盘，零网络） */
+const readFriendsListCache = async (userId) => {
+  if (!userId) return null;
+  try {
+    const raw = await AsyncStorage.getItem(friendsListCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed;
+  } catch (e) {
+    console.warn('⚠️ 读取好友列表缓存失败:', e?.message ?? e);
+    return null;
+  }
+};
+
+/** 写入本地缓存的好友列表（失败不影响主流程） */
+const writeFriendsListCache = async (userId, payload) => {
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(friendsListCacheKey(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.warn('⚠️ 写入好友列表缓存失败:', e?.message ?? e);
+  }
+};
+
 /**
  * 把数据库里的密语翻译成人类可读的预览文本（按 subtype 协议字段判断）
  * 原样迁移自 src/app/(tabs)/chat.js 的 formatPreview
@@ -99,6 +127,14 @@ export function useChatList(user) {
       if (cached.lastMsgTimes && typeof cached.lastMsgTimes === 'object') setLastMsgTimes(cached.lastMsgTimes);
       if (cached.unreadCounts && typeof cached.unreadCounts === 'object') setUnreadCounts(cached.unreadCounts);
       // 缓存已渲染 → 立刻结束 loading，绝不卡在转圈状态
+      setLoading(false);
+    }
+
+    // 1️⃣-b 第 0 步：好友列表独立缓存优先（Cache-First，断网秒显联系人）
+    const cachedFriends = await readFriendsListCache(currentUserId);
+    if (cachedFriends) {
+      setFriends(cachedFriends);
+      // 缓存已渲染 → 立刻结束 loading，确保断网时不会卡在空白/转圈
       setLoading(false);
     }
 
@@ -220,8 +256,12 @@ export function useChatList(user) {
         unreadCounts: nextUnread,
         cachedAt: Date.now(),
       });
+
+      // 3️⃣-b 云端成功 → 好友列表单独回写缓存（@friends_list_${user.id}）
+      writeFriendsListCache(currentUserId, nextFriends);
     } catch (e) {
       // 🚨 离线降级：绝不清空已加载的本地会话列表，仅记录日志
+      console.warn('离线，使用缓存好友列表');
       console.warn('离线状态，使用本地缓存会话列表');
       console.warn('⚠️ 会话列表云端查询失败:', e?.message ?? e);
     } finally {

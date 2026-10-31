@@ -85,15 +85,25 @@ export function useHealthStorage(todayStr) {
     if (savedCheckIn) setLastCheckInDate(savedCheckIn);
 
     // ---- 跨天清零：当日饮水/三餐重置 ----
-    if (savedActive !== todayStr) {
+    // ⚠️ 必须同时满足「有上次活跃日期」且「与今天不同」才清零：
+    //    首次安装（savedActive 为 null）时不应误判为跨天，但仍需写入今天的活跃日期。
+    if (savedActive && savedActive !== todayStr) {
+      // 已跨过 24 小时进入新的一天 → 第 0 帧彻底清零，并立即回写磁盘，
+      // 确保冷启动 / 跨天切回 App 时昨天的饮水与三餐状态 100% 不会残留。
       setWaterAmount(0);
       setMealsStatus(EMPTY_MEALS);
       setLastActiveDate(todayStr);
-      AsyncStorage.setItem(KEYS.active, todayStr);
+      await AsyncStorage.setItem(KEYS.water, '0');
+      await AsyncStorage.setItem(KEYS.meals, JSON.stringify(EMPTY_MEALS));
+      await AsyncStorage.setItem(KEYS.active, todayStr);
     } else {
-      setLastActiveDate(savedActive);
+      setLastActiveDate(savedActive || todayStr);
       if (savedWater) setWaterAmount(Number(savedWater));
       if (savedMeals) setMealsStatus(JSON.parse(savedMeals));
+      // 首次安装（无活跃日期）→ 补写今天的活跃日期，供下次跨天检测使用
+      if (!savedActive) {
+        await AsyncStorage.setItem(KEYS.active, todayStr);
+      }
     }
 
     isLoadedRef.current = true;

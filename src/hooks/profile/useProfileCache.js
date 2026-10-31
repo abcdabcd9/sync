@@ -27,6 +27,8 @@ export function normalizeProfile(row) {
     ...row,
     sync_id: row.sync_id || row.username || null,
     nickname: row.nickname || row.username || null,
+    // 💞 守护伴侣昵称：随个人资料一起持久化，断网时无需再查云端即可展示搭子名称
+    bound_partner_nickname: row.bound_partner_nickname || null,
   };
 }
 

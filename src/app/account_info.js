@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAppTheme } from '../context/ThemeContext';
 import { SIZES } from '../constants/theme';
@@ -62,6 +63,12 @@ export default function AccountInfoScreen() {
 
   const [boundPartnerName, setBoundPartnerName] = useState('未绑定');
 
+  // 用 ref 持有最新 profile，避免在 effect 依赖里引入 profile 导致重复拉取
+  const profileRef = React.useRef(null);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
   useEffect(() => {
     let isMounted = true;
     const fetchProfileData = async () => {
@@ -97,16 +104,78 @@ export default function AccountInfoScreen() {
         console.warn('离线状态，继续使用本地缓存的个人资料', e?.message ?? e);
       }
 
+      // 💞 第 0 步：本地缓存优先恢复搭子昵称（零网络，断网也能 0 秒显示，绝不误显示“未绑定”）
+      //    数据源优先级：@user_profile_cache.bound_partner_nickname
+      //                → @friends_list_${user.id}（useChatList 写入）→ @chatList_${user.id}（会话列表缓存）
+      let cachedPartnerName = cached?.bound_partner_nickname || null;
+      try {
+        const cachedPartnerId = cached?.bound_partner_id || null;
+        if (cachedPartnerId && !cachedPartnerName) {
+          const friendsRaw = await AsyncStorage.getItem(`@friends_list_${user.id}`);
+          const cachedFriends = friendsRaw ? JSON.parse(friendsRaw) : null;
+          if (Array.isArray(cachedFriends)) {
+            const hit = cachedFriends.find((f) => f && f.id === cachedPartnerId);
+            if (hit) cachedPartnerName = hit.nickname || hit.username || null;
+          }
+
+          // 兜底：老版本只写过 @chatList_，其中 friends 字段同样保存了好友资料
+          if (!cachedPartnerName) {
+            const chatListRaw = await AsyncStorage.getItem(`@chatList_${user.id}`);
+            const cachedChatList = chatListRaw ? JSON.parse(chatListRaw) : null;
+            if (cachedChatList && Array.isArray(cachedChatList.friends)) {
+              const hit = cachedChatList.friends.find((f) => f && f.id === cachedPartnerId);
+              if (hit) cachedPartnerName = hit.nickname || hit.username || null;
+            }
+          }
+        }
+      } catch (cacheError) {
+        console.warn('⚠️ 读取本地好友缓存（搭子昵称）失败:', cacheError?.message ?? cacheError);
+      }
+
+      // 缓存命中 → 立即渲染搭子昵称，无需等待网络
+      if (cachedPartnerName && isMounted) {
+        setBoundPartnerName(cachedPartnerName);
+      }
+
       try {
         const { data: partnerData } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
         if (partnerData?.bound_partner_id && isMounted) {
           const { data: pName } = await supabase.from('profiles').select('nickname, username').eq('id', partnerData.bound_partner_id).single();
-          if (pName) setBoundPartnerName(pName.nickname || pName.username);
+          if (pName) {
+            const partnerName = pName.nickname || pName.username;
+            setBoundPartnerName(partnerName);
+            // 💾 云端成功 → 把伴侣昵称一并写入 @user_profile_cache，下次断网可直接展示
+            if (partnerName) {
+              writeProfileCache({
+                ...(cached || {}),
+                ...(profileRef.current || {}),
+                id: user.id,
+                bound_partner_id: partnerData.bound_partner_id,
+                bound_partner_nickname: partnerName,
+              });
+            }
+          }
         } else if (isMounted) {
-          setBoundPartnerName('未绑定');
+          // 🔒 离线保护锁：只要本地缓存里存在 bound_partner_id，就绝不渲染“未绑定”
+          const hasBoundPartner = Boolean(cached?.bound_partner_id || cachedPartnerName);
+          if (!hasBoundPartner) {
+            setBoundPartnerName('未绑定');
+          }
         }
       } catch {
         // 伴侣信息拉取失败（离线/超时）→ 静默降级，不影响个人资料展示
+        // 🔒 离线保护锁：保留本地缓存恢复的搭子昵称，绝不重置为“未绑定”
+        if (!cachedPartnerName) {
+          console.warn('离线，搭子昵称暂用本地缓存');
+        }
+      }
+
+      // 🔒 最终兜底：只要 bound_partner_id 存在，就绝不允许界面停留在“未绑定”
+      if (isMounted) {
+        const finalPartnerId = cached?.bound_partner_id || profileRef.current?.bound_partner_id || null;
+        if (finalPartnerId) {
+          setBoundPartnerName((prev) => (prev && prev !== '未绑定' ? prev : '守护伴侣'));
+        }
       }
 
       if (isMounted) setLoadingProfile(false);
