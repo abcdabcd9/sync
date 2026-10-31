@@ -143,7 +143,7 @@ npx expo install @shopify/flash-list
 | **L2 二级页** | 从 L1 push 进入 | 隐藏 | 有 | `src/app/` 根目录 |
 | **L3 三级页** | 从 L2 再 push 进入 | 隐藏 | 有 | `src/app/<模块>/` 子目录 |
 
-**核心机制**：底栏是 [`src/app/(tabs)/_layout.js`](src/app/(tabs)/_layout.js:6) 中 `<Tabs>` 的一部分。任何位于 `(tabs)` 目录**之外**的路由，天然不渲染底栏——**无需任何手动隐藏逻辑**。
+**核心机制**：底栏是 [`src/app/(tabs)/_layout.js`](../../src/app/(tabs)/_layout.js) 中 `<Tabs>` 的一部分。任何位于 `(tabs)` 目录**之外**的路由，天然不渲染底栏——**无需任何手动隐藏逻辑**。
 
 ```mermaid
 graph TD
@@ -262,10 +262,10 @@ graph TB
 
 | 项 | 文件 | 说明 |
 |---|---|---|
-| 17 个色值 key | [`src/constants/colors.js`](src/constants/colors.js:1) | `primary: #FF2D55/#FF375F`、`card: rgba(255,255,255,0.75)`、`cardBorder`、`dockBackground`、`checkRing`、`checkBg` 等**一个不改** |
-| `SIZES` | [`src/constants/theme.js`](src/constants/theme.js:1) | `radiusCard: 24`、`radiusList: 16`、`padding: 20` **不改** |
-| `TYPOGRAPHY` | [`src/constants/theme.js`](src/constants/theme.js:8) | `largeTitle: { fontSize: 26, fontWeight: '700', letterSpacing: 0.5 }` **不改** |
-| `ThemeContext` API | [`src/context/ThemeContext.js`](src/context/ThemeContext.js:90) | `themeMode`/`setThemeMode`/`isDark`/`colors`/`isThemeLoaded` **不改** |
+| 17 个色值 key | [`src/constants/colors.js`](../../src/constants/colors.js) | `primary: #FF2D55/#FF375F`、`card: rgba(255,255,255,0.75)`、`cardBorder`、`dockBackground`、`checkRing`、`checkBg` 等**一个不改** |
+| `SIZES` | [`src/constants/theme.js`](../../src/constants/theme.js) | `radiusCard: 24`、`radiusList: 16`、`padding: 20` **不改** |
+| `TYPOGRAPHY` | [`src/constants/theme.js`](../../src/constants/theme.js) | `largeTitle: { fontSize: 26, fontWeight: '700', letterSpacing: 0.5 }` **不改** |
+| `ThemeContext` API | [`src/context/ThemeContext.js`](../../src/context/ThemeContext.js) | `themeMode`/`setThemeMode`/`isDark`/`colors`/`isThemeLoaded` **不改** |
 | 品牌主色语义 | 全局 | 粉色主色 `#FF2D55` 的使用场景不改（打卡、成功态、强调） |
 
 ### 3.2 允许微调（苹果风四维度）
@@ -486,7 +486,7 @@ graph TB
 
 ### 6.1 健康数据（首页核心）
 
-[`src/hooks/useHealthData.js`](src/hooks/useHealthData.js:15) 的 `HealthProvider` 已暴露全部所需 API：
+[`src/hooks/useHealthData.js`](../../src/hooks/useHealthData.js) 的 `HealthProvider` 已暴露全部所需 API：
 
 ```js
 {
@@ -508,9 +508,9 @@ graph TB
 | 四宫格连续天数 | `streakDays` |
 | `/health_detail` 全量 | 全部 API |
 
-**云端同步**：[`useHealthCloud`](src/hooks/health/useHealthCloud.js:27) 的 `commit`（`onConflict: 'user_id, record_date'`）、1500ms 防抖、`partner_health_channel` 订阅——全部保留。
+**云端同步**：[`useHealthCloud`](../../src/hooks/health/useHealthCloud.js) 的 `commit`（`onConflict: 'user_id, record_date'`）、1500ms 防抖、`partner_health_channel` 订阅——全部保留。
 
-**本地存储**：[`useHealthStorage`](src/hooks/health/useHealthStorage.js:36) 的 8 个 AsyncStorage key + 跨天重置——全部保留。
+**本地存储**：[`useHealthStorage`](../../src/hooks/health/useHealthStorage.js) 的 8 个 AsyncStorage key + 跨天重置——全部保留。
 
 > 注意：**MMKV 说明**：备忘录提到 MMKV，但 `package.json` 中**未安装** `react-native-mmkv`，当前用的是 AsyncStorage 2.2.0。**本期不引入**，AsyncStorage 已满足离线缓存需求。
 
@@ -518,28 +518,28 @@ graph TB
 
 | Hook | 关键能力 |
 |---|---|
-| [`useChatMessages`](src/hooks/chat/useChatMessages.js:52) | `CACHE_LIMIT=300`、`FETCH_LIMIT=50`、realtime `filter: receiver_id=eq.${user.id}` |
-| [`useMediaUpload`](src/hooks/chat/useMediaUpload.js:143) | 50MB 上限、`chat_media` bucket、7 天签名 URL |
-| [`useSignedMediaUrl`](src/hooks/chat/useSignedMediaUrl.js:161) | LRU 500 缓存 + inflight 去重 |
-| [`useAudioRecorder`](src/hooks/chat/useAudioRecorder.js:1) | 录音 + Groq Whisper 转写 |
+| [`useChatMessages`](../../src/hooks/chat/useChatMessages.js) | `CACHE_LIMIT=300`、`FETCH_LIMIT=50`、realtime `filter: receiver_id=eq.${user.id}` |
+| [`useMediaUpload`](../../src/hooks/chat/useMediaUpload.js) | 50MB 上限、`chat_media` bucket、7 天签名 URL |
+| [`useSignedMediaUrl`](../../src/hooks/chat/useSignedMediaUrl.js) | LRU 500 缓存 + inflight 去重 |
+| [`useAudioRecorder`](../../src/hooks/chat/useAudioRecorder.js) | 录音 + Groq Whisper 转写 |
 
 ### 6.3 放映厅数据
 
 | Hook | 关键能力 |
 |---|---|
-| [`useCinema`](src/hooks/useCinema.js:12) | 全局 `useVideoPlayer`、`SYNC_THRESHOLD=2.5`、500ms 轮询、`mixWithOthers` 音频 |
-| [`useSyncRoom`](src/hooks/useSyncRoom.js:46) | `broadcast`+`presence`、`sync_command`/`danmaku`、`MAX_DANMAKU_COUNT=100` |
+| [`useCinema`](../../src/hooks/useCinema.js) | 全局 `useVideoPlayer`、`SYNC_THRESHOLD=2.5`、500ms 轮询、`mixWithOthers` 音频 |
+| [`useSyncRoom`](../../src/hooks/useSyncRoom.js) | `broadcast`+`presence`、`sync_command`/`danmaku`、`MAX_DANMAKU_COUNT=100` |
 | `useCinemaRooms`（新建 阶段 4） | `cinema_rooms` 表 CRUD + 搜索 + realtime |
 
 ### 6.4 浏览器数据（5 个领域 Hook 已拆分，直接复用）
 
 | Hook | 职责 |
 |---|---|
-| [`useBrowserHistory`](src/hooks/browser/useBrowserHistory.js:24) | 书签 + 历史（`@browser_bookmarks`/`@browser_history`） |
-| [`useBrowserSniffer`](src/hooks/browser/useBrowserSniffer.js:32) | 媒体嗅探（`FILTER_OPTIONS`、`EMPTY_SNIFF_TIP`） |
-| [`useAdBlocker`](src/hooks/browser/useAdBlocker.js:1) | 广告拦截 |
-| [`useBrowserProgress`](src/hooks/browser/useBrowserProgress.js:1) | 加载进度 |
-| [`useBrowserNavigation`](src/hooks/browser/useBrowserNavigation.js:22) | 前进/后退/关闭/`goCinema`/`handleSubmitUrl` |
+| [`useBrowserHistory`](../../src/hooks/browser/useBrowserHistory.js) | 书签 + 历史（`@browser_bookmarks`/`@browser_history`） |
+| [`useBrowserSniffer`](../../src/hooks/browser/useBrowserSniffer.js) | 媒体嗅探（`FILTER_OPTIONS`、`EMPTY_SNIFF_TIP`） |
+| [`useAdBlocker`](../../src/hooks/browser/useAdBlocker.js) | 广告拦截 |
+| [`useBrowserProgress`](../../src/hooks/browser/useBrowserProgress.js) | 加载进度 |
+| [`useBrowserNavigation`](../../src/hooks/browser/useBrowserNavigation.js) | 前进/后退/关闭/`goCinema`/`handleSubmitUrl` |
 
 ---
 
@@ -580,7 +580,7 @@ src/
 
 ### 7.3 双后端（Supabase + Firebase）兼容预留
 
-> 推送链路已经落在 Firebase 上：客户端用 `expo-notifications` 取 Expo Push Token，Expo Push Service 在底层转发到 **FCM（Android）/ APNs（iOS）**，Firebase 配置文件 `google-services.json` / `GoogleService-Info.plist` 由 EAS Secret 注入（见 [`app.json`](app.json:59)）。本节讨论的是**数据访问层**的隔离——Firebase 只承担推送，不承担数据库，所以 `supabase.from(...)` 的收敛规则依然成立。
+> 推送链路已经落在 Firebase 上：客户端用 `expo-notifications` 取 Expo Push Token，Expo Push Service 在底层转发到 **FCM（Android）/ APNs（iOS）**，Firebase 配置文件 `google-services.json` / `GoogleService-Info.plist` 由 EAS Secret 注入（见 [`app.json`](../../app.json)）。本节讨论的是**数据访问层**的隔离——Firebase 只承担推送，不承担数据库，所以 `supabase.from(...)` 的收敛规则依然成立。
 
 **核心原则：UI 层永远不直接 `import { supabase }`。**
 
@@ -592,9 +592,9 @@ UI (src/app/**)  →  hooks (src/hooks/**)  →  services (src/services/**)  →
 |---|---|---|
 | **数据访问单点** | 所有 `supabase.from(...)` 只允许出现在 `src/hooks/**` 与 `src/services/**`；`src/app/**` 与 `src/components/**` 禁止直接调用 | 未来数据层若换后端（Firestore / 其他）只改 hooks/services |
 | **服务层命名中立** | 新增文件用 `src/services/<domain>Service.js`（如 `partnerService.js`），不叫 `supabasePartner.js` | 未来内部可切换实现 |
-| **推送抽象** | 现有 [`pushService.js`](src/services/pushService.js:1) 保持为唯一推送出口；新页面一律调它，不直接调 Expo Push | 换推送通道（FCM 直连 / 其他厂商）只改此文件 + `send-push` 边缘函数 |
-| **实时订阅封装** | Realtime 订阅写在 hook 内（如 [`useChatMessages`](src/hooks/chat/useChatMessages.js:52)），页面只消费状态 | 未来换 Firestore onSnapshot 只改 hook |
-| **鉴权抽象** | 页面只用 [`useAuth`](src/hooks/useAuth.js:7) 暴露的 `user` / `signOut`，不直接调 `supabase.auth` | 未来接 Firebase Auth 只改 AuthProvider |
+| **推送抽象** | 现有 [`pushService.js`](../../src/services/pushService.js) 保持为唯一推送出口；新页面一律调它，不直接调 Expo Push | 换推送通道（FCM 直连 / 其他厂商）只改此文件 + `send-push` 边缘函数 |
+| **实时订阅封装** | Realtime 订阅写在 hook 内（如 [`useChatMessages`](../../src/hooks/chat/useChatMessages.js)），页面只消费状态 | 未来换 Firestore onSnapshot 只改 hook |
+| **鉴权抽象** | 页面只用 [`useAuth`](../../src/hooks/useAuth.js) 暴露的 `user` / `signOut`，不直接调 `supabase.auth` | 未来接 Firebase Auth 只改 AuthProvider |
 | **环境变量集中** | 密钥只从 `src/services/supabase.js` 读取 `process.env.EXPO_PUBLIC_*` | 新增后端配置同处管理 |
 
 **本次落地检查项（阶段 7 收口时执行）**：
@@ -645,7 +645,7 @@ export const FEATURES = {
 | R1 | **改动色值 / 尺寸导致视觉回归** | 全部 | 高（违反红线） | 中 | 所有颜色只从 `useAppTheme().colors` 取；禁止硬编码 hex；阶段 7 全量 grep `#[0-9A-Fa-f]{6}` 审查 |
 | R2 | **动效掉帧（< 60fps）** | 3/4/5 | 高（违反硬性要求） | 中 | 只用 Reanimated worklet；禁止在动画中 `setState`；长列表必须 FlashList；真机（非模拟器）验收 |
 | R3 | **`(tabs)` 外新增路由误显示底栏** | 2/3 | 中 | 低 | 新页面一律放 `src/app/` 根或 `src/app/<module>/`，**绝不**放 `(tabs)/`；验收时逐页检查 |
-| R4 | **设置页拆分后丢失原有项** | 3 | 高（用户明确要求全保留） | 中 | 拆分前先列清单（见 §3.3 设置页），逐项打勾；拆分后与原 [`settings.js`](src/app/settings.js:46) 逐条比对 |
+| R4 | **设置页拆分后丢失原有项** | 3 | 高（用户明确要求全保留） | 中 | 拆分前先列清单（见 §3.3 设置页），逐项打勾；拆分后与原 [`settings.js`](../../src/app/settings.js) 逐条比对 |
 | R5 | **聊天页 IM 化后破坏现有消息流** | 4 | 高 | 中 | 只改「列表层 + 入口」，`ChatRoomInner` / `MessageBubble` / `useChatMessages` 不动；回归测试收发文字/图片/语音 |
 | R6 | **FlashList 与现有 ScrollView 嵌套冲突** | 4/5 | 中 | 中 | FlashList 只用于最外层列表；内部不再套 ScrollView；`estimatedItemSize` 必填 |
 | R7 | **私密空间 / 朋友圈 RLS 配置错误导致越权** | 6 | 高（安全） | 中 | 严格按 §6 的 SQL 建表；每条策略都用两个账号实测（A 不能读 B） |
@@ -710,50 +710,50 @@ export const FEATURES = {
 
 | 文件 | 阶段 | 改动摘要 |
 |---|---|---|
-| [`src/app/(tabs)/index.js`](src/app/(tabs)/index.js:15) | 2 | 首页重写（搭子卡 + 饮水 + 2×2 餐食 + 打卡） |
-| [`src/app/(tabs)/space.js`](src/app/(tabs)/space.js:12) | 3 | 4 卡布局 + 苹果风 |
-| [`src/app/(tabs)/chat.js`](src/app/(tabs)/chat.js:35) | 4 | 纯 IM 化（消息/联系人分段，去掉搜索加友到独立页） |
-| [`src/app/(tabs)/profile.js`](src/app/(tabs)/profile.js:18) | 3 | 保持结构 + 苹果风微调 |
-| [`src/app/settings.js`](src/app/settings.js:46) | 3 | **改为重定向**到 `src/app/settings/index.js`（保留旧路径兼容） |
-| [`src/app/cinema.js`](src/app/cinema.js:33) | 5 | **改为重定向**到 `src/app/cinema/index.js` |
-| [`src/app/browser.js`](src/app/browser.js:32) | 5 | **改为重定向**到 `src/app/browser/index.js` |
-| [`src/app/(tabs)/_layout.js`](src/app/(tabs)/_layout.js:6) | 1 | 仅确认无改动（底栏由 CustomTabBar 控制） |
-| [`src/components/CustomTabBar.js`](src/components/CustomTabBar.js:13) | 1 | 苹果风微调（图标动效 + 触感），不改色值 |
-| [`src/components/WaterProgress.js`](src/components/WaterProgress.js:41) | 2 | 苹果风微调（水位动画曲线） |
-| [`src/components/MealListItem.js`](src/components/MealListItem.js:6) | 2 | 苹果风微调（按压反馈） |
-| [`src/components/MealDetailSheet.js`](src/components/MealDetailSheet.js:6) | 2 | 苹果风微调（Sheet 弹簧曲线） |
-| [`src/components/ChatRoomInner.js`](src/components/ChatRoomInner.js:33) | 4 | 苹果风微调（气泡入场动效），逻辑不动 |
-| [`src/components/MessageBubble.js`](src/components/MessageBubble.js:1) | 4 | 苹果风微调（长按菜单触感） |
-| [`src/components/ChatInputBar.js`](src/components/ChatInputBar.js:1) | 4 | 苹果风微调（面板弹出曲线） |
-| [`src/components/FloatingPlayer.js`](src/components/FloatingPlayer.js:25) | 5 | 苹果风微调（吸附弹簧） |
-| [`src/components/browser/BrowserMenuModal.js`](src/components/browser/BrowserMenuModal.js:1) | 5 | 苹果风微调 |
-| [`src/components/browser/SniffedMediaModal.js`](src/components/browser/SniffedMediaModal.js:91) | 5 | 苹果风微调 |
-| [`src/app/account_info.js`](src/app/account_info.js:50) | 3 | 苹果风微调 |
-| [`src/app/bind_partner.js`](src/app/bind_partner.js:22) | 2 | 苹果风微调 |
-| [`src/app/invite_friend.js`](src/app/invite_friend.js:23) | 4 | 苹果风微调 |
-| [`src/app/contact_profile.js`](src/app/contact_profile.js:11) | 4 | 苹果风微调 |
-| [`src/app/chat_room.js`](src/app/chat_room.js:32) | 4 | 苹果风微调 |
-| [`src/app/auth.js`](src/app/auth.js:1) | 1 | 苹果风微调 |
-| [`src/app/_layout.js`](src/app/_layout.js:15) | 1 | 新增 Provider（若有）/ 确认无改动 |
-| [`package.json`](package.json:1) | 1 | 新增 `@shopify/flash-list` |
+| [`src/app/(tabs)/index.js`](../../src/app/(tabs)/index.js) | 2 | 首页重写（搭子卡 + 饮水 + 2×2 餐食 + 打卡） |
+| [`src/app/(tabs)/space.js`](../../src/app/(tabs)/space.js) | 3 | 4 卡布局 + 苹果风 |
+| [`src/app/(tabs)/chat.js`](../../src/app/(tabs)/chat.js) | 4 | 纯 IM 化（消息/联系人分段，去掉搜索加友到独立页） |
+| [`src/app/(tabs)/profile.js`](../../src/app/(tabs)/profile.js) | 3 | 保持结构 + 苹果风微调 |
+| [`src/app/settings.js`](../../src/app/settings.js) | 3 | **改为重定向**到 `src/app/settings/index.js`（保留旧路径兼容） |
+| [`src/app/cinema.js`](../../src/app/cinema.js) | 5 | **改为重定向**到 `src/app/cinema/index.js` |
+| [`src/app/browser.js`](../../src/app/browser/index.js) | 5 | **改为重定向**到 `src/app/browser/index.js` |
+| [`src/app/(tabs)/_layout.js`](../../src/app/(tabs)/_layout.js) | 1 | 仅确认无改动（底栏由 CustomTabBar 控制） |
+| [`src/components/CustomTabBar.js`](../../src/components/CustomTabBar.js) | 1 | 苹果风微调（图标动效 + 触感），不改色值 |
+| [`src/components/WaterProgress.js`](../../src/components/WaterProgress.js) | 2 | 苹果风微调（水位动画曲线） |
+| [`src/components/MealListItem.js`](../../src/components/MealListItem.js) | 2 | 苹果风微调（按压反馈） |
+| [`src/components/MealDetailSheet.js`](../../src/components/MealDetailSheet.js) | 2 | 苹果风微调（Sheet 弹簧曲线） |
+| [`src/components/ChatRoomInner.js`](../../src/components/ChatRoomInner.js) | 4 | 苹果风微调（气泡入场动效），逻辑不动 |
+| [`src/components/MessageBubble.js`](../../src/components/MessageBubble.js) | 4 | 苹果风微调（长按菜单触感） |
+| [`src/components/ChatInputBar.js`](../../src/components/ChatInputBar.js) | 4 | 苹果风微调（面板弹出曲线） |
+| [`src/components/FloatingPlayer.js`](../../src/components/FloatingPlayer.js) | 5 | 苹果风微调（吸附弹簧） |
+| [`src/components/browser/BrowserMenuModal.js`](../../src/components/browser/BrowserMenuModal.js) | 5 | 苹果风微调 |
+| [`src/components/browser/SniffedMediaModal.js`](../../src/components/browser/SniffedMediaModal.js) | 5 | 苹果风微调 |
+| [`src/app/account_info.js`](../../src/app/account_info.js) | 3 | 苹果风微调 |
+| [`src/app/bind_partner.js`](../../src/app/bind_partner.js) | 2 | 苹果风微调 |
+| [`src/app/invite_friend.js`](../../src/app/invite_friend.js) | 4 | 苹果风微调 |
+| [`src/app/contact_profile.js`](../../src/app/contact_profile.js) | 4 | 苹果风微调 |
+| [`src/app/chat_room.js`](../../src/app/chat_room.js) | 4 | 苹果风微调 |
+| [`src/app/auth.js`](../../src/app/auth.js) | 1 | 苹果风微调 |
+| [`src/app/_layout.js`](../../src/app/_layout.js) | 1 | 新增 Provider（若有）/ 确认无改动 |
+| [`package.json`](../../package.json) | 1 | 新增 `@shopify/flash-list` |
 
 ### 9.3 本次绝对不动的文件（红线）
 
 | 文件 | 原因 |
 |---|---|
-| [`src/constants/colors.js`](src/constants/colors.js:1) | 最高指令：色值不可改 |
-| [`src/constants/theme.js`](src/constants/theme.js:1) | SIZES / TYPOGRAPHY 不可改 |
-| [`src/context/ThemeContext.js`](src/context/ThemeContext.js:29) | 主题控制权不可改（只可读） |
-| [`src/services/supabase.js`](src/services/supabase.js:1) | 客户端单点，不改 |
-| [`src/hooks/useAuth.js`](src/hooks/useAuth.js:7) | 仅可加 `isPremium` 占位（可选） |
-| [`src/hooks/useHealthData.js`](src/hooks/useHealthData.js:15) | 数据层不动，只消费 |
-| [`src/hooks/useCinema.js`](src/hooks/useCinema.js:12) | 数据层不动，只消费 |
-| [`src/hooks/chat/useChatMessages.js`](src/hooks/chat/useChatMessages.js:52) | 数据层不动，只消费 |
-| [`src/hooks/chat/useMediaUpload.js`](src/hooks/chat/useMediaUpload.js:143) | 数据层不动，只消费 |
-| [`src/hooks/chat/useSignedMediaUrl.js`](src/hooks/chat/useSignedMediaUrl.js:161) | 数据层不动，只消费 |
-| [`src/hooks/browser/*`](src/hooks/browser/useBrowserHistory.js:24) | 5 个领域 hook 已拆分，直接复用 |
-| [`src/scripts/browser/*`](src/scripts/browser/index.js:1) | 注入脚本不动 |
-| [`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts:1) | 边缘函数不动 |
+| [`src/constants/colors.js`](../../src/constants/colors.js) | 最高指令：色值不可改 |
+| [`src/constants/theme.js`](../../src/constants/theme.js) | SIZES / TYPOGRAPHY 不可改 |
+| [`src/context/ThemeContext.js`](../../src/context/ThemeContext.js) | 主题控制权不可改（只可读） |
+| [`src/services/supabase.js`](../../src/services/supabase.js) | 客户端单点，不改 |
+| [`src/hooks/useAuth.js`](../../src/hooks/useAuth.js) | 仅可加 `isPremium` 占位（可选） |
+| [`src/hooks/useHealthData.js`](../../src/hooks/useHealthData.js) | 数据层不动，只消费 |
+| [`src/hooks/useCinema.js`](../../src/hooks/useCinema.js) | 数据层不动，只消费 |
+| [`src/hooks/chat/useChatMessages.js`](../../src/hooks/chat/useChatMessages.js) | 数据层不动，只消费 |
+| [`src/hooks/chat/useMediaUpload.js`](../../src/hooks/chat/useMediaUpload.js) | 数据层不动，只消费 |
+| [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSignedMediaUrl.js) | 数据层不动，只消费 |
+| [`src/hooks/browser/*`](../../src/hooks/browser/useBrowserHistory.js) | 5 个领域 hook 已拆分，直接复用 |
+| [`src/scripts/browser/*`](../../src/scripts/browser/index.js) | 注入脚本不动 |
+| [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts) | 边缘函数不动 |
 
 ### 9.4 阶段验收命令（每阶段结束必跑）
 

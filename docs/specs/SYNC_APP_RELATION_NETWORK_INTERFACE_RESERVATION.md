@@ -134,7 +134,7 @@ graph LR
 | **先重构 → 后多搭子** | 21-29 天 + 3-5 天 | **无** | 多搭子是增量，直接叠加 |
 | **先多搭子 → 后重构** | 3-5 天 + 21-29 天 + **重写多搭子** | **高** | 重构会重写整个首页，多搭子 UI 被推翻 |
 
-**关键原因**：重构阶段 2 会**完全重写** [`src/app/(tabs)/index.js`](src/app/(tabs)/index.js:15)，并新建 [`PartnerStatusCard`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:781)。现在做的多搭子 UI 到时候会被整体推翻。
+**关键原因**：重构阶段 2 会**完全重写** [`src/app/(tabs)/index.js`](../../src/app/(tabs)/index.js)，并新建 [`PartnerStatusCard`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md)。现在做的多搭子 UI 到时候会被整体推翻。
 
 ### 2.3 预留 vs 实现的边界
 
@@ -704,7 +704,7 @@ graph TD
 ### 6.1 `PartnerStatusCard` 的 Props 设计（阶段 2 建组件时按此设计）
 
 > **这是唯一需要在重构阶段"注意"的组件设计点。**
-> 阶段 2 新建 [`PartnerStatusCard`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:781) 时，Props 设计成"接收单个 partner 对象"，而不是"从 context 里读全局单例"。这样未来渲染列表时可以直接复用。
+> 阶段 2 新建 [`PartnerStatusCard`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md) 时，Props 设计成"接收单个 partner 对象"，而不是"从 context 里读全局单例"。这样未来渲染列表时可以直接复用。
 
 ```js
 // src/components/home/PartnerStatusCard.js
@@ -865,7 +865,7 @@ graph TD
 | `src/app/relation.js` 与 `src/app/relation/index.js` | **不可共存**，二选一 |
 | `src/app/relation/circle.js` 与 `src/app/relation/circle/index.js` | **不可共存**，二选一 |
 | 底栏显示 | `relation/` 在 `(tabs)` 之外，**自动隐藏底栏**，无需代码 |
-| 返回按钮 | L2/L3 页面需自行实现返回（参考 [`settings/index.js`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1393)） |
+| 返回按钮 | L2/L3 页面需自行实现返回（参考 [`settings/index.js`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md)） |
 
 ---
 
@@ -1029,7 +1029,7 @@ npx expo-doctor
 | # | 红线 | 原因 |
 |---|---|---|
 | R1 | **当前阶段不做开放陌生人关系网**（重启需满足 §8.4 的 5 条门槛） | 健康数据隐私 + 合规 + 审核成本（§1.3） |
-| R2 | **不改 [`colors.js`](src/constants/colors.js:1) / [`theme.js`](src/constants/theme.js:1) / [`ThemeContext.js`](src/context/ThemeContext.js:29)** | 最高指令，任何阶段不得违反 |
+| R2 | **不改 [`colors.js`](../../src/constants/colors.js) / [`theme.js`](../../src/constants/theme.js) / [`ThemeContext.js`](../../src/context/ThemeContext.js)** | 最高指令，任何阶段不得违反 |
 | R3 | **不在重构阶段写任何关系网络实现代码** | 避免返工（§2.2） |
 | R4 | **`bind_partner` 的 RLS 必须只允许关系双方可见** | 健康数据隐私 |
 | R5 | **圈子成员上限硬编码在 DB check 约束** | 防止前端绕过 |
@@ -1049,9 +1049,9 @@ npx expo-doctor
 
 本文档**不新增任何红线**，只是重申主执行书 §0.2 的约束：
 
-- [`colors.js`](src/constants/colors.js:1) 不可改
-- [`theme.js`](src/constants/theme.js:1) 不可改
-- [`ThemeContext.js`](src/context/ThemeContext.js:29) 不可改
+- [`colors.js`](../../src/constants/colors.js) 不可改
+- [`theme.js`](../../src/constants/theme.js) 不可改
+- [`ThemeContext.js`](../../src/context/ThemeContext.js) 不可改
 - 主题色 / UI / UX 不可改
 
 ---

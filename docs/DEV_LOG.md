@@ -13,12 +13,12 @@
 
 ### ① 下线地图卡片（保留定位能力）
 
-只删「聊天里的地图卡片」这一条链路，[`src/app/chat/location.js`](src/app/chat/location.js:49) 定位页本身**完整保留**（位置能力不删）。
+只删「聊天里的地图卡片」这一条链路，[`src/app/chat/location.js`](../src/app/chat/location.js) 定位页本身**完整保留**（位置能力不删）。
 
-- [`ChatInputBar.js`](src/components/ChatInputBar.js:330)：`allActionItems` 移除 `location` 项，「+」面板不再有「位置」入口。
-- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:241)：删除 `locLat/locLng/locLabel` 回传 effect、`handlePickLocation`、`routerRef` / `consumedLocRef`，以及 `useLocalSearchParams` 导入与 `routeParams`。
-- [`MessageBubble.js`](src/components/MessageBubble.js:188)：删除 `type === 'location'` 的地图卡片渲染分支、`parseLocationCoords()`、`openInMaps()`、6 条 `location*` 样式，以及不再使用的 `Linking` / `Alert` 导入。
-- [`useChatList.js`](src/hooks/chat/useChatList.js:16)：保留 `type === 'location' → '[位置]'` 的**只读兼容**，历史消息在会话列表仍能正常显示预览。
+- [`ChatInputBar.js`](../src/components/ChatInputBar.js)：`allActionItems` 移除 `location` 项，「+」面板不再有「位置」入口。
+- [`ChatRoomInner.js`](../src/components/ChatRoomInner.js)：删除 `locLat/locLng/locLabel` 回传 effect、`handlePickLocation`、`routerRef` / `consumedLocRef`，以及 `useLocalSearchParams` 导入与 `routeParams`。
+- [`MessageBubble.js`](../src/components/MessageBubble.js)：删除 `type === 'location'` 的地图卡片渲染分支、`parseLocationCoords()`、`openInMaps()`、6 条 `location*` 样式，以及不再使用的 `Linking` / `Alert` 导入。
+- [`useChatList.js`](../src/hooks/chat/useChatList.js)：保留 `type === 'location' → '[位置]'` 的**只读兼容**，历史消息在会话列表仍能正常显示预览。
 
 > 历史 `type='location'` 消息在气泡里会降级为普通文本气泡（显示地址文字），不会变成空白。
 
@@ -26,7 +26,7 @@
 
 **根因**：`CustomImagePlayer` 里 `<Image>` 的样式是 `fullScreenMedia = { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }`，再配 `contentFit="contain"`。expo-image 在「容器尺寸 == 屏幕尺寸」且外层 `ScrollView` 带 `maximumZoomScale` 时，Android 会按容器裁剪（iOS 偶发同样表现），于是横屏照片左右被切、竖屏照片上下被切。
 
-**修复**（[`InteractiveMediaViewer.js`](src/components/InteractiveMediaViewer.js:254)）：
+**修复**（[`InteractiveMediaViewer.js`](../src/components/InteractiveMediaViewer.js)）：
 
 - 新增 `naturalSize` 状态 + `displaySize` 计算：按图片真实宽高**等比缩放**到「不超出屏幕」，把 `Image` 的宽高直接设成这个尺寸。
 - 尺寸未知时先铺满屏幕（`contain` 兜底），`onLoad` 拿到 `e.source.width/height` 后立刻替换。
@@ -53,32 +53,32 @@
 
 **① 位置卡片不即时出现：`router.replace` 重挂载 + `setMessages` 盲覆盖**
 
-[`location.js`](src/app/chat/location.js:183) 发送后走 `router.replace` 回 `/chat_room`，这会**重新挂载** [`ChatRoomInner`](src/components/ChatRoomInner.js:35)，[`useChatMessages`](src/hooks/chat/useChatMessages.js:52) 的 `messages` 从 `[]` 重新开始。紧接着 `fetchMessages` 里 [`setMessages(mergedMessages)`](src/hooks/chat/useChatMessages.js:91) 是**整体覆盖**，而此刻 DB 的 insert 可能还没提交完 —— 于是乐观插入的那条位置消息被抹掉，卡片消失。等用户退出重进时 DB 已有数据，才「突然出现」。
+[`location.js`](../src/app/chat/location.js) 发送后走 `router.replace` 回 `/chat_room`，这会**重新挂载** [`ChatRoomInner`](../src/components/ChatRoomInner.js)，[`useChatMessages`](../src/hooks/chat/useChatMessages.js) 的 `messages` 从 `[]` 重新开始。紧接着 `fetchMessages` 里 [`setMessages(mergedMessages)`](../src/hooks/chat/useChatMessages.js) 是**整体覆盖**，而此刻 DB 的 insert 可能还没提交完 —— 于是乐观插入的那条位置消息被抹掉，卡片消失。等用户退出重进时 DB 已有数据，才「突然出现」。
 
 **② 重新定位闪烁：`setStatus('loading')` 把整块内容卸载了**
 
-[`handleRelocate`](src/app/chat/location.js:141) 里 `setStatus('loading')` + `setAddress('')` + `setHint('')`，导致 `status === 'ready'` 的整块 UI（图钉 / 地址 / 坐标 / 提示）被卸载，换成居中的 `ActivityIndicator`，定位回来再挂回去 —— 视觉上就是「闪一下、消失、再出现」。
+[`handleRelocate`](../src/app/chat/location.js) 里 `setStatus('loading')` + `setAddress('')` + `setHint('')`，导致 `status === 'ready'` 的整块 UI（图钉 / 地址 / 坐标 / 提示）被卸载，换成居中的 `ActivityIndicator`，定位回来再挂回去 —— 视觉上就是「闪一下、消失、再出现」。
 
 **③ 横屏照片被裁切：固定 220×300 竖框 + `contentFit="cover"`**
 
-[`MessageBubble.js`](src/components/MessageBubble.js:266) 的 `bubbleMedia` 写死 `{ width: 220, height: 300 }`，配合 `contentFit="cover"`，横屏照片会被裁掉左右两侧去填满竖框，看起来就是「被放大 + 截掉一部分」。
+[`MessageBubble.js`](../src/components/MessageBubble.js) 的 `bubbleMedia` 写死 `{ width: 220, height: 300 }`，配合 `contentFit="cover"`，横屏照片会被裁掉左右两侧去填满竖框，看起来就是「被放大 + 截掉一部分」。
 
 **④ 语音转文字失败：SDK 58 的全局 `fetch` 换成了 `expo/fetch`**
 
-这是本次最隐蔽的一个。Expo SDK 58 把全局 `fetch` 替换为 **`expo/fetch`（winter fetch）**。它的 [`convertFormDataAsync()`](node_modules/expo/src/winter/fetch/convertFormData.ts:38) 只接受三种 part：
+这是本次最隐蔽的一个。Expo SDK 58 把全局 `fetch` 替换为 **`expo/fetch`（winter fetch）**。它的 `convertFormDataAsync()`（位于 `node_modules/expo/src/winter/fetch/convertFormData.ts`）只接受三种 part：
 
 - `string`
 - `instanceof Blob`
 - 带 `bytes()` 方法的对象
 
-RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是**，于是 [`convertFormData.ts:77`](node_modules/expo/src/winter/fetch/convertFormData.ts:77) 直接抛 `Unsupported FormDataPart implementation`。注意这个错误串在 RN 原生层（`NetworkingModule.kt`）里根本不存在，所以之前一直误判成「网络问题」。
+RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是**，于是 `convertFormData.ts` 第 77 行直接抛 `Unsupported FormDataPart implementation`。注意这个错误串在 RN 原生层（`NetworkingModule.kt`）里根本不存在，所以之前一直误判成「网络问题」。
 
 ### 修复
 
 **① 位置卡片即时出现**
 
-- [`useChatMessages.js`](src/hooks/chat/useChatMessages.js:91)：`setMessages` 改为**函数式合并** —— 保留本地独有的（乐观）消息，按 id 去重，远端优先，本地独有的前置。
-- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:254)：位置 effect 捕获 `insertError`，插入失败时 `consumedLocRef.current = null` 并直接 return（不清 params，允许重进重试）；**只有插入成功后才清路由参数**。
+- [`useChatMessages.js`](../src/hooks/chat/useChatMessages.js)：`setMessages` 改为**函数式合并** —— 保留本地独有的（乐观）消息，按 id 去重，远端优先，本地独有的前置。
+- [`ChatRoomInner.js`](../src/components/ChatRoomInner.js)：位置 effect 捕获 `insertError`，插入失败时 `consumedLocRef.current = null` 并直接 return（不清 params，允许重进重试）；**只有插入成功后才清路由参数**。
 
 **② 重新定位不闪烁**
 
@@ -87,14 +87,14 @@ RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是
 
 **③ 图片按原比例完整显示**
 
-- 新增 [`computeMediaSize(width, height)`](src/components/MessageBubble.js:62)：按真实宽高比计算气泡尺寸，上限 `220×300`，最小边 `80`，尺寸未知时退回 4:3 横框。
+- 新增 [`computeMediaSize(width, height)`](../src/components/MessageBubble.js)：按真实宽高比计算气泡尺寸，上限 `220×300`，最小边 `80`，尺寸未知时退回 4:3 横框。
 - `contentFit` 由 `cover` 改为 **`contain`**，`bubbleMedia` 改为 `width/height: '100%'`。
 - `onLoad` 用 `e.source.width/height` 二次校正（本地 URI 首帧可能拿不到尺寸）。
-- [`useMediaUpload.js`](src/hooks/chat/useMediaUpload.js:270)：乐观发送时写入 `mediaWidth` / `mediaHeight`，首帧即为正确比例，无跳变。
+- [`useMediaUpload.js`](../src/hooks/chat/useMediaUpload.js)：乐观发送时写入 `mediaWidth` / `mediaHeight`，首帧即为正确比例，无跳变。
 
 **④ 语音转文字**
 
-- [`ChatInputBar.js`](src/components/ChatInputBar.js:46)：改用 `expo-file-system` 的 `File`（`class File implements Blob`，原生实现 `bytes()`），直接 `formData.append('file', audioFile, 'voice.xxx')`，满足 `expo/fetch` 的序列化要求。
+- [`ChatInputBar.js`](../src/components/ChatInputBar.js)：改用 `expo-file-system` 的 `File`（`class File implements Blob`，原生实现 `bytes()`），直接 `formData.append('file', audioFile, 'voice.xxx')`，满足 `expo/fetch` 的序列化要求。
 - 顺带删掉不再需要的 `audioMimeOf`（MIME 由 `File.type` 原生推断）。
 
 ### 验收
@@ -406,7 +406,7 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 改为把卡片包进 `<Group style={{ marginTop: 24 }}>`，去掉自身 margin 与 border —— 宽度由 `Group` 决定，与「查找聊天记录」「消息免打扰」等行**完全等宽**，圆角与卡片底色也自动继承。
 
-见 [`chat_settings.js`](src/app/chat/chat_settings.js:132)。
+见 [`chat_settings.js`](../src/app/chat/chat_settings.js)。
 
 **验收**：`npx tsc --noEmit` → 0；`eslint chat_settings.js` → 0；全量 `npx expo lint` → 139 problems，与基线持平。
 
@@ -423,11 +423,11 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 | 浅色 | `#E2E2E7` | `#F2F2F7` | 压暗 |
 | 深色 | `#2A2A2E` | `#1C1C1E` | **提亮** |
 
-见 [`ConversationRow.js`](src/components/chat/ConversationRow.js:28)。
+见 [`ConversationRow.js`](../src/components/chat/ConversationRow.js)。
 
 **2. 聊天设置页顶部新增联系人头像卡片**
 
-[`chat_settings.js`](src/app/chat/chat_settings.js:19) 在「查找聊天记录」上方插入一张卡片：52×52 圆角头像（昵称前两字）+ 昵称 + `ID: xxx` + 右箭头。
+[`chat_settings.js`](../src/app/chat/chat_settings.js) 在「查找聊天记录」上方插入一张卡片：52×52 圆角头像（昵称前两字）+ 昵称 + `ID: xxx` + 右箭头。
 
 - 数据来源：`useEffect` 里 `supabase.from('profiles').select('id, nickname, username, sync_id').eq('id', targetId).maybeSingle()`，失败时回退到路由参数 `targetName`。
 - 点击 → `router.push('/chat/friend_settings')`，携带 `id / nickname / username / sync_id`，**与通讯录详细页「3 个点」跳转的是同一个页面**。
@@ -443,34 +443,34 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 **1. 隐藏聊天恢复机制（Bug 修复）**
 
-- 新增 [`src/hooks/chat/useChatPrefs.js`](src/hooks/chat/useChatPrefs.js:35)：按用户 ID 隔离的 AsyncStorage 偏好存储（`pinned` / `hidden` / `muted` / `starred` / `blocked` / `backgrounds`）。
-- 恢复逻辑在 [`chat.js`](src/app/(tabs)/chat.js:35)：`useEffect` 监听 `latestMessages`，只要某个被隐藏的会话产生了新消息（**收或发**），立即 `prefs.unhide(id)`。因为 `latestMessages` 由 `useChatList` 的 realtime 监听驱动，收发两个方向都能捕获。
+- 新增 [`src/hooks/chat/useChatPrefs.js`](../src/hooks/chat/useChatPrefs.js)：按用户 ID 隔离的 AsyncStorage 偏好存储（`pinned` / `hidden` / `muted` / `starred` / `blocked` / `backgrounds`）。
+- 恢复逻辑在 [`chat.js`](../src/app/(tabs)/chat.js)：`useEffect` 监听 `latestMessages`，只要某个被隐藏的会话产生了新消息（**收或发**），立即 `prefs.unhide(id)`。因为 `latestMessages` 由 `useChatList` 的 realtime 监听驱动，收发两个方向都能捕获。
 - 列表渲染改用 `visibleConversations`（`useMemo`）：先过滤 `hidden`，再按 `pinned` 稳定排序。
 
 **2. 置顶视觉提示**
 
-- [`ConversationRow.js`](src/components/chat/ConversationRow.js:15) 新增 `isPinned` prop，置顶行背景加深：深色 `#0A0A0B`、浅色 `#E2E2E7`（比选中态 `#1C1C1E` / `#F2F2F7` 更暗，两者可区分）。
+- [`ConversationRow.js`](../src/components/chat/ConversationRow.js) 新增 `isPinned` prop，置顶行背景加深：深色 `#0A0A0B`、浅色 `#E2E2E7`（比选中态 `#1C1C1E` / `#F2F2F7` 更暗，两者可区分）。
 
 **3. 「3 个点」全面页面化（不再弹窗、不再共用）**
 
 - 删除 `src/components/chat/ContactActionsMenu.js`（原共用弹窗组件）。
-- 聊天室 L2 右上角「3 个点」→ [`router.push('/chat/chat_settings')`](src/components/ChatRoomInner.js:210)。
-- 通讯录详细页 L3 右上角「3 个点」→ [`router.push('/chat/friend_settings')`](src/app/contact_profile.js:33)。
+- 聊天室 L2 右上角「3 个点」→ [`router.push('/chat/chat_settings')`](../src/components/ChatRoomInner.js)。
+- 通讯录详细页 L3 右上角「3 个点」→ [`router.push('/chat/friend_settings')`](../src/app/contact_profile.js)。
 
 **4. 新增 5 个 L3 页面**
 
 | 页面 | 路径 | 功能 |
 |---|---|---|
-| 聊天设置 | [`chat_settings.js`](src/app/chat/chat_settings.js:19) | 查找记录（跳转）/ 免打扰 + 置顶提醒（SwitchRow）/ 聊天背景（跳转）/ 清空记录 / 投诉（跳转） |
-| 查找聊天记录 | [`chat_search.js`](src/app/chat/chat_search.js:14) | `messages` 表 `ilike` 关键词搜索，限本会话双向，最多 50 条 |
-| 聊天背景 | [`chat_background.js`](src/app/chat/chat_background.js:15) | `CHAT_BACKGROUNDS` 单选列表，写入 `prefs.setBackground` |
-| 朋友设置 | [`friend_settings.js`](src/app/chat/friend_settings.js:19) | 设置资料（备注）/ 朋友权限（跳转）/ 星标 / 推荐 / 添加到桌面 / 黑名单 / 投诉（跳转）/ 删除好友 |
-| 朋友权限 | [`friend_permission.js`](src/app/chat/friend_permission.js:24) | 「全部可见」/「仅聊天」单选 |
-| 投诉 | [`complaint.js`](src/app/chat/complaint.js:20) | 5 类原因单选 + 补充说明 → `complaints` 表插入（`scope` 区分 chat / friend） |
+| 聊天设置 | [`chat_settings.js`](../src/app/chat/chat_settings.js) | 查找记录（跳转）/ 免打扰 + 置顶提醒（SwitchRow）/ 聊天背景（跳转）/ 清空记录 / 投诉（跳转） |
+| 查找聊天记录 | [`chat_search.js`](../src/app/chat/chat_search.js) | `messages` 表 `ilike` 关键词搜索，限本会话双向，最多 50 条 |
+| 聊天背景 | [`chat_background.js`](../src/app/chat/chat_background.js) | `CHAT_BACKGROUNDS` 单选列表，写入 `prefs.setBackground` |
+| 朋友设置 | [`friend_settings.js`](../src/app/chat/friend_settings.js) | 设置资料（备注）/ 朋友权限（跳转）/ 星标 / 推荐 / 添加到桌面 / 黑名单 / 投诉（跳转）/ 删除好友 |
+| 朋友权限 | [`friend_permission.js`](../src/app/chat/friend_permission.js) | 「全部可见」/「仅聊天」单选 |
+| 投诉 | [`complaint.js`](../src/app/chat/complaint.js) | 5 类原因单选 + 补充说明 → `complaints` 表插入（`scope` 区分 chat / friend） |
 
 **5. 数据层**
 
-- 新增 [`src/hooks/chat/useFriendActions.js`](src/hooks/chat/useFriendActions.js:1)：`deleteFriend`（`friends` 表双向 `or(and(...),and(...))` 删除 + 清理已接受的 `friend_requests`）、`updateRemark`。
+- 新增 [`src/hooks/chat/useFriendActions.js`](../src/hooks/chat/useFriendActions.js)：`deleteFriend`（`friends` 表双向 `or(and(...),and(...))` 删除 + 清理已接受的 `friend_requests`）、`updateRemark`。
 - `useChatPrefs` 的 effect 改为「异步回调里 setState + 派生 `loaded`」，规避 `react-hooks/set-state-in-effect`。
 
 **验收**：`npx tsc --noEmit` → 0；目标文件 `eslint` → 0；全量 `npx expo lint` → 139 problems（119 errors / 20 warnings），与基线持平。
@@ -492,10 +492,10 @@ lint 那 141 个 error 里，`react-hooks/refs` 占了 107 个（76%）。这是
 
 **2. 联系人「3 个点」菜单（聊天室 L2 + 通讯录详细页 L3 共用）**
 
-- 新建 [`src/components/chat/ContactActionsMenu.js`](src/components/chat/ContactActionsMenu.js:1)：与聊天页右上角「+」同款视觉（圆角卡片 + 纯文字行 + 细分隔线，无图标），贴右上角 `top: 96/72, right: 16`。菜单项：**查看详细资料** / **删除好友**（红色危险项）。
-- 新建 [`src/hooks/chat/useFriendActions.js`](src/hooks/chat/useFriendActions.js:1)：`deleteFriend(friendId)` 双向解除 `friends` 关系（`or(and(user_id=me,friend_id=other),and(user_id=other,friend_id=me))`），并清理已通过的 `friend_requests`；`updateRemark` 仅更新「我 → 对方」一条。
-- [`ChatRoomInner.js`](src/components/ChatRoomInner.js:212)：把 header 右侧的 `<View style={{ width: 28 }} />` 占位替换为 `ellipsis-horizontal` 按钮 → 呼出菜单。删除好友成功后 `onBack()` 返回列表。
-- [`contact_profile.js`](src/app/contact_profile.js:43)：右上角「3 个点」从 `alert('更多联系人设置开发中')` 改为复用同一 `ContactActionsMenu`；删除好友成功后 `router.back()` 回通讯录。同时把裸 `Haptics` 调用统一为 `haptic` 包装器。
+- 新建 `src/components/chat/ContactActionsMenu.js`：与聊天页右上角「+」同款视觉（圆角卡片 + 纯文字行 + 细分隔线，无图标），贴右上角 `top: 96/72, right: 16`。菜单项：**查看详细资料** / **删除好友**（红色危险项）。
+- 新建 [`src/hooks/chat/useFriendActions.js`](../src/hooks/chat/useFriendActions.js)：`deleteFriend(friendId)` 双向解除 `friends` 关系（`or(and(user_id=me,friend_id=other),and(user_id=other,friend_id=me))`），并清理已通过的 `friend_requests`；`updateRemark` 仅更新「我 → 对方」一条。
+- [`ChatRoomInner.js`](../src/components/ChatRoomInner.js)：把 header 右侧的 `<View style={{ width: 28 }} />` 占位替换为 `ellipsis-horizontal` 按钮 → 呼出菜单。删除好友成功后 `onBack()` 返回列表。
+- [`contact_profile.js`](../src/app/contact_profile.js)：右上角「3 个点」从 `alert('更多联系人设置开发中')` 改为复用同一 `ContactActionsMenu`；删除好友成功后 `router.back()` 回通讯录。同时把裸 `Haptics` 调用统一为 `haptic` 包装器。
 
 **验收**
 
@@ -540,7 +540,7 @@ if (top < 8) top = 8;
 
 **4. 长按触发时间缩短 50%**
 
-[`ConversationRow.js`](src/components/chat/ConversationRow.js:31) 的 `TouchableOpacity` 加 `delayLongPress={250}`（RN 默认 500ms → 250ms）。
+[`ConversationRow.js`](../src/components/chat/ConversationRow.js) 的 `TouchableOpacity` 加 `delayLongPress={250}`（RN 默认 500ms → 250ms）。
 
 **震动反馈**：`handleLongPress` 首行已有 `haptic.heavy()`（iOS `ImpactFeedbackStyle.Heavy`），长按瞬间即触发，无需新增。
 
@@ -586,7 +586,7 @@ if (top < 8) top = 8;
 
 **问题 1：聊天 tab 下导航栏消失**
 
-根因在 [`CustomTabBar.js`](src/components/CustomTabBar.js:57)：`toValue: isChatTab ? 250 : 0` —— 旧设计里聊天页自带 BlurView 浮动 Dock，所以全局底栏在聊天 tab 被下移 250px 隐藏。阶段 4 已删除聊天页 Dock，底栏却仍被隐藏，导致用户无法切回其他 tab。
+根因在 [`CustomTabBar.js`](../src/components/CustomTabBar.js)：`toValue: isChatTab ? 250 : 0` —— 旧设计里聊天页自带 BlurView 浮动 Dock，所以全局底栏在聊天 tab 被下移 250px 隐藏。阶段 4 已删除聊天页 Dock，底栏却仍被隐藏，导致用户无法切回其他 tab。
 
 修复：
 
@@ -951,7 +951,7 @@ Supabase 的会话由 `supabase-js` 存在 AsyncStorage 的固定 key 下，**�
 2. 更致命的是 `router.setParams({ locLat: undefined, ... })` —— 即使参数本来就是 `undefined`，`setParams` 依然会触发路由状态更新 → 重渲染 → effect 再跑 → 再 `setParams`，**形成无限循环**。
 3. 这个循环把 JS 线程占满，`ImagePicker.launchImageLibraryAsync()` 和录音的异步回调永远排不上队，表现就是「点了没反应」。
 
-**修复**（[`ChatRoomInner.js`](src/components/ChatRoomInner.js:241)）：
+**修复**（[`ChatRoomInner.js`](../src/components/ChatRoomInner.js)）：
 
 - 用 `routerRef` 持有 router，`useEffect` 里同步更新，**从依赖数组里彻底移除 `router`**。
 - 新增 `consumedLocRef`，用 `lat,lng,label` 拼成 key 做「已消费」标记，保证同一次定位只发送一次消息。

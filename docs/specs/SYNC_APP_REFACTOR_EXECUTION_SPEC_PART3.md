@@ -18,12 +18,12 @@
 
 ## §14 阶段 4：聊天页纯 IM 化
 
-> **目标**：把 [`src/app/(tabs)/chat.js`](src/app/(tabs)/chat.js:35) 从「消息 + 联系人 + 搜索加友」三合一，改为**纯 IM 消息列表**；联系人独立成页；搜索加友独立成页（Q4-A）。
+> **目标**：把 [`src/app/(tabs)/chat.js`](../../src/app/(tabs)/chat.js) 从「消息 + 联系人 + 搜索加友」三合一，改为**纯 IM 消息列表**；联系人独立成页；搜索加友独立成页（Q4-A）。
 > **红线**：`ChatRoomInner` / `MessageBubble` / `ChatInputBar` / `useChatMessages` / `useMediaUpload` / `useSignedMediaUrl` **逻辑一律不动**，只做动效/触感微调。
 
 ### 14.1 聊天页改造前后对比
 
-| 项 | 改造前（[`chat.js`](src/app/(tabs)/chat.js:35)） | 改造后 |
+| 项 | 改造前（[`chat.js`](../../src/app/(tabs)/chat.js)） | 改造后 |
 |---|---|---|
 | 顶部 | 分段控件「消息 / 联系人」 | 仅「消息」标题 + 右上角「+」 |
 | 列表 | 消息 + 联系人混排 | 仅消息会话列表（FlashList） |
@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
 
 ### 14.3 新建 `src/app/chat/contacts.js`（联系人）
 
-从原 [`chat.js`](src/app/(tabs)/chat.js:424) 的 `renderContactsView` 迁移，改用 `FlashList`。
+从原 [`chat.js`](../../src/app/(tabs)/chat.js) 的 `renderContactsView` 迁移，改用 `FlashList`。
 
 ```js
 // params: 无
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
 
 ### 14.4 新建 `src/app/chat/search.js`（搜索加友）
 
-从原 [`chat.js`](src/app/(tabs)/chat.js:224) 的 `handleSearchAdd`（224-279 行）与 `handleSearchChange`（282-292 行）迁移。
+从原 [`chat.js`](../../src/app/(tabs)/chat.js) 的 `handleSearchAdd`（224-279 行）与 `handleSearchChange`（282-292 行）迁移。
 
 ```js
 // params: 无
@@ -191,9 +191,9 @@ export default function ChatTabRedirect() {
 ## §15 阶段 5：放映厅拆分 + 搜索大厅 + 浏览器拆分
 
 > **目标**：
-> 1. [`src/app/cinema.js`](src/app/cinema.js:33) 拆为 L3：大厅 `/cinema` + 房间 `/cinema/room/[roomId]` + 搜索 `/cinema/search`
+> 1. [`src/app/cinema.js`](../../src/app/cinema.js) 拆为 L3：大厅 `/cinema` + 房间 `/cinema/room/[roomId]` + 搜索 `/cinema/search`
 > 2. 新增 `cinema_rooms` 表（公开/私人 + 搜索大厅，Q7 合并方案）
-> 3. [`src/app/browser.js`](src/app/browser.js:32) 拆为 L3：主页 `/browser` + 历史 `/browser/history` + 书签 `/browser/bookmarks`
+> 3. [`src/app/browser.js`](../../src/app/browser/index.js) 拆为 L3：主页 `/browser` + 历史 `/browser/history` + 书签 `/browser/bookmarks`
 
 ### 15.1 放映厅路由结构
 
@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
 
 ### 15.4 新建 `src/app/cinema/room/[roomId].js`（房间）
 
-从原 [`cinema.js`](src/app/cinema.js:33) 迁移播放器逻辑（`PanResponder`、弹幕、进度条、沉浸式 UI），**逻辑不动**，只改容器为 L3 页面。
+从原 [`cinema.js`](../../src/app/cinema.js) 迁移播放器逻辑（`PanResponder`、弹幕、进度条、沉浸式 UI），**逻辑不动**，只改容器为 L3 页面。
 
 ```js
 import { useLocalSearchParams } from 'expo-router';
@@ -411,19 +411,19 @@ graph TD
 
 ### 15.9 新建 `src/app/browser/index.js`
 
-从原 [`browser.js`](src/app/browser.js:32) 迁移 WebView 主体逻辑，**5 个领域 hook 原样复用**：
+从原 [`browser.js`](../../src/app/browser/index.js) 迁移 WebView 主体逻辑，**5 个领域 hook 原样复用**：
 
 | Hook | 复用方式 |
 |---|---|
-| [`useBrowserHistory`](src/hooks/browser/useBrowserHistory.js:24) | 原样 |
-| [`useBrowserSniffer`](src/hooks/browser/useBrowserSniffer.js:32) | 原样 |
-| [`useAdBlocker`](src/hooks/browser/useAdBlocker.js:1) | 原样 |
-| [`useBrowserProgress`](src/hooks/browser/useBrowserProgress.js:1) | 原样 |
-| [`useBrowserNavigation`](src/hooks/browser/useBrowserNavigation.js:22) | 原样 |
+| [`useBrowserHistory`](../../src/hooks/browser/useBrowserHistory.js) | 原样 |
+| [`useBrowserSniffer`](../../src/hooks/browser/useBrowserSniffer.js) | 原样 |
+| [`useAdBlocker`](../../src/hooks/browser/useAdBlocker.js) | 原样 |
+| [`useBrowserProgress`](../../src/hooks/browser/useBrowserProgress.js) | 原样 |
+| [`useBrowserNavigation`](../../src/hooks/browser/useBrowserNavigation.js) | 原样 |
 
 ### 15.10 新建 `src/app/browser/history.js` / `bookmarks.js`
 
-从原 [`browser.js`](src/app/browser.js:32) 的历史/书签弹窗内容迁移为独立页，用 `FlashList` 渲染。
+从原 [`browser.js`](../../src/app/browser/index.js) 的历史/书签弹窗内容迁移为独立页，用 `FlashList` 渲染。
 
 ### 15.11 改造 `src/app/browser.js`
 
@@ -787,37 +787,37 @@ Expo Router 中 `src/app/xxx.js` 与 `src/app/xxx/index.js` **不能共存**。�
 
 以下文件**任何阶段都不得修改逻辑**（只允许被消费）：
 
-- [`src/hooks/useHealthData.js`](src/hooks/useHealthData.js:15)
-- [`src/hooks/useCinema.js`](src/hooks/useCinema.js:12)
-- [`src/hooks/useSyncRoom.js`](src/hooks/useSyncRoom.js:46)
-- [`src/hooks/useAuth.js`](src/hooks/useAuth.js:7)
-- [`src/hooks/usePushNotifications.js`](src/hooks/usePushNotifications.js:1)
-- [`src/hooks/health/useHealthCloud.js`](src/hooks/health/useHealthCloud.js:27)
-- [`src/hooks/health/useHealthStorage.js`](src/hooks/health/useHealthStorage.js:36)
-- [`src/hooks/health/useStreak.js`](src/hooks/health/useStreak.js:31)
-- [`src/hooks/health/useTimeSync.js`](src/hooks/health/useTimeSync.js:16)
-- [`src/hooks/chat/useChatMessages.js`](src/hooks/chat/useChatMessages.js:52)
-- [`src/hooks/chat/useMediaUpload.js`](src/hooks/chat/useMediaUpload.js:143)
-- [`src/hooks/chat/useSignedMediaUrl.js`](src/hooks/chat/useSignedMediaUrl.js:161)
-- [`src/hooks/chat/useAudioRecorder.js`](src/hooks/chat/useAudioRecorder.js:1)
-- [`src/hooks/browser/useBrowserHistory.js`](src/hooks/browser/useBrowserHistory.js:24)
-- [`src/hooks/browser/useBrowserSniffer.js`](src/hooks/browser/useBrowserSniffer.js:32)
-- [`src/hooks/browser/useAdBlocker.js`](src/hooks/browser/useAdBlocker.js:1)
-- [`src/hooks/browser/useBrowserProgress.js`](src/hooks/browser/useBrowserProgress.js:1)
-- [`src/hooks/browser/useBrowserNavigation.js`](src/hooks/browser/useBrowserNavigation.js:22)
-- [`src/hooks/browser/useBrowserFullscreen.js`](src/hooks/browser/useBrowserFullscreen.js:1)
-- [`src/services/supabase.js`](src/services/supabase.js:1)
-- [`src/services/pushService.js`](src/services/pushService.js:1)
-- [`src/scripts/browser/*`](src/scripts/browser/index.js:1)
-- [`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts:1)
+- [`src/hooks/useHealthData.js`](../../src/hooks/useHealthData.js)
+- [`src/hooks/useCinema.js`](../../src/hooks/useCinema.js)
+- [`src/hooks/useSyncRoom.js`](../../src/hooks/useSyncRoom.js)
+- [`src/hooks/useAuth.js`](../../src/hooks/useAuth.js)
+- [`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js)
+- [`src/hooks/health/useHealthCloud.js`](../../src/hooks/health/useHealthCloud.js)
+- [`src/hooks/health/useHealthStorage.js`](../../src/hooks/health/useHealthStorage.js)
+- [`src/hooks/health/useStreak.js`](../../src/hooks/health/useStreak.js)
+- [`src/hooks/health/useTimeSync.js`](../../src/hooks/health/useTimeSync.js)
+- [`src/hooks/chat/useChatMessages.js`](../../src/hooks/chat/useChatMessages.js)
+- [`src/hooks/chat/useMediaUpload.js`](../../src/hooks/chat/useMediaUpload.js)
+- [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSignedMediaUrl.js)
+- [`src/hooks/chat/useAudioRecorder.js`](../../src/hooks/chat/useAudioRecorder.js)
+- [`src/hooks/browser/useBrowserHistory.js`](../../src/hooks/browser/useBrowserHistory.js)
+- [`src/hooks/browser/useBrowserSniffer.js`](../../src/hooks/browser/useBrowserSniffer.js)
+- [`src/hooks/browser/useAdBlocker.js`](../../src/hooks/browser/useAdBlocker.js)
+- [`src/hooks/browser/useBrowserProgress.js`](../../src/hooks/browser/useBrowserProgress.js)
+- [`src/hooks/browser/useBrowserNavigation.js`](../../src/hooks/browser/useBrowserNavigation.js)
+- `src/hooks/browser/useBrowserFullscreen.js`
+- [`src/services/supabase.js`](../../src/services/supabase.js)
+- [`src/services/pushService.js`](../../src/services/pushService.js)
+- [`src/scripts/browser/*`](../../src/scripts/browser/index.js)
+- [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts)
 
 ### 18.4 绝对不可改的三个文件（最高指令）
 
 | 文件 | 原因 |
 |---|---|
-| [`src/constants/colors.js`](src/constants/colors.js:1) | 色值不可改（主色 `#FF2D55` / `#FF375F` 与液态玻璃配色原样保留） |
-| [`src/constants/theme.js`](src/constants/theme.js:1) | `SIZES` / `TYPOGRAPHY` 不可改 |
-| [`src/context/ThemeContext.js`](src/context/ThemeContext.js:29) | 主题控制权不可改，只可读 `useAppTheme()` |
+| [`src/constants/colors.js`](../../src/constants/colors.js) | 色值不可改（主色 `#FF2D55` / `#FF375F` 与液态玻璃配色原样保留） |
+| [`src/constants/theme.js`](../../src/constants/theme.js) | `SIZES` / `TYPOGRAPHY` 不可改 |
+| [`src/context/ThemeContext.js`](../../src/context/ThemeContext.js) | 主题控制权不可改，只可读 `useAppTheme()` |
 
 ### 18.5 每个任务的独立执行模板（供未来聊天窗口使用）
 

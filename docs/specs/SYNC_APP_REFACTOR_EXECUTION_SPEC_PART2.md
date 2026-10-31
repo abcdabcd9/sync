@@ -762,9 +762,9 @@ export { default as EmptyState } from './EmptyState';
 
 ## §12 阶段 2：首页重写
 
-> **目标**：把 [`src/app/(tabs)/index.js`](src/app/(tabs)/index.js:15) 从「DietScreen」重写为「健康总览首页」。
+> **目标**：把 [`src/app/(tabs)/index.js`](../../src/app/(tabs)/index.js) 从「DietScreen」重写为「健康总览首页」。
 > **布局**：搭子状态卡（Q1-B）→ 饮水卡 → 2×2 餐食格（Q3-D）→ 连续打卡卡。
-> **数据**：全部来自 [`useHealthData`](src/hooks/useHealthData.js:15)，**不改数据层**。
+> **数据**：全部来自 [`useHealthData`](../../src/hooks/useHealthData.js)，**不改数据层**。
 
 ### 12.1 首页结构图
 
@@ -1122,7 +1122,7 @@ const styles = StyleSheet.create({
 });
 ```
 
-> 注意：**字段名以 [`useHealthData`](src/hooks/useHealthData.js:15) 实际返回为准**。执行时先读该文件第 235-241 行的 `value` 对象，把上面用到的 `health.xxx` 一一对齐；**不改数据层**。
+> 注意：**字段名以 [`useHealthData`](../../src/hooks/useHealthData.js) 实际返回为准**。执行时先读该文件第 235-241 行的 `value` 对象，把上面用到的 `health.xxx` 一一对齐；**不改数据层**。
 
 ### 12.7 微调 `src/components/WaterProgress.js`
 
@@ -1169,9 +1169,9 @@ const styles = StyleSheet.create({
 ## §13 阶段 3：空间页 + 设置页拆分 + 我的页
 
 > **目标**：
-> 1. [`src/app/(tabs)/space.js`](src/app/(tabs)/space.js:12) 改为 4 卡布局（私密空间 / 朋友圈 / 放映厅 / 浏览器）
-> 2. [`src/app/settings.js`](src/app/settings.js:46) 拆分为 L3 目录 `src/app/settings/`，**原有全部设置项一个不丢**
-> 3. [`src/app/(tabs)/profile.js`](src/app/(tabs)/profile.js:18) 保持结构 + 苹果风微调
+> 1. [`src/app/(tabs)/space.js`](../../src/app/(tabs)/space.js) 改为 4 卡布局（私密空间 / 朋友圈 / 放映厅 / 浏览器）
+> 2. [`src/app/settings.js`](../../src/app/settings.js) 拆分为 L3 目录 `src/app/settings/`，**原有全部设置项一个不丢**
+> 3. [`src/app/(tabs)/profile.js`](../../src/app/(tabs)/profile.js) 保持结构 + 苹果风微调
 
 ### 13.1 空间页结构图
 
@@ -1374,7 +1374,7 @@ const styles = StyleSheet.create({
 
 ### 13.5 设置页拆分（**最关键：一个设置项都不能丢**）
 
-#### 13.5.1 拆分前清单（从 [`settings.js`](src/app/settings.js:46) 逐项抄录）
+#### 13.5.1 拆分前清单（从 [`settings.js`](../../src/app/settings.js) 逐项抄录）
 
 | 原分组 | 原设置项 | 去向 |
 |---|---|---|
@@ -1389,7 +1389,7 @@ const styles = StyleSheet.create({
 | 底部 | 退出登录（`handleSignOut`） | `settings/index.js` |
 | 底部 | 注销账号（`performAccountDeletion`） | `settings/index.js` |
 
-> 注意：执行时必须先打开 [`settings.js`](src/app/settings.js:46) 逐行核对 `PRIVACY_SECTIONS`（84-105 行）与 `SECURITY_SECTIONS`（108-127 行）的**每一项 title**，全部搬过去，不得遗漏。
+> 注意：执行时必须先打开 [`settings.js`](../../src/app/settings.js) 逐行核对 `PRIVACY_SECTIONS`（84-105 行）与 `SECURITY_SECTIONS`（108-127 行）的**每一项 title**，全部搬过去，不得遗漏。
 
 #### 13.5.2 新建 `src/app/settings/index.js`
 
@@ -1442,19 +1442,19 @@ const styles = StyleSheet.create({
 
 #### 13.5.3 新建 `src/app/settings/account.js`
 
-内容：账号信息入口 + 邀请好友 + 健康搭子（复用 `AppleListRow`）。逻辑与 [`settings.js`](src/app/settings.js:46) 中对应部分一致。
+内容：账号信息入口 + 邀请好友 + 健康搭子（复用 `AppleListRow`）。逻辑与 [`settings.js`](../../src/app/settings.js) 中对应部分一致。
 
 #### 13.5.4 新建 `src/app/settings/privacy.js`
 
-把 [`settings.js`](src/app/settings.js:84) 的 `PRIVACY_SECTIONS` **原样搬入**，每项渲染为 `AppleListRow`，`value` 显示当前开关状态。
+把 [`settings.js`](../../src/app/settings.js) 的 `PRIVACY_SECTIONS` **原样搬入**，每项渲染为 `AppleListRow`，`value` 显示当前开关状态。
 
 #### 13.5.5 新建 `src/app/settings/security.js`
 
-把 [`settings.js`](src/app/settings.js:108) 的 `SECURITY_SECTIONS` **原样搬入**。
+把 [`settings.js`](../../src/app/settings.js) 的 `SECURITY_SECTIONS` **原样搬入**。
 
 #### 13.5.6 新建 `src/app/settings/appearance.js`
 
-把 [`settings.js`](src/app/settings.js:130) 的 `THEME_OPTIONS`（3 项：跟随系统 / 浅色 / 深色）与 `handleSaveMotto`（个性签名）搬入。
+把 [`settings.js`](../../src/app/settings.js) 的 `THEME_OPTIONS`（3 项：跟随系统 / 浅色 / 深色）与 `handleSaveMotto`（个性签名）搬入。
 
 ```js
 // 主题选择：复用 ThemeContext 的 setThemeMode，不改色值
@@ -1502,7 +1502,7 @@ export default function SettingsRedirect() {
 
 - [ ] 空间页显示 4 卡，点击分别跳转 `/private` `/moments` `/cinema` `/browser`
 - [ ] 设置页 `/settings` 正常打开，显示 3 个分组
-- [ ] **逐项核对**：原 [`settings.js`](src/app/settings.js:46) 的每一个设置项都能在新设置页找到
+- [ ] **逐项核对**：原 [`settings.js`](../../src/app/settings.js) 的每一个设置项都能在新设置页找到
 - [ ] 隐私设置 5 项全部存在且可操作
 - [ ] 安全设置 4 项全部存在且可操作
 - [ ] 主题切换（跟随系统 / 浅色 / 深色）正常，切换后全局生效
