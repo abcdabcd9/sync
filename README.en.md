@@ -10,6 +10,14 @@ Written with Expo + React Native, backed by Supabase.
 
 [中文版](README.zh.md) · [English](README.en.md)
 
+> **This project is source-only. No prebuilt installers are provided.**
+>
+> - There is no APK / IPA in this repository, and the app is not published to any app store.
+> - You must provision your own backend (Supabase project, database, storage bucket, Edge Function). No shared server is provided.
+> - Push notifications require your own Firebase project and certificates. No credentials are included.
+>
+> In short: this is code you can run yourself, not a download-and-go app.
+
 ---
 
 ## What it does
