@@ -1,6 +1,6 @@
 // --- START OF FILE src/hooks/chat/useAudioRecorder.js ---
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as Crypto from 'expo-crypto';
 import {
@@ -15,37 +15,11 @@ import { sendPushNotification } from '../../services/pushService';
 import { uploadToSupabase } from './useMediaUpload';
 import { persistMedia, resolveLocalMedia } from '../../services/mediaCache';
 
-/**
- * 🎙️ 录音域 Hook（任务 7 阶段 3）
- *
- * 职责（仅麦克风录音与音频模式，不含图片 / 视频）：
- *   1. 麦克风权限申请（requestRecordingPermissionsAsync）
- *   2. 全局音频模式初始化 / 清理（setAudioModeAsync）
- *   3. 开始 / 停止 / 取消录音（prepareToRecordAsync / record / stop）
- *   4. 录音时长计时（recordingDuration，秒）
- *   5. 语音文件上传云端 + 落库 + 推送通知
- *
- * ⚠️ 音频类型崩溃修复（任务 7 阶段 3 关键）：
- *   旧代码传入 `interruptionModeIOS: 0` / `interruptionModeAndroid: 0`（Number），
- *   在 expo-audio SDK 58 中这两个字段已被移除，且 `interruptionMode` 是
- *   **字符串枚举** `'mixWithOthers' | 'doNotMix' | 'doNotMixPersistent' | 'duckOthers'`。
- *   传入 Number 会在原生层 Record 解析时抛异常 → 红屏崩溃。
- *   同时 `staysActiveInBackground` 已改名为 `shouldPlayInBackground`。
- *
- * 📌 语音播放（useAudioPlayer / handleToggleAudio）不在本 Hook 范围内，
- *    仍保留在 ChatRoomInner.js 中，避免破坏播放与影院混音逻辑。
- */
-
-/** 录音参数：高音质 + 开启电平计量（供 ChatInputBar 波形使用） */
 export const AUDIO_OPTIONS = {
   ...RecordingPresets.HIGH_QUALITY,
   isMeteringEnabled: true,
 };
 
-/**
- * SDK 58 标准音频模式（全部为 String 枚举，绝不传 Number）
- * @param {boolean} allowsRecording 是否允许录音
- */
 export const buildAudioMode = (allowsRecording) => ({
   allowsRecording,
   playsInSilentMode: true,
@@ -54,13 +28,6 @@ export const buildAudioMode = (allowsRecording) => ({
   shouldRouteThroughEarpiece: false,
 });
 
-/**
- * @param {object} params
- * @param {string} params.targetId 聊天对象 ID
- * @param {object} params.user 当前登录用户
- * @param {Function} params.saveAndSend useChatMessages 暴露的乐观发送
- * @param {Function} [params.patchMessage] useChatMessages 暴露的乐观消息回填
- */
 export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -69,7 +36,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
   const durationTimerRef = useRef(null);
   const recorder = useExpoAudioRecorder(AUDIO_OPTIONS);
 
-  /** 清理时长定时器 */
   const clearDurationTimer = useCallback(() => {
     if (durationTimerRef.current) {
       clearInterval(durationTimerRef.current);
@@ -77,7 +43,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
     }
   }, []);
 
-  /** 启动时长计时（每 200ms 刷新一次秒数） */
   const startDurationTimer = useCallback(() => {
     clearDurationTimer();
     setRecordingDuration(0);
@@ -87,7 +52,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
     }, 200);
   }, [clearDurationTimer]);
 
-  // 🎙️ 音频模式初始化（进入聊天室时申请权限 + 开启录音能力）
   useEffect(() => {
     if (!user || !targetId) return;
     let cancelled = false;
@@ -113,16 +77,13 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
     };
   }, [user, targetId]);
 
-  // 卸载时清理计时器
   useEffect(() => () => clearDurationTimer(), [clearDurationTimer]);
 
-  /** 🎬 开始录音 */
   const startRecord = useCallback(async () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       recordStartTimeRef.current = 0;
 
-      // iOS 需要在录音前显式把 session 切到 playAndRecord
       if (Platform.OS === 'ios') {
         try {
           if (typeof setAudioModeAsync === 'function') {
@@ -147,7 +108,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
     }
   }, [recorder, startDurationTimer, clearDurationTimer]);
 
-  /** ⏹️ 停止录音并发送 */
   const stopAndSendRecord = useCallback(() => {
     try {
       if (!recordStartTimeRef.current) {
@@ -167,7 +127,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
       setRecordingDuration(0);
       clearDurationTimer();
 
-      // 过短（< 1 秒）或无文件：视为误触，丢弃
       if (durationSec < 1 || !tempUri) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         return;
@@ -176,12 +135,8 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
       setTimeout(async () => {
         const msgId = Crypto.randomUUID();
 
-        // 🗄️ 第一步：先把录音临时文件永久落盘到沙盒（documentDirectory）。
-        //    录音器给出的 tempUri 位于 cacheDirectory，系统随时可能清理，
-        //    必须立刻复制到沙盒，才能保证断网 / 重启后仍可播放。
         const localUri = await persistMedia(tempUri, msgId, 'audio');
 
-        // 乐观消息：优先使用沙盒永久路径；落盘失败才退回临时路径（至少本次会话可播）
         saveAndSend({
           id: msgId,
           type: 'audio',
@@ -193,16 +148,11 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
         });
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        // 🔒 P0-2 / P0-3：uploadToSupabase 返回 { path, signedUrl }。
-        //    数据库只存相对对象路径（永久有效），签名 URL 仅供即时播放，
-        //    渲染时由 useSignedMediaUrl 按需重新签名，因此历史语音永不失效。
         const audioResult = await uploadToSupabase(tempUri, 'audio', user.id);
         if (!audioResult?.path) {
-          // 上传失败：本地沙盒文件仍在，消息保留本地可播放状态（红叹号由 UI 层标记）。
-          // 绝不删除本地文件、绝不把 mediaUrl 置空。
-          console.warn('语音上传失败，消息未落库（本地文件已保留）');
-          Alert.alert('语音发送失败', '语音上传未完成，请检查网络后重试。');
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          // 🚨 离线/上传失败：不弹窗、不删气泡，仅静默挂红感叹号
+          console.warn('离线/语音上传失败，已标记为待重发');
+          patchMessage?.(msgId, { status: 'failed' });
           return;
         }
 
@@ -214,21 +164,19 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
           media_url: audioResult.path,
           duration: durationSec,
         });
+        
         if (insertError) {
-          console.warn('语音消息落库失败:', insertError.message);
+          console.warn('语音消息落库失败，已标记为待重发:', insertError.message);
+          patchMessage?.(msgId, { status: 'failed' });
           return;
         }
 
-        // 🔑 关键防覆盖：只回填云端对象路径到 remotePath，
-        //    **绝不覆写 mediaUrl / localUri 中的本地 file:// 路径**。
-        //    渲染层优先级：本地沙盒 > localUri > 签名 URL，确保离线永远可播。
         const sandboxUri = localUri || (await resolveLocalMedia(msgId, 'audio'));
         patchMessage?.(msgId, {
           remotePath: audioResult.path,
           localUri: sandboxUri || localUri || tempUri,
         });
 
-        // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
         sendPushNotification(targetId, '', '[语音消息]', {
           type: 'chat',
           targetId: user.id,
@@ -239,7 +187,6 @@ export function useAudioRecorder({ targetId, user, saveAndSend, patchMessage }) 
     }
   }, [recorder, user, targetId, saveAndSend, patchMessage, clearDurationTimer]);
 
-  /** ❌ 取消录音（丢弃，不发送） */
   const cancelRecord = useCallback(() => {
     try {
       recorder.stop();

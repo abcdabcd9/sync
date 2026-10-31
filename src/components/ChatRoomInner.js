@@ -30,67 +30,61 @@ import { useCinema } from '../hooks/useCinema';
 
 const formatDuration = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
-// ===== 微信同款时间格式化（全球时区 / 地区格式自动适配）=====
-// 今天 → 14:25 或 2:25 PM / 昨天 → 昨天 14:25 或 Yesterday 2:25 PM
-// 7 天内 → 星期三 14:25 或 Wed 2:25 PM / 今年内 → 10月25日 14:25 或 Oct 25 2:25 PM
-// 跨年 → 2025年10月25日 14:25 或 Oct 25, 2025 2:25 PM
-const formatWeChatTime = (timestamp) => {
-  if (!timestamp) return '';
-  // 1. 自动转换为手机本地所在时区的时间
-  const date = new Date(typeof timestamp === 'number' ? timestamp : String(timestamp));
-  if (isNaN(date.getTime())) return '';
+// ⏱️ 兼容提取消息时间戳（同时兼容本地 timestamp 与数据库 created_at）
+const getMsgTime = (msg) => {
+  if (!msg) return 0;
+  if (typeof msg.timestamp === 'number' && msg.timestamp > 0) return msg.timestamp;
+  if (msg.timestamp) {
+    const t = new Date(msg.timestamp).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (msg.created_at) {
+    const t = new Date(msg.created_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  return 0;
+};
+
+// ===== 微信同款时间格式化 =====
+const formatWeChatTime = (rawTime) => {
+  if (!rawTime) return '';
+  const date = new Date(typeof rawTime === 'number' ? rawTime : String(rawTime));
+  const time = date.getTime();
+  if (isNaN(time) || time <= 0) return '';
 
   const now = new Date();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const timeStr = `${hours}:${minutes}`;
 
-  // 判断是否为当地时间的“今天”
   const isToday = date.toDateString() === now.toDateString();
 
-  // 判断是否为当地时间的“昨天”
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
   const isYesterday = date.toDateString() === yesterday.toDateString();
 
-  // 自动获取手机系统的 12/24 小时制与本地时间格式 (如 "14:25" 或 "2:25 PM")
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return timeStr;
+  if (isYesterday) return `昨天 ${timeStr}`;
 
-  if (isToday) {
-    return timeStr;
-  }
-
-  if (isYesterday) {
-    // 自动适配当地语言的“昨天” (如中文“昨天”，英文“Yesterday”)
-    try {
-      const yesterdayLabel = new Intl.RelativeTimeFormat([], { numeric: 'auto' }).format(-1, 'day');
-      return `${yesterdayLabel} ${timeStr}`;
-    } catch (_e) {
-      return `昨天 ${timeStr}`;
-    }
-  }
-
-  // 7 天以内：自动适配当地语言的星期几 (如中文“星期三”，英文“Wed”)
-  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor((now.getTime() - time) / (1000 * 60 * 60 * 24));
   if (diffDays < 7 && diffDays > 0) {
-    const weekdayStr = date.toLocaleDateString([], { weekday: 'short' });
-    return `${weekdayStr} ${timeStr}`;
+    const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+    return `${days[date.getDay()]} ${timeStr}`;
   }
 
-  // 今年以内：自动适配当地月日格式 (如“10月25日” 或 “Oct 25” 或 “25 Oct”)
-  const isSameYear = date.getFullYear() === now.getFullYear();
-  if (isSameYear) {
-    const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    return `${dateStr} ${timeStr}`;
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${month}月${day}日 ${timeStr}`;
   }
 
-  // 跨年：自动适配当地年月日格式
-  const fullDateStr = date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-  return `${fullDateStr} ${timeStr}`;
+  return `${date.getFullYear()}年${month}月${day}日 ${timeStr}`;
 };
 
 export default function ChatRoomInner({ targetId, targetName, isTabletMode = false, onBack }) {
   const { colors: palette } = useAppTheme();
   const router = useRouter();
   const { user } = useAuth();
-  // 🌐 全局健康上下文：同意搭子邀请后必须同步刷新，否则首页伴侣卡片不更新
   const { refreshPartner } = useHealthData();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
@@ -130,45 +124,72 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   }, [targetId]);
 
   // ===== 文本发送 / 搭子邀请 =====
-  // 🔑 标题与发送者昵称全部交由云函数权威解析，前端只传干净的 body 内容
   const handleSendText = useCallback(async (text) => {
     if (!user || !targetId) return;
     const msgId = Crypto.randomUUID();
     saveAndSend({ id: msgId, type: 'text', text, isMe: true, timestamp: Date.now() });
     try {
       const { error } = await supabase.from('messages').insert({ id: msgId, user_id: user.id, receiver_id: targetId, type: 'text', text });
-      // ❗ 离线/写入失败：标记为 failed，气泡旁显示红色感叹号，可点击重发
       if (error) throw error;
     } catch (e) {
-      console.warn('离线状态，消息发送失败，已标记为待重发', e?.message ?? e);
+      console.warn('离线/发送失败，已标记为待重发', e?.message ?? e);
       patchMessage(msgId, { status: 'failed' });
       return;
     }
     sendPushNotification(targetId, '', text, { type: 'chat', targetId: user.id });
   }, [user, targetId, saveAndSend, patchMessage]);
 
-  // ❗ 点击红色感叹号重发：先清除失败标记，再重新走一次发送流程
+  // ❗ 点击红色感叹号重发：重新发送并更新云端与本地状态
   const handleResendMessage = useCallback(async (msg) => {
     if (!msg || !user || !targetId) return;
     patchMessage(msg.id, { status: 'sending' });
     try {
-      const { error } = await supabase.from('messages').insert({
+      let mediaUrl = msg.mediaUrl || null;
+      let thumbnailUrl = msg.thumbnailUrl || null;
+
+      const localPath = msg.localUri || msg.uri;
+      if (localPath && typeof localPath === 'string' && localPath.startsWith('file://') && (!mediaUrl || mediaUrl.startsWith('file://'))) {
+        try {
+          const fileExt = localPath.split('.').pop()?.split('?')[0]?.toLowerCase() || 'bin';
+          const storagePath = `${user.id}/${msg.id}.${fileExt}`;
+          const mimeType = msg.type === 'audio' || msg.subtype === 'SYNC_AUDIO'
+            ? 'audio/m4a'
+            : (msg.type === 'video' ? 'video/mp4' : 'image/jpeg');
+
+          const { error: uploadErr } = await supabase.storage.from('chat_media').upload(storagePath, {
+            uri: localPath,
+            type: mimeType,
+            name: `${msg.id}.${fileExt}`,
+          }, { upsert: true });
+
+          if (!uploadErr) {
+            mediaUrl = storagePath;
+          }
+        } catch (_upErr) {
+          console.warn('重发补传媒体文件失败，继续尝试使用现有信息重发');
+        }
+      }
+
+      const { error } = await supabase.from('messages').upsert({
         id: msg.id,
         user_id: user.id,
         receiver_id: targetId,
         type: msg.type || 'text',
         text: msg.text || '',
-        media_url: msg.mediaUrl || null,
-        thumbnail_url: msg.thumbnailUrl || null,
+        media_url: mediaUrl,
+        thumbnail_url: thumbnailUrl,
         subtype: msg.subtype || null,
+        duration: msg.duration || 0, // ⚡ 核心修复：重发时必须带上语音时长！否则数据库会覆盖为 null 导致 0 秒
       });
+
       if (error) throw error;
-      patchMessage(msg.id, { status: 'sent' });
+
+      patchMessage(msg.id, { status: 'sent', mediaUrl, thumbnailUrl, duration: msg.duration });
       if (msg.type === 'text' && msg.text) {
         sendPushNotification(targetId, '', msg.text, { type: 'chat', targetId: user.id });
       }
     } catch (e) {
-      console.warn('离线状态，重发仍然失败', e?.message ?? e);
+      console.warn('重发依然失败，保持失败状态', e?.message ?? e);
       patchMessage(msg.id, { status: 'failed' });
     }
   }, [user, targetId, patchMessage]);
@@ -184,8 +205,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！', subtype: 'SYNC_PARTNER_ACCEPTED' }).eq('id', msg.id);
     await supabase.from('messages').insert({ id: Crypto.randomUUID(), user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
     sendPushNotification(targetId, '', '已同意成为你的健康搭子！', { type: 'chat', targetId: user.id });
-    // 🌐 同步刷新全局上下文：写入 partnerId 并拉取对方今日进度，
-    //    否则首页伴侣卡片要等冷启动才出现
     await refreshPartner(targetId);
   };
 
@@ -199,15 +218,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     handleSendText('向对方发送了震动提醒');
   }, [handleSendText]);
 
-  // ===== 语音播放（与影院播放器互不打断）=====
-  //
-  // 🚨 断网（飞行模式）播放核心修复：
-  //   1. 播放前显式 setAudioModeAsync 解锁扬声器（allowsRecording: false → iOS 切回
-  //      .playback 类别，否则录音后残留的 .playAndRecord 会让声音走听筒 / 静音）。
-  //   2. 传入的 url 若已是本地 file:// 物理文件（由 MessageBubble 解析），
-  //      音频引擎直接读磁盘，飞行模式下零网络、100% 可播。
-  //   3. 若传入的仍是网络 URL（本地缺失的对方语音），先尝试静默下载到沙盒再播放，
-  //      下载失败（离线）则保持原 URL 由引擎自行处理，绝不崩溃。
+  // ===== 语音播放 =====
   const handleToggleAudio = useCallback(async (id, url, options = {}) => {
     if (playingAudioId === id) {
       globalAudioPlayer.pause();
@@ -216,8 +227,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     }
     if (!url) return;
 
-    // 🔓 解锁扬声器：录音结束后 iOS 音频会话可能仍停留在 playAndRecord，
-    //    必须显式切回播放模式，否则飞行模式下播放会静默失败。
     try {
       if (typeof setAudioModeAsync === 'function') {
         await setAudioModeAsync({
@@ -232,11 +241,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
       console.warn('语音播放前设置音频模式失败(忽略):', e?.message ?? e);
     }
 
-    // 🗄️ 网络 URL → 尝试静默落盘为本地 file://（离线时失败则保持原 URL）
-    //
-    // 🔧 双端兼容：用 isLocalUri 判定（兼容 content:// / data: / ph://），
-    //    并用 normalizeFileUri 收敛为单重 file:///（Android 重复前缀会让音频引擎报错）。
-    //    options.isLocal 由 MessageBubble 传入，表示 url 已是本地物理文件，无需再落盘。
     let playUri = url;
     const alreadyLocal = options.isLocal || isLocalUri(url);
     if (alreadyLocal) {
@@ -313,10 +317,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         return;
       }
 
-      // 🔒 P0-2 / P0-3：数据库只存相对对象路径，保存前必须先换取签名 URL。
-      //    - 历史数据若已是完整签名 URL，toStoragePath 会提取路径后重新签名，
-      //      避免使用可能已过期的旧 token。
-      //    - Asset.create 只接受本地文件路径，必须先把远程签名 URL 下载到缓存再入库。
       const storagePath = toStoragePath(rawValue);
       const url = storagePath ? await getSignedUrl(storagePath) : null;
       if (!url) {
@@ -348,7 +348,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     }
   };
 
-  // ⭐ 收藏：写入本地持久化（AsyncStorage），可在「聊天设置 → 我的收藏」查看
   const handleFavorite = useCallback(() => {
     const msg = actionMessage;
     if (!msg) { setActionMessage(null); return; }
@@ -372,7 +371,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     );
   }, []);
 
-  // ===== 右上角「3 个点」：直接跳转聊天设置页（不再弹窗）=====
   const openChatSettings = useCallback(() => {
     if (!targetId) return;
     Keyboard.dismiss();
@@ -383,9 +381,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     });
   }, [router, targetId, targetName]);
 
-  // 🗑️ 地图卡片功能已整体下线：不再从 /chat/location 回传坐标，也不再插入 type='location' 消息。
-  //    定位页 src/app/chat/location.js 本身保留（位置能力不删），只是聊天入口已移除。
-
   return (
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <View style={[styles.header, { borderBottomColor: palette.chatBorder }]}>
@@ -393,7 +388,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
           <TouchableOpacity onPress={onBack} style={styles.backBtn}><Ionicons name="chevron-back" size={28} color={palette.primary} /></TouchableOpacity>
         )}
         <Text style={[styles.headerTitle, { color: palette.textPrimary, marginLeft: isTabletMode ? 16 : 0 }]}>{targetName || '好友'}</Text>
-        {/* 右上角「3 个点」：跳转聊天设置页 */}
         <TouchableOpacity
           onPress={openChatSettings}
           style={styles.headerActionBtn}
@@ -424,14 +418,23 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
           <FlatList
             ref={flatListRef} data={messages} keyExtractor={(item) => item.id}
             renderItem={({ item, index }) => {
-              // 列表为 inverted 倒序渲染：视觉上的「上一条」在数据里是 index + 1
+              const itemTime = getMsgTime(item);
               const prevMsg = messages[index + 1];
-              const shouldShowTime = !prevMsg || Math.abs(item.timestamp - prevMsg.timestamp) >= 15 * 60 * 1000;
+              const prevTime = getMsgTime(prevMsg);
+
+              const shouldShowTime = !prevMsg || (itemTime > 0 && prevTime > 0 && Math.abs(itemTime - prevTime) >= 15 * 60 * 1000);
+              const timeText = shouldShowTime && itemTime > 0 ? formatWeChatTime(itemTime) : '';
+
               return (
                 <View>
-                  {shouldShowTime && (
+                  {!!timeText && (
                     <View style={styles.timeDividerContainer}>
-                      <Text style={styles.timeDividerText}>{formatWeChatTime(item.timestamp)}</Text>
+                      <Text 
+                        style={[styles.timeDividerText, { color: palette.textSecondary }]} 
+                        includeFontPadding={false}
+                      >
+                        {timeText}
+                      </Text>
                     </View>
                   )}
                   <MessageBubble
@@ -447,9 +450,6 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
             inverted contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false} keyboardDismissMode="on-drag"
             onScrollBeginDrag={dismissAllPanels} onTouchStart={dismissAllPanels} keyboardShouldPersistTaps="handled"
             initialNumToRender={15} maxToRenderPerBatch={10} windowSize={3}
-            // 🚨 Android 闪烁修复：removeClippedSubviews 会在滚动时把 item 的原生视图
-            //    从视图树摘掉再挂回，导致图片/视频气泡反复重新解码 → 肉眼可见的闪烁与抖动。
-            //    这里显式关闭，改由 windowSize 控制内存占用。
             removeClippedSubviews={false}
             updateCellsBatchingPeriod={50}
           />
@@ -486,7 +486,7 @@ const styles = StyleSheet.create({
   uploadBar: { height: 22, justifyContent: 'center', overflow: 'hidden' },
   uploadBarFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
   uploadBarText: { fontSize: 11, textAlign: 'center', fontWeight: '500' },
-  timeDividerContainer: { alignItems: 'center', marginVertical: 10 },
-  timeDividerText: { color: 'rgba(255, 255, 255, 0.45)', fontSize: 12, backgroundColor: 'rgba(0, 0, 0, 0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }
+  timeDividerContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 10, width: '100%' },
+  timeDividerText: { fontSize: 12, includeFontPadding: false, textAlign: 'center', fontWeight: '500' },
 });
 // --- END OF FILE src/components/ChatRoomInner.js ---
