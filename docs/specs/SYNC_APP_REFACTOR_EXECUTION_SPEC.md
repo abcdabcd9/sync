@@ -2,7 +2,7 @@
 
 > **文档版本**：v1.0（定稿）
 > **生成日期**：2026-10-30
-> **适用项目**：`/Users/TCL/my-app`（Expo SDK 58 / React Native 0.88.1 / React 19.3.0）
+> **适用项目**：Sync 仓库根目录（Expo SDK 58 / React Native 0.88.1 / React 19.3.0）
 > **文档拆分**：
 > - **本文件（第 1 部分）**：全局约束、需求决策、架构总览、视觉守则、动效规范、路由总表、数据层、TS 前瞻、风险矩阵
 > - **[`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md)**：阶段 1-7 逐阶段执行细则
