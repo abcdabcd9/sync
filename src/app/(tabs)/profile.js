@@ -7,6 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { useAppTheme } from '../../context/ThemeContext';
@@ -78,8 +79,8 @@ export default function ProfileScreen() {
             </View>
 
             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
-              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 }}>Sync App v3.0</Text>
-              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 }}>© 2026 Sync Inc.</Text>
+              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' }}>Sync App v{Constants.expoConfig?.version ?? '3.0'}</Text>
+              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' }}>© 2026 abcdabcd9</Text>
             </View>
 
           </View>
