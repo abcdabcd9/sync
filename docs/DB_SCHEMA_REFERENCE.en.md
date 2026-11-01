@@ -2,7 +2,7 @@
 
 [中文版](DB_SCHEMA_REFERENCE.zh.md) · [English](DB_SCHEMA_REFERENCE.en.md)
 
-> Project ref: `<your-project-ref>` (Sync, aws-0-eu-west-1)
+> Project ref: `pjiyniqtrstcpnodsnqq` (Sync, aws-0-eu-west-1)
 > How it was exported: Supabase Dashboard → SQL Editor → `information_schema.columns`
 > Purpose: this is the source of truth when writing `CREATE TABLE` migrations. **Don't guess from the code.**
 
