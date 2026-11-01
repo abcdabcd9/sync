@@ -55,6 +55,10 @@ export async function createSignedMediaUrl(fileName, expiresIn = SIGNED_URL_TTL)
   // 🔧 签名前必须先归一化路径，否则会因前缀/完整 URL 触发 Object not found
   const objectPath = cleanStoragePath(fileName);
   if (!objectPath) return null;
+
+  // 🔍 诊断日志 c：签名前（与 useSignedMediaUrl.getSignedUrl 保持同一格式，便于对照）
+  console.log(`[Storage Sign] 尝试请求签名 URL，清洗后路径: ${objectPath}`);
+
   try {
     const { data, error } = await supabase.storage
       .from(STORAGE_BUCKET)
@@ -62,7 +66,22 @@ export async function createSignedMediaUrl(fileName, expiresIn = SIGNED_URL_TTL)
     if (error) throw error;
     return data?.signedUrl || null;
   } catch (e) {
-    console.warn('生成签名 URL 失败:', e);
+    // ⚠️ 关键诊断：把「当前会话 uid」与「路径首段 uid」一起打出来。
+    //    chat_media 的 SELECT 策略要求 (storage.foldername(name))[1] = auth.uid()::text，
+    //    两者不一致时 createSignedUrl 会返回 Object not found（而非 403），
+    //    极易被误判为「文件没上传成功」。
+    const pathOwner = objectPath.split('/')[0];
+    let sessionUid = null;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      sessionUid = sessionData?.session?.user?.id ?? null;
+    } catch (_) {}
+    console.warn(
+      `生成签名 URL 失败: ${e?.message || e} | 路径归属 uid: ${pathOwner} | 当前会话 uid: ${sessionUid}`
+      + (pathOwner && sessionUid && pathOwner !== sessionUid
+        ? ' | ❗ 两者不一致，签名会被 RLS 拒绝（Object not found）'
+        : ''),
+    );
     return null;
   }
 }
@@ -113,7 +132,13 @@ export async function uploadToSupabase(uri, prefix, userId) {
     console.log(`[Storage Upload] 上传结果: ${error ? error.message : '成功'}`);
     if (error) throw error;
 
+    // ⚠️ 签名失败不应阻断上传流程：
+    //    对象已成功落库，messages.media_url 存的是相对路径，
+    //    渲染时 useSignedMediaUrl 会按需重新签名。这里签名仅用于「首屏秒开」优化。
     const signedUrl = await createSignedMediaUrl(fileName, SIGNED_URL_TTL);
+    if (!signedUrl) {
+      console.warn(`[Storage Upload] 对象已上传成功但签名失败，将依赖渲染期按需签名: ${fileName}`);
+    }
     return { path: fileName, signedUrl };
   } catch (e) {
     console.warn('媒体上传失败:', e?.message || e);
