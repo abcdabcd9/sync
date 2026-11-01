@@ -42,7 +42,7 @@ const AmountDisplay = React.memo(({ waterAmount, maxWater, palette, onPressAmoun
       </ThemedText>
     </TouchableOpacity>
     <ThemedText style={styles.subtitle} color={palette.textSecondary}>
-      目标: {maxWater} mL（±100）
+      目标: {maxWater} mL
     </ThemedText>
   </View>
 ));

@@ -94,9 +94,23 @@ export async function uploadToSupabase(uri, prefix, userId) {
     }
 
     const fileName = `${userId}/${prefix}_${Date.now()}_${Crypto.randomUUID()}.${ext}`;
+
+    // 🔐 RLS 对齐校验：chat_media 的存储策略要求
+    //    (storage.foldername(name))[1] = auth.uid()::text
+    //    即对象路径第一段必须严格等于当前用户 id，否则上传会被拒绝。
+    if (!fileName.startsWith(`${userId}/`)) {
+      throw new Error(`非法对象路径（未以 userId 开头）: ${fileName}`);
+    }
+
+    // 🔍 诊断日志 a：上传前
+    console.log(`[Storage Upload] 开始上传，目标桶: ${STORAGE_BUCKET}, 路径: ${fileName}`);
+
     const { error } = await supabase.storage
       .from(STORAGE_BUCKET)
       .upload(fileName, arrayBuffer, { contentType: guessContentType(ext) });
+
+    // 🔍 诊断日志 b：上传后
+    console.log(`[Storage Upload] 上传结果: ${error ? error.message : '成功'}`);
     if (error) throw error;
 
     const signedUrl = await createSignedMediaUrl(fileName, SIGNED_URL_TTL);

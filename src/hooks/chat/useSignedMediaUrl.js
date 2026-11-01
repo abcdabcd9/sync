@@ -177,6 +177,11 @@ function cacheGet(path) {
 export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
   if (!path) return null;
 
+  // 🚫 本地 URI（file:// / content:// / ph:// / assets-library:// / data: / blob:）
+  //    不是桶内对象，绝对不能拿去 createSignedUrl —— 否则必然 `Object not found`。
+  //    这里在入口处直接短路，调用方应改用本地直读。
+  if (isLocalUri(path)) return null;
+
   // 🔧 兜底归一化：调用方若误传「完整 URL」或「chat_media/ 前缀路径」，
   //    createSignedUrl 会因对象不存在抛 `Object not found`。
   //    toStoragePath 对已是相对路径的输入是幂等的，不会改变正常行为。
@@ -191,6 +196,8 @@ export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
 
   const task = (async () => {
     try {
+      // 🔍 诊断日志：确认真正发给 Supabase 的对象路径（必须形如 `${userId}/xxx.jpg`）
+      console.log(`[Storage Sign] 尝试请求签名 URL，清洗后路径: ${objectPath}`);
       const { data, error } = await supabase.storage
         .from(STORAGE_BUCKET)
         .createSignedUrl(objectPath, ttlSeconds);
@@ -203,13 +210,15 @@ export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
       //    优先回退到缓存里可能仍存在的旧签名 URL（即使已过期，也比黑屏好），
       //    让调用方继续渲染旧缓存 / 本地地址，而不是把图片清空。
       console.warn('网络请求签名失败(可能处于离线)，继续保留旧缓存/本地地址', e);
-      return cacheGet(path) ?? null;
+      // ⚠️ 必须用 objectPath 读缓存：cacheSet 写入的键是归一化后的 objectPath，
+      //    若这里用原始 path 会永远读不到，导致「刚上传成功却立刻显示失败」。
+      return cacheGet(objectPath) ?? null;
     } finally {
-      inflight.delete(path);
+      inflight.delete(objectPath);
     }
   })();
 
-  inflight.set(path, task);
+  inflight.set(objectPath, task);
   return task;
 }
 
