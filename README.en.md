@@ -221,6 +221,50 @@ npx expo lint
 
 ---
 
+## What's actually built
+
+This isn't a "got the demo running" project. Here's what's genuinely done:
+
+**Database layer**
+
+- **14 Supabase migration scripts**, replayable in order from table creation through RLS hardening
+- **All 7 core tables have RLS enabled**: `profiles`, `messages`, `friends`, `friend_requests`, `health_records`, `moments`, `complaints` — not a single one is left open
+- Policies aren't just "allow everything": only the receiver can approve a friend request (no self-approval), health record writes carry `WITH CHECK (auth.uid() = user_id)` (no forging), and moments are filtered by `visibility`
+- **Every `SECURITY DEFINER` function pins `search_path`** and is restricted to `authenticated` only — this is the classic PostgreSQL privilege-escalation vector, and [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) exists specifically to fix it
+- Chat media bucket is private: `chat_media` has public reads disabled, replaced by 4 fine-grained policies plus signed URLs
+
+**Server side**
+
+- **Edge Function push service** ([`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)): verifies the caller → looks up the recipient's Expo Push Token → sends the push → prunes dead tokens
+- All credentials go through `Deno.env.get()`; there are no hardcoded secrets anywhere in the repo
+- Uses Expo Push Service rather than talking to FCM directly, so self-hosters don't need Firebase certificates
+
+**Client**
+
+- Expo Router file-based routing, 40+ screens under `src/app/`
+- Hand-rolled UI component library (`src/components/ui/`), no third-party UI framework
+- Built-in browser with ad blocking, media sniffing, and desktop UA spoofing (`src/scripts/browser/`)
+- Synced watch party: playback position stays aligned across both devices, with a seek lock to prevent jitter
+
+**Engineering**
+
+- GitHub Actions CI: blocking `tsc --noEmit` plus non-blocking ESLint (the baseline is documented in the workflow comments)
+- Three READMEs (Chinese / English / Simplified Chinese), bilingual `SECURITY.md` and `CONTRIBUTING.md`
+- Every documentation link is script-verified — zero broken links
+
+---
+
+## Author
+
+**abcdabcd9** — independent developer
+
+- GitHub: [@abcdabcd9](https://github.com/abcdabcd9)
+- Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
+
+I built this end to end on my own — database schema, the 14 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
+
+---
+
 ## License
 
 MIT

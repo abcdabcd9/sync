@@ -221,6 +221,50 @@ npx expo lint
 
 ---
 
+## 项目亮点
+
+这不是一个「跑通 demo」的项目，下面这些是实际做完的部分：
+
+**数据库层**
+
+- **14 个 Supabase 迁移脚本**，从建表到 RLS 加固，按编号顺序可完整重放
+- **7 张核心表全部启用 RLS**：`profiles`、`messages`、`friends`、`friend_requests`、`health_records`、`moments`、`complaints`，没有一张表是裸奔的
+- 策略不是「全开」了事：好友申请只有接收方能审批（防自发自批）、健康记录写入带 `WITH CHECK (auth.uid() = user_id)`（防伪造）、动态按 `visibility` 分级可见
+- **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行 —— 这是 PostgreSQL 提权漏洞的经典入口，[`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) 就是专门修这个的
+- 聊天媒体桶私有化：`chat_media` 关闭 public 读，改用 4 条细粒度策略 + 签名 URL
+
+**服务端**
+
+- **Edge Function 推送服务**（[`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)）：校验调用者身份 → 查接收方 Expo Push Token → 批量推送 → 清理失效 token
+- 全部凭据走 `Deno.env.get()`，仓库里没有任何硬编码密钥
+- 走 Expo Push Service 而非直连 FCM，所以自建者不需要准备 Firebase 证书
+
+**客户端**
+
+- Expo Router 文件式路由，`src/app/` 下 40+ 个页面
+- 自研 UI 组件库（`src/components/ui/`），无第三方 UI 框架依赖
+- 内置浏览器带广告拦截、媒体嗅探、桌面 UA 伪装（`src/scripts/browser/`）
+- 同步放映厅：双端播放进度对齐，带 seek 锁防抖动
+
+**工程化**
+
+- GitHub Actions CI：`tsc --noEmit` 阻断 + ESLint 非阻断（基线已记录在 workflow 注释里）
+- 三语 README（中/英/简中）、双语 `SECURITY.md`、双语 `CONTRIBUTING.md`
+- 全部文档链接经脚本校验，0 断链
+
+---
+
+## 作者
+
+**abcdabcd9** — 独立开发者
+
+- GitHub：[@abcdabcd9](https://github.com/abcdabcd9)
+- 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
+
+这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 14 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
+
+---
+
 ## License
 
 MIT
