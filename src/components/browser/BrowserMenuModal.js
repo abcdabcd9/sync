@@ -118,7 +118,7 @@ export default function BrowserMenuModal({
               activeOpacity={0.7}
             >
               <Ionicons name="bookmarks-outline" size={22} color={palette.primary} />
-              <Text style={[styles.entryText, { color: palette.textPrimary }]}>影院书签</Text>
+              <Text style={[styles.entryText, { color: palette.textPrimary }]}>书签</Text>
               <Text style={[styles.entryCount, { color: palette.textSecondary }]}>
                 {bookmarksList.length}
               </Text>

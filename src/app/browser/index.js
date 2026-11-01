@@ -243,7 +243,7 @@ export default function BrowserScreen() {
       return;
     }
     haptic.success();
-    Alert.alert('收藏成功', '已添加到影院书签列表');
+    Alert.alert('收藏成功', '已添加到书签列表');
     closeMenu();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- actualLoadedUrl 为 ref，引用恒定
   }, [isBookmarked, toggleBookmark, closeMenu]);

@@ -18,8 +18,23 @@ import { isSafeUrl, buildHistoryTitle, HISTORY_KEY, HISTORY_LIMIT } from '../../
 
 // 🔒 存储 Key（锁死，禁止修改）
 const BOOKMARKS_KEY = '@browser_bookmarks';
-// 首次启动的默认书签
-const DEFAULT_BOOKMARKS = ['https://nnyy.in/'];
+// 🔖 首次启动的默认书签：主流搜索引擎入口
+//    ⚠️ 必须全部为 https://，否则会被 isSafeUrl 拦截而无法加载
+const DEFAULT_BOOKMARKS = [
+  'https://www.bing.com',
+  'https://www.google.com',
+  'https://www.baidu.com',
+  'https://duckduckgo.com',
+  'https://www.sogou.com',
+  'https://search.yahoo.com',
+];
+// 📌 默认书签版本号：用于给老用户做一次性迁移
+//    老版本默认书签是 ['https://nnyy.in/']，已安装用户本地缓存里仍是它，
+//    仅改 DEFAULT_BOOKMARKS 不会生效，需要按版本号做一次覆盖迁移。
+const BOOKMARKS_SEED_VERSION = 2;
+const BOOKMARKS_SEED_KEY = '@browser_bookmarks_seed';
+// 历史遗留的旧默认书签（迁移时精确匹配，避免误删用户自己收藏的同名地址）
+const LEGACY_DEFAULT_BOOKMARKS = ['https://nnyy.in/'];
 
 export function useBrowserHistory() {
   // 🕘 历史浏览记录
@@ -27,17 +42,46 @@ export function useBrowserHistory() {
   // 🏷️ 书签收藏
   const [bookmarksList, setBookmarksList] = useState([]);
 
-  // 🏷️ 启动时读取书签（无缓存则写入默认书签）
+  // 🏷️ 启动时读取书签
+  //    · 无缓存（全新安装）→ 直接写入默认搜索引擎书签
+  //    · 有缓存但种子版本落后 → 剔除旧默认书签、补齐新默认书签（保留用户自建书签）
+  //    · 种子版本已是最新 → 原样读取，不做任何改动
   useEffect(() => {
     const loadBookmarks = async () => {
       try {
-        const cached = await AsyncStorage.getItem(BOOKMARKS_KEY);
-        if (cached !== null) {
-          setBookmarksList(JSON.parse(cached));
-        } else {
+        const [cached, seedVersion] = await Promise.all([
+          AsyncStorage.getItem(BOOKMARKS_KEY),
+          AsyncStorage.getItem(BOOKMARKS_SEED_KEY),
+        ]);
+
+        // 全新安装：直接落默认书签
+        if (cached === null) {
           setBookmarksList(DEFAULT_BOOKMARKS);
-          await AsyncStorage.setItem(BOOKMARKS_KEY, JSON.stringify(DEFAULT_BOOKMARKS));
+          await AsyncStorage.multiSet([
+            [BOOKMARKS_KEY, JSON.stringify(DEFAULT_BOOKMARKS)],
+            [BOOKMARKS_SEED_KEY, String(BOOKMARKS_SEED_VERSION)],
+          ]);
+          return;
         }
+
+        const parsed = JSON.parse(cached);
+        const current = Array.isArray(parsed) ? parsed.filter((it) => typeof it === 'string') : [];
+
+        // 种子版本已最新：原样使用
+        if (Number(seedVersion) >= BOOKMARKS_SEED_VERSION) {
+          setBookmarksList(current);
+          return;
+        }
+
+        // 一次性迁移：移除旧默认书签 → 前置新默认书签 → 去重
+        const withoutLegacy = current.filter((it) => !LEGACY_DEFAULT_BOOKMARKS.includes(it));
+        const merged = Array.from(new Set([...DEFAULT_BOOKMARKS, ...withoutLegacy]));
+
+        setBookmarksList(merged);
+        await AsyncStorage.multiSet([
+          [BOOKMARKS_KEY, JSON.stringify(merged)],
+          [BOOKMARKS_SEED_KEY, String(BOOKMARKS_SEED_VERSION)],
+        ]);
       } catch (_) {}
     };
     loadBookmarks();
