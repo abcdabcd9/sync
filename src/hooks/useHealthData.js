@@ -231,17 +231,59 @@ export function HealthProvider({ children }) {
     return subscribePartner(partnerId, todayStr);
   }, [partnerId, todayStr, subscribePartner]);
 
-  // 饮水写入：本地 state 收敛 + 云端防抖同步（顺序：本地 → 云端）
-  // ⚠️ 副作用（syncToCloud）必须在 updater 之外执行：
-  //    React 18/19 的 StrictMode 会双调用 updater，若在内部发网络请求会重复提交；
-  //    且 updater 必须是纯函数，否则并发渲染下可能基于过期 prev 计算。
-  const setWaterDirect = useCallback((val) => {
-    const newVal = typeof val === 'function' ? val(waterAmount) : val;
-    const nextVal = Math.min(maxWater, Math.max(0, Math.round(newVal)));
-    if (waterAmount === nextVal) return;
-    syncToCloud(nextVal, mealsStatus);
+  // 🎯 饮水写入：本地 state 立即更新（零延迟，数字不跳动）+ 云端 500ms 防抖同步
+  //
+  // 旧实现的两个问题：
+  //   1. 每次点击都立刻调用 syncToCloud，长按连加时会产生大量 upsert 请求；
+  //   2. 依赖 [waterAmount] 闭包，长按 setInterval 内连续调用时读到的是过期值，
+  //      导致「加了又跳回去」的数字抖动。
+  //
+  // 新实现：
+  //   · waterAmountRef 始终持有最新值，任何时刻的增量都基于真实当前值计算；
+  //   · setWater 只写本地 state + 落盘（纯本地，无网络）；
+  //   · 云端同步统一走 500ms 防抖，用户停手后才真正发请求。
+  const waterAmountRef = useRef(waterAmount);
+  useEffect(() => { waterAmountRef.current = waterAmount; }, [waterAmount]);
+
+  const maxWaterRef = useRef(maxWater);
+  useEffect(() => { maxWaterRef.current = maxWater; }, [maxWater]);
+
+  const mealsStatusRef = useRef(mealsStatus);
+  useEffect(() => { mealsStatusRef.current = mealsStatus; }, [mealsStatus]);
+
+  // 云端同步防抖定时器（500ms）
+  const waterSyncTimerRef = useRef(null);
+  useEffect(() => () => {
+    if (waterSyncTimerRef.current) clearTimeout(waterSyncTimerRef.current);
+  }, []);
+
+  const scheduleWaterSync = useCallback((nextWater) => {
+    if (waterSyncTimerRef.current) clearTimeout(waterSyncTimerRef.current);
+    waterSyncTimerRef.current = setTimeout(() => {
+      waterSyncTimerRef.current = null;
+      syncToCloud(nextWater, mealsStatusRef.current);
+    }, 500);
+  }, [syncToCloud]);
+
+  /**
+   * 统一的饮水写入入口。
+   * @param {number|((prev:number)=>number)} val 目标值或 updater
+   * @param {{ sync?: boolean }} options sync=false 时只写本地（长按连加过程中使用）
+   */
+  const setWaterDirect = useCallback((val, options = {}) => {
+    const { sync = true } = options;
+    const prev = waterAmountRef.current;
+    const raw = typeof val === 'function' ? val(prev) : val;
+    const nextVal = Math.min(maxWaterRef.current, Math.max(0, Math.round(raw)));
+    if (prev === nextVal) return;
+
+    // ① 本地立即生效（同步 ref，保证下一次增量基于最新值）
+    waterAmountRef.current = nextVal;
     setWater(nextVal);
-  }, [waterAmount, maxWater, mealsStatus, syncToCloud, setWater]);
+
+    // ② 云端防抖同步
+    if (sync) scheduleWaterSync(nextVal);
+  }, [setWater, scheduleWaterSync]);
 
   // 顺序：① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
   const handleAddWater = useCallback(() => {

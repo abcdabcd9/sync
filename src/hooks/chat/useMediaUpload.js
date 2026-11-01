@@ -18,12 +18,47 @@ const STORAGE_BUCKET = 'chat_media';
 
 export const SIGNED_URL_TTL = 60 * 60 * 24 * 7;
 
+/**
+ * 🔧 存储路径清洗归一化。
+ *
+ * createSignedUrl 只接受「桶内相对路径」（形如 `${userId}/${filename}`）。
+ * 一旦传入带桶名前缀或完整 URL 的字符串，Supabase 会把它当作不存在的对象，
+ * 直接抛 `StorageApiError: Object not found`。
+ *
+ * 常见脏输入来源：
+ *   - 历史数据里存了完整签名 URL：`https://xxx.supabase.co/storage/v1/object/sign/chat_media/u/f.jpg?token=...`
+ *   - 历史数据里存了带桶名前缀的路径：`chat_media/u/f.jpg`
+ *   - 本地文件 URI（file:// / content:// / ph://）—— 不是桶内对象，返回空串
+ *
+ * @param {string|null|undefined} pathOrUrl
+ * @returns {string} 纯相对路径；无法解析时返回空串
+ */
+export function cleanStoragePath(pathOrUrl) {
+  if (!pathOrUrl || typeof pathOrUrl !== 'string') return '';
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed) return '';
+
+  // 本地文件 URI 不是桶内对象路径，不能拿去签名
+  if (/^(file|content|ph|assets-library|data|blob):/i.test(trimmed)) return '';
+
+  // 1. 完整 Supabase URL：截取 /chat_media/ 之后的相对路径（剥离 query / hash）
+  if (trimmed.includes(`/${STORAGE_BUCKET}/`)) {
+    const tail = trimmed.split(`/${STORAGE_BUCKET}/`).pop() || '';
+    return tail.split(/[?#]/)[0];
+  }
+
+  // 2. 带桶名前缀的相对路径：剥离 `chat_media/`
+  return trimmed.replace(new RegExp(`^${STORAGE_BUCKET}/`), '');
+}
+
 export async function createSignedMediaUrl(fileName, expiresIn = SIGNED_URL_TTL) {
-  if (!fileName) return null;
+  // 🔧 签名前必须先归一化路径，否则会因前缀/完整 URL 触发 Object not found
+  const objectPath = cleanStoragePath(fileName);
+  if (!objectPath) return null;
   try {
     const { data, error } = await supabase.storage
       .from(STORAGE_BUCKET)
-      .createSignedUrl(fileName, expiresIn);
+      .createSignedUrl(objectPath, expiresIn);
     if (error) throw error;
     return data?.signedUrl || null;
   } catch (e) {

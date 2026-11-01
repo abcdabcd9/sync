@@ -10,8 +10,7 @@ export default function WaterCard({
   maxWater,
   onSetWater,
   setScrollEnabled,
-  onAdd,
-  onMinus,
+  onMaxWaterChange,
 }) {
   const { colors } = useAppTheme();
   return (
@@ -27,8 +26,7 @@ export default function WaterCard({
         maxWater={maxWater}
         onSetWater={onSetWater}
         setScrollEnabled={setScrollEnabled}
-        onAdd={onAdd}
-        onMinus={onMinus}
+        onMaxWaterChange={onMaxWaterChange}
       />
     </AppleCard>
   );

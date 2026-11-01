@@ -177,20 +177,26 @@ function cacheGet(path) {
 export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
   if (!path) return null;
 
-  const cached = cacheGet(path);
+  // 🔧 兜底归一化：调用方若误传「完整 URL」或「chat_media/ 前缀路径」，
+  //    createSignedUrl 会因对象不存在抛 `Object not found`。
+  //    toStoragePath 对已是相对路径的输入是幂等的，不会改变正常行为。
+  const objectPath = toStoragePath(path);
+  if (!objectPath) return null;
+
+  const cached = cacheGet(objectPath);
   if (cached) return cached;
 
   // 并发去重：同一路径只发一次请求
-  if (inflight.has(path)) return inflight.get(path);
+  if (inflight.has(objectPath)) return inflight.get(objectPath);
 
   const task = (async () => {
     try {
       const { data, error } = await supabase.storage
         .from(STORAGE_BUCKET)
-        .createSignedUrl(path, ttlSeconds);
+        .createSignedUrl(objectPath, ttlSeconds);
       if (error) throw error;
       const url = data?.signedUrl || null;
-      if (url) cacheSet(path, url, ttlSeconds);
+      if (url) cacheSet(objectPath, url, ttlSeconds);
       return url;
     } catch (e) {
       // 🚨 离线降级：网络失败 / 超时时绝不返回「空」覆盖调用方已有状态。

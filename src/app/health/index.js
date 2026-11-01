@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +18,7 @@ export default function HealthDetailScreen() {
   const { width } = useWindowDimensions();
   const {
     selectedMeal, mealsStatus, waterAmount, maxWater,
-    openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect,
+    openMeal, closeMeal, confirmCheck, undoCheck, setWaterDirect, updateMaxWater,
   } = useHealthData();
   const [scrollEnabled, setScrollEnabled] = useState(true);
 
@@ -26,12 +26,16 @@ export default function HealthDetailScreen() {
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.navBar}>
-          <Ionicons
-            name="chevron-back"
-            size={26}
-            color={palette.textPrimary}
+          {/* 🎨 返回键：显式透明背景 + 透明度按压反馈，消除点击时的黑色高亮方框 */}
+          <Pressable
             onPress={() => router.back()}
-          />
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="返回"
+            style={({ pressed }) => [styles.backBtn, { opacity: pressed ? 0.5 : 1 }]}
+          >
+            <Ionicons name="chevron-back" size={26} color={palette.textPrimary} />
+          </Pressable>
           <Text style={[styles.navTitle, { color: palette.textPrimary }]}>健康打卡</Text>
           <View style={styles.navSpacer} />
         </View>
@@ -84,9 +88,8 @@ export default function HealthDetailScreen() {
                 <WaterProgress
                   waterAmount={waterAmount}
                   maxWater={maxWater}
-                  onAdd={handleAddWater}
-                  onMinus={handleMinusWater}
                   onSetWater={setWaterDirect}
+                  onMaxWaterChange={updateMaxWater}
                   setScrollEnabled={setScrollEnabled}
                 />
               </View>
@@ -115,6 +118,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  backBtn: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   navTitle: { fontSize: 17, fontWeight: '600' },
   navSpacer: { width: 26 },
