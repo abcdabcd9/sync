@@ -28,12 +28,18 @@ export default function ChatSearchScreen() {
     setSearched(true);
     try {
       // 🔒 归属校验：只查「我参与的」这段会话
+      //
+      // ⚠️ 软删除过滤：deleted_by 包含当前用户的消息不参与搜索。
+      //    否则「删除该聊天」后，虽然会话窗口和聊天记录都没了，
+      //    但在这里搜关键词仍能搜出已删除的历史消息 —— 等于删除没生效。
+      //    与 useChatMessages / useChatList / CustomTabBar 的过滤条件保持一致。
       const { data } = await supabase
         .from('messages')
         .select('id, text, type, created_at, user_id')
         .or(
           `and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`
         )
+        .not('deleted_by', 'cs', `{${user.id}}`)
         .ilike('text', `%${kw}%`)
         .order('created_at', { ascending: false })
         .limit(50);
