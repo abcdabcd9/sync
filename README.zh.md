@@ -88,7 +88,7 @@ npx supabase functions deploy send-push
 >
 > 本地开发时把 `google-services.json` 与 `GoogleService-Info.plist` 放到项目根目录（已在 `.gitignore` 中忽略）。`app.json` 不再引用这两个文件，因此缺少它们也不会导致配置解析失败。
 
-迁移脚本共 13 个，文件名以 `01_` ~ `13_` 编号，**按编号顺序执行**：
+迁移脚本共 19 个，文件名以 `01_` ~ `19_` 编号，**按编号顺序执行**：
 
 | 编号 | 文件 | 作用 |
 | --- | --- | --- |
@@ -105,8 +105,16 @@ npx supabase functions deploy send-push
 | 11 | `11_补齐7张表GRANT授权_grant_table_privileges.sql` | 补 7 张表的表级 GRANT，解决 `permission denied` |
 | 12 | `12_开启Realtime实时刷新_enable_realtime_publication.sql` | 把 `messages` / `health_records` 加入 Realtime publication |
 | 13 | `13_全部表加入Realtime_all_tables.sql` | 动态遍历 `public` schema，把全部业务表加入 Realtime publication |
+| 14 | `14_修复unbind_partner提权风险_harden_unbind_partner.sql` | 修复 `unbind_partner` 的 `SECURITY DEFINER` 提权风险，固定 `search_path` 并收紧执行权限 |
+| 15 | `15_收紧profiles敏感列读取_restrict_profiles_sensitive_columns.sql` | 收紧 `profiles` 敏感列（`expo_push_token` / `public_key`）读取，不再对全站登录用户开放 |
+| 16 | `16_Realtime白名单_restrict_realtime_publication.sql` | 把 Realtime publication 从「全表动态加入」收敛为显式白名单 |
+| 17 | `17_修复chat_media签名读取策略_fix_signed_url_select_policy.sql` | 修复 `createSignedUrl` 返回 `Object not found` 的存储读取策略问题 |
+| 18 | `18_会话删除与清空RPC_delete_conversation_rpc.sql` | 新增 `delete_conversation` RPC，让「删除该聊天 / 清空聊天记录」真正落到云端 |
+| 19 | `19_会话软删除_仅删我方视角_soft_delete_conversation.sql` | 把会话删除改为**单边软删除**：`messages.deleted_by UUID[]` + GIN 索引，只标记我方已删，对方不受影响 |
 
 > 全部脚本都是幂等的（`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`），重复跑不会出问题。
+>
+> ⚠️ **迁移 18 与 19 是替代关系，不是叠加关系。** 18 实现的是物理双向 `DELETE`（我删了对方也没了），19 把它改成单边软删除。**新库直接跑 01 → 19 即可**；已有数据的库跑完 19 后，18 定义的旧函数体会被 19 覆盖，无需回滚。
 
 注意：**`chat_media` 是 Storage 桶，不是表。** 建表脚本建不出来，需要在 Dashboard → Storage 里手动建一个名为 `chat_media` 的桶（建议设为 private，策略见 `03_聊天媒体桶私有化_private_chat_media_bucket.sql`）。
 
@@ -200,9 +208,9 @@ supabase/
 
 - 目前只有简体中文，多语言没做
 - 关系网络（多搭子、小圈子）是预留设计，代码里有开关常量但没实现，设计文档在 [`docs/specs/`](docs/specs/) 里
-- 项目用 React 19，`npx expo lint` 会报 138 个问题，基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
+- 项目用 React 19，`npx expo lint` 会报 136 个问题（112 error / 24 warning），基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
 - 端到端加密没做（`src/constants/security.js` 里有诚实披露）
-- 注销账号依赖的 `delete_my_account` RPC 不存在，所以注销必然失败
+- 注销账号依赖的 `delete_my_account` RPC，已在 `09_补齐缺失RPC函数_missing_rpcs.sql` 中补齐，注销流程可用
 
 ---
 
@@ -220,7 +228,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` 目前有 138 个问题，是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
+`npx expo lint` 目前有 136 个问题（112 error / 24 warning），是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
 
 ---
 
@@ -230,7 +238,7 @@ npx expo lint
 
 **数据库层**
 
-- **14 个 Supabase 迁移脚本**，从建表到 RLS 加固，按编号顺序可完整重放
+- **19 个 Supabase 迁移脚本**，从建表到 RLS 加固，按编号顺序可完整重放
 - **7 张核心表全部启用 RLS**：`profiles`、`messages`、`friends`、`friend_requests`、`health_records`、`moments`、`complaints`，没有一张表是裸奔的
 - 策略不是「全开」了事：好友申请只有接收方能审批（防自发自批）、健康记录写入带 `WITH CHECK (auth.uid() = user_id)`（防伪造）、动态按 `visibility` 分级可见
 - **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行 —— 这是 PostgreSQL 提权漏洞的经典入口，[`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) 就是专门修这个的
@@ -264,7 +272,7 @@ npx expo lint
 - GitHub：[@abcdabcd9](https://github.com/abcdabcd9)
 - 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 14 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
+这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 19 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
 
 ---
 

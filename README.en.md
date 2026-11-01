@@ -88,7 +88,7 @@ npx supabase functions deploy send-push
 >
 > For local development, drop `google-services.json` and `GoogleService-Info.plist` into the project root (both are ignored by `.gitignore`). `app.json` no longer references these files, so their absence won't break config resolution.
 
-There are 13 migration scripts, numbered `01_` through `13_`. **Execute them in numeric order**:
+There are 19 migration scripts, numbered `01_` through `19_`. **Execute them in numeric order**:
 
 | No. | File | Purpose |
 | --- | --- | --- |
@@ -105,8 +105,16 @@ There are 13 migration scripts, numbered `01_` through `13_`. **Execute them in 
 | 11 | `11_补齐7张表GRANT授权_grant_table_privileges.sql` | Adds table-level GRANTs for 7 tables, resolving `permission denied` |
 | 12 | `12_开启Realtime实时刷新_enable_realtime_publication.sql` | Adds `messages` / `health_records` to the Realtime publication |
 | 13 | `13_全部表加入Realtime_all_tables.sql` | Dynamically walks the `public` schema and adds every business table to the Realtime publication |
+| 14 | `14_修复unbind_partner提权风险_harden_unbind_partner.sql` | Fixes the `SECURITY DEFINER` privilege-escalation risk in `unbind_partner` by pinning `search_path` and tightening execute grants |
+| 15 | `15_收紧profiles敏感列读取_restrict_profiles_sensitive_columns.sql` | Restricts reads of sensitive `profiles` columns (`expo_push_token` / `public_key`) so they're no longer visible to every signed-in user |
+| 16 | `16_Realtime白名单_restrict_realtime_publication.sql` | Narrows the Realtime publication from "add every table dynamically" to an explicit allowlist |
+| 17 | `17_修复chat_media签名读取策略_fix_signed_url_select_policy.sql` | Fixes the storage read policy behind `createSignedUrl` returning `Object not found` |
+| 18 | `18_会话删除与清空RPC_delete_conversation_rpc.sql` | Adds the `delete_conversation` RPC so "delete this chat / clear chat history" actually reaches the cloud |
+| 19 | `19_会话软删除_仅删我方视角_soft_delete_conversation.sql` | Turns conversation deletion into a **one-sided soft delete**: `messages.deleted_by UUID[]` + GIN index, marking only your own side as deleted while the other party is unaffected |
 
 > All scripts are idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`), so re-running them is safe.
+>
+> ⚠️ **Migrations 18 and 19 are replacements, not additions.** 18 implemented a physical two-sided `DELETE` (you delete it, the other party loses it too); 19 changes that to a one-sided soft delete. **A fresh database just runs 01 → 19.** On a database with existing data, running 19 overwrites the function body defined in 18 — no rollback needed.
 
 Note: **`chat_media` is a Storage bucket, not a table.** The table-creation script can't create it. You need to manually create a bucket named `chat_media` in Dashboard → Storage (private is recommended; policies are in `03_聊天媒体桶私有化_private_chat_media_bucket.sql`).
 
@@ -200,9 +208,9 @@ Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list
 
 - Simplified Chinese only for now; no i18n
 - The relation network (multiple partners, small circles) is a reserved design — the code has a feature flag constant but no implementation. The design doc is in [`docs/specs/`](docs/specs/)
-- The project uses React 19, so `npx expo lint` reports 138 problems, almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
+- The project uses React 19, so `npx expo lint` reports 136 problems (112 errors / 24 warnings), almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
 - No end-to-end encryption (honestly disclosed in `src/constants/security.js`)
-- Account deletion depends on the `delete_my_account` RPC, which doesn't exist, so deletion always fails
+- Account deletion depends on the `delete_my_account` RPC, which is provided by `09_补齐缺失RPC函数_missing_rpcs.sql`, so the deletion flow works
 
 ---
 
@@ -220,7 +228,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` currently reports 138 problems. They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
+`npx expo lint` currently reports 136 problems (112 errors / 24 warnings). They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
 
 ---
 
@@ -230,7 +238,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 
 **Database layer**
 
-- **14 Supabase migration scripts**, replayable in order from table creation through RLS hardening
+- **19 Supabase migration scripts**, replayable in order from table creation through RLS hardening
 - **All 7 core tables have RLS enabled**: `profiles`, `messages`, `friends`, `friend_requests`, `health_records`, `moments`, `complaints` — not a single one is left open
 - Policies aren't just "allow everything": only the receiver can approve a friend request (no self-approval), health record writes carry `WITH CHECK (auth.uid() = user_id)` (no forging), and moments are filtered by `visibility`
 - **Every `SECURITY DEFINER` function pins `search_path`** and is restricted to `authenticated` only — this is the classic PostgreSQL privilege-escalation vector, and [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) exists specifically to fix it
@@ -264,7 +272,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 - GitHub: [@abcdabcd9](https://github.com/abcdabcd9)
 - Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-I built this end to end on my own — database schema, the 14 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
+I built this end to end on my own — database schema, the 19 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
 
 ---
 
