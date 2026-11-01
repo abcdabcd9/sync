@@ -150,7 +150,16 @@ export default function ChatMainScreen() {
   // ✅ 当前实现：
   //    1. RPC delete_conversation → 软删除（仅标记我方已删）
   //    2. 清理本地聊天记录缓存与已删除 ID 列表
-  //    3. prefs.clearChat → 移除列表窗口（与「不显示该聊天」同款效果）
+  //    3. markHiddenBaseline + prefs.hide → 从列表移除窗口
+  //
+  // ⚠️ 为什么是 prefs.hide 而不是 prefs.clearChat（踩过的坑）：
+  //    列表过滤条件是 `!prefs.hidden.includes(c.id)`（见 visibleConversations），
+  //    而 clearChat 的语义是「**移除** hidden / pinned 标记」——
+  //    它会把该会话从 hidden 里删掉，等于「取消隐藏」。
+  //    所以旧实现删完之后窗口反而立刻重新出现，完全没达到「不显示」的效果。
+  //    正确做法与 handleHideChat 完全一致：先写基线，再 hide。
+  //    基线保证只有「之后真的来了新消息」才会自动恢复显示，
+  //    历史消息不会把它顶回来。
   const handleDeleteChat = (chat) => {
     if (!chat) return;
     haptic.warning();
@@ -175,8 +184,11 @@ export default function ChatMainScreen() {
                 `@chatMessages_${user.id}_${chat.id}`,
                 `@deletedMsgIds_${user.id}_${chat.id}`,
               ]);
-              // 从列表移除窗口（与「不显示该聊天」同款效果：清掉隐藏/置顶标记）
-              prefs.clearChat(chat.id);
+              // 从列表移除窗口：与「不显示该聊天」完全同款
+              //   markHiddenBaseline 记录当前最新消息时间戳作为基线，
+              //   否则隐藏恢复 effect 会把历史消息误判成新消息、立刻 unhide。
+              markHiddenBaseline(chat.id);
+              prefs.hide(chat.id);
               if (isTablet && selectedChat?.id === chat.id) setSelectedChat(null);
 
               haptic.success();
