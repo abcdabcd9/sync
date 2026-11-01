@@ -2,7 +2,7 @@
   "name": "sync",
   "version": "1.0.0",
   "description": "A personal mobile app built with Expo + React Native: health check-ins, chat, a movie room and a browser in one shell.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "author": "abcdabcd9",
   "repository": {
     "type": "git",

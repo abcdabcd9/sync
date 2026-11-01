@@ -1,6 +1,6 @@
 # Sync
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 [![Expo SDK](https://img.shields.io/badge/Expo%20SDK-58-000020.svg)](https://docs.expo.dev/versions/v58.0.0/)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](#)
 [![Author](https://img.shields.io/badge/author-abcdabcd9-blue.svg)](https://github.com/abcdabcd9)
@@ -270,4 +270,6 @@ npx expo lint
 
 ## License
 
-MIT
+GNU AGPLv3 许可证 — 见 [`LICENSE`](LICENSE)。
+
+本项目以 GNU Affero General Public License v3.0 授权。任何通过网络向用户提供本软件（或其修改版本）服务的组织或个人，必须按 AGPLv3 第 13 条向这些用户提供完整的对应源代码。商业使用需遵守 AGPLv3 条款；如需豁免开源义务的闭源商业授权，请联系作者。

@@ -1,6 +1,6 @@
 # Sync
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 [![Expo SDK](https://img.shields.io/badge/Expo%20SDK-58-000020.svg)](https://docs.expo.dev/versions/v58.0.0/)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](#)
 [![Author](https://img.shields.io/badge/author-abcdabcd9-blue.svg)](https://github.com/abcdabcd9)
@@ -270,4 +270,6 @@ I built this end to end on my own — database schema, the 14 migration scripts 
 
 ## License
 
-MIT
+GNU AGPLv3 License — see [`LICENSE`](LICENSE).
+
+This project is licensed under the GNU Affero General Public License v3.0. Anyone who runs this software (or a modified version) as a network service must offer the complete Corresponding Source to those users, as required by section 13 of the AGPLv3. Commercial use must comply with the AGPLv3 terms; for a closed-source commercial license that waives the copyleft obligations, contact the author.

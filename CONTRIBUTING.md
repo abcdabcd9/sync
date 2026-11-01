@@ -113,7 +113,7 @@ Do **not** open a public issue for security problems. See [`SECURITY.md`](SECURI
 
 ### License
 
-By contributing, you agree that your contributions are licensed under the MIT License (see [`LICENSE`](LICENSE)).
+By contributing, you agree that your contributions are licensed under the GNU AGPLv3 License (see [`LICENSE`](LICENSE)).
 
 ---
 
@@ -226,4 +226,4 @@ README 里有一节叫 **「还不能用的功能（诚实清单）」**，列�
 
 ### 许可
 
-提交贡献即表示你同意你的贡献以 MIT 协议授权（见 [`LICENSE`](LICENSE)）。
+提交贡献即表示你同意你的贡献以 GNU AGPLv3 许可证授权（见 [`LICENSE`](LICENSE)）。
