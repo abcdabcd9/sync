@@ -9,7 +9,7 @@ A mobile app I built myself, packing health check-ins, chat, a movie room, and a
 
 Written with Expo + React Native, backed by Supabase.
 
-[中文版](README.zh.md) · [English](README.en.md)
+[中文版](README.md) · English (this page)
 
 Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
@@ -33,11 +33,15 @@ One-on-one private chat with text, images, video, and voice. Voice messages can 
 
 **Space**
 
+The Space tab has 4 cards, 2 of which actually work:
+
 - Movie room: video playback, create a room to watch together in sync, with danmaku comments
 - Browser: built-in WebView that blocks ads and sniffs videos from web pages to cast straight into the movie room
 
+The other 2 (Private Space, Moments) are placeholder pages — see "What doesn't work yet" below.
+
 **Settings**
-Account, appearance (dark/light), storage management, notification permission requests.
+Profile, account security, notifications, appearance mode (light/dark), friend permissions, storage, chat settings, health & check-in preferences, auto-download, switch account, sign out, and more. Some of these toggles only save and do nothing — see "What doesn't work yet" below.
 
 > Everything above **actually works**. Below is a separate list of "what doesn't work yet", so you don't step on landmines.
 
@@ -70,6 +74,8 @@ npx expo run:ios
 ```
 
 > It uses native modules like expo-notifications and expo-video, so Expo Go can't run it fully. You need a development build.
+>
+> The repo has **no** `ios/` or `android/` directories (it uses Expo CNG, i.e. Continuous Native Generation). `npx expo run:android` / `run:ios` will generate the native projects first, then compile — the first run is slow. **Do not create or edit these two directories by hand**; put native config in `app.json` and config plugins instead.
 
 For the database, run the SQL files in `supabase/migrations/` in filename order inside the Supabase SQL Editor.
 
@@ -144,7 +150,9 @@ src/
 ├── hooks/        # Hooks grouped by module
 ├── services/     # Supabase, push, media cache
 ├── constants/    # Colors, theme, motion, feature flags
-└── scripts/      # Scripts injected into the WebView (ad blocking, sniffing)
+├── context/      # Global contexts (theme, etc.)
+├── scripts/      # Scripts injected into the WebView (ad blocking, sniffing)
+└── types/        # Reserved for the TS migration (only a README for now)
 supabase/
 ├── functions/    # Edge Functions
 └── migrations/   # Database migrations
@@ -166,6 +174,8 @@ The project is still early. The UI is built out, but some features are shells on
 | Moments | `src/app/moments/index.js` |
 
 The 4 cards on the Space page are hardcoded and don't read feature flags, so these two cards always show, and tapping them lands on a placeholder page.
+
+> Side note: in `src/constants/features.js`, `privateSpace` / `moments` are both marked `true` (the comment says "implemented"), which doesn't match reality. On top of that, the `isFeatureOn()` helper is **never called anywhere**, so the whole feature-flag system is currently a no-op.
 
 ### 2. Settings that "save but do nothing"
 
@@ -202,7 +212,9 @@ Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list
 
 ### 5. Multi-account switching isn't real multi-session
 
-"Switch account" actually signs out the current account and jumps to the login page with the email pre-filled. It does not keep multiple sessions alive at once.
+"Switch account" actually signs out the current account and jumps to the login page, where you have to re-enter the target account's email and password. It does not keep multiple sessions alive at once.
+
+> For security (avoiding plaintext emails on disk), the email is **no longer pre-filled**. Only a local account profile (masked email + nickname + Sync ID) is kept for the list display. See the comments in `src/hooks/useAccountSwitcher.js`.
 
 ### 6. Other
 
@@ -247,12 +259,13 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 **Server side**
 
 - **Edge Function push service** ([`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)): verifies the caller → looks up the recipient's Expo Push Token → sends the push → prunes dead tokens
-- All credentials go through `Deno.env.get()`; there are no hardcoded secrets anywhere in the repo
+- Credentials inside the Edge Function all go through `Deno.env.get()`; there are no hardcoded secrets in the repo
+  > Note: the `EXPO_PUBLIC_GROQ_API_KEY` used for speech-to-text is a **client-side** variable — it gets bundled into the app binary and is publicly extractable. For production, proxy the request through an Edge Function instead of shipping the Groq key in the client.
 - Uses Expo Push Service rather than talking to FCM directly, so self-hosters don't need Firebase certificates
 
 **Client**
 
-- Expo Router file-based routing, 40+ screens under `src/app/`
+- Expo Router file-based routing, 42 screen files under `src/app/`
 - Hand-rolled UI component library (`src/components/ui/`), no third-party UI framework
 - Built-in browser with ad blocking, media sniffing, and desktop UA spoofing (`src/scripts/browser/`)
 - Synced watch party: playback position stays aligned across both devices, with a seek lock to prevent jitter
@@ -260,8 +273,8 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 **Engineering**
 
 - GitHub Actions CI: blocking `tsc --noEmit` plus non-blocking ESLint (the baseline is documented in the workflow comments)
-- Three READMEs (Chinese / English / Simplified Chinese), bilingual `SECURITY.md` and `CONTRIBUTING.md`
-- Every documentation link is script-verified — zero broken links
+- Bilingual README ([`README.md`](README.md) is Chinese, [`README.en.md`](README.en.md) is English), bilingual `SECURITY.md` and `CONTRIBUTING.md`
+- Every relative link in the docs has been checked by hand — currently zero broken links
 
 ---
 

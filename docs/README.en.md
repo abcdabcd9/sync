@@ -2,7 +2,7 @@
 
 This directory holds all documentation for the Sync project. Code lives in [`../src/`](../src/), database migrations in [`../supabase/migrations/`](../supabase/migrations/).
 
-[中文版](README.zh.md) · [English](README.en.md)
+[中文版](README.md) · English (this page)
 
 ## 1. Operations manuals (follow them step by step)
 

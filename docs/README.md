@@ -2,7 +2,7 @@
 
 这个目录放 Sync 项目的全部文档。代码在 [`../src/`](../src/)，数据库迁移在 [`../supabase/migrations/`](../supabase/migrations/)。
 
-[English](README.en.md) · [中文](README.zh.md)
+[English](README.en.md) · 中文（当前页）
 
 ## 一、运维手册（照着做就行）
 

@@ -1,6 +1,6 @@
 # OTA 代码签名证书目录（安全审计 #24）
 
-[English](README.en.md) · [中文](README.zh.md)
+[English](README.en.md) · 中文（当前页）
 
 本目录存放 **Expo Updates 代码签名** 所需的公钥证书。
 

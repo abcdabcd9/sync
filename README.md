@@ -9,7 +9,7 @@
 
 用 Expo + React Native 写的，后端是 Supabase。
 
-[English](README.en.md) · [中文](README.zh.md)
+[English](README.en.md) · 中文（当前页）
 
 由 [@abcdabcd9](https://github.com/abcdabcd9) 独立开发 · 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
@@ -33,11 +33,15 @@
 
 **空间**
 
+空间页有 4 张卡片，其中 2 张是真能用的：
+
 - 放映厅：视频播放，能开房间同步看电影，带弹幕
 - 浏览器：内置 WebView，能拦广告、嗅探网页里的视频直接投到放映厅
 
+另外 2 张（私密空间、朋友圈）目前是占位页，详见下面「还不能用的功能」。
+
 **设置**
-账号、外观（深色/浅色）、存储管理、通知权限申请。
+个人资料、账号安全、通知、外观模式（浅色/深色）、朋友权限、存储空间、聊天设置、健康与打卡偏好、自动下载、切换账号、退出登录等。其中一部分开关只存不生效，详见下面「还不能用的功能」。
 
 > 上面这些是**真能用的**。下面单独列一份「还不能用的」，免得你踩坑。
 
@@ -70,6 +74,8 @@ npx expo run:ios
 ```
 
 > 用了 expo-notifications、expo-video 这些原生模块，Expo Go 跑不全，得用开发构建。
+>
+> 仓库里**没有** `ios/` 和 `android/` 目录（走 Expo 的 CNG，即 Continuous Native Generation）。`npx expo run:android` / `run:ios` 会先自动生成原生工程再编译，首次会比较慢。**不要手动创建或修改这两个目录**，原生配置一律写在 `app.json` 和 config plugin 里。
 
 数据库那边，把 `supabase/migrations/` 里的 SQL 按文件名顺序在 Supabase SQL Editor 里跑一遍就行。
 
@@ -144,7 +150,9 @@ src/
 ├── hooks/        # 按模块分的 Hook
 ├── services/     # Supabase、推送、媒体缓存
 ├── constants/    # 颜色、主题、动效、功能开关
-└── scripts/      # WebView 注入的脚本（广告拦截、嗅探）
+├── context/      # 全局 Context（主题等）
+├── scripts/      # WebView 注入的脚本（广告拦截、嗅探）
+└── types/        # TS 迁移预留目录（当前只有 README）
 supabase/
 ├── functions/    # Edge Function
 └── migrations/   # 数据库迁移
@@ -166,6 +174,8 @@ supabase/
 | 朋友圈 | `src/app/moments/index.js` |
 
 空间页的 4 张卡片是写死的，不读功能开关，所以这两张卡永远显示，点进去就是占位页。
+
+> 顺带一提：`src/constants/features.js` 里 `privateSpace` / `moments` 都标成了 `true`（注释写着「已实现」），与实际状态不符；而且 `isFeatureOn()` 这个判断函数**目前没有任何地方调用**，整套功能开关是空转的。
 
 ### 2. 设置项「能存不生效」
 
@@ -202,7 +212,9 @@ supabase/
 
 ### 5. 多账号切换不是真的多开
 
-「切换账号」实际是登出当前账号再跳到登录页，邮箱帮你填好。不是同时保持多个 session。
+「切换账号」实际是登出当前账号再跳到登录页，需要你重新输入目标账号的邮箱与密码。不是同时保持多个 session。
+
+> 出于安全考虑（避免明文邮箱落盘），切换时**不再预填邮箱**，只在本机保留账号档案（掩码邮箱 + 昵称 + Sync ID）用于列表展示。详见 `src/hooks/useAccountSwitcher.js` 的注释。
 
 ### 6. 其他
 
@@ -247,12 +259,13 @@ npx expo lint
 **服务端**
 
 - **Edge Function 推送服务**（[`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)）：校验调用者身份 → 查接收方 Expo Push Token → 批量推送 → 清理失效 token
-- 全部凭据走 `Deno.env.get()`，仓库里没有任何硬编码密钥
+- Edge Function 内的凭据全部走 `Deno.env.get()`，仓库里没有任何硬编码密钥
+  > 注意：语音转文字用的 `EXPO_PUBLIC_GROQ_API_KEY` 是**客户端**变量，会被打进 App 包，属于公开可见的密钥。生产环境建议改由 Edge Function 代理转发，不要把 Groq Key 直接放在客户端。
 - 走 Expo Push Service 而非直连 FCM，所以自建者不需要准备 Firebase 证书
 
 **客户端**
 
-- Expo Router 文件式路由，`src/app/` 下 40+ 个页面
+- Expo Router 文件式路由，`src/app/` 下 42 个页面文件
 - 自研 UI 组件库（`src/components/ui/`），无第三方 UI 框架依赖
 - 内置浏览器带广告拦截、媒体嗅探、桌面 UA 伪装（`src/scripts/browser/`）
 - 同步放映厅：双端播放进度对齐，带 seek 锁防抖动
@@ -260,8 +273,8 @@ npx expo lint
 **工程化**
 
 - GitHub Actions CI：`tsc --noEmit` 阻断 + ESLint 非阻断（基线已记录在 workflow 注释里）
-- 三语 README（中/英/简中）、双语 `SECURITY.md`、双语 `CONTRIBUTING.md`
-- 全部文档链接经脚本校验，0 断链
+- 双语 README（[`README.md`](README.md) 为中文，[`README.en.md`](README.en.md) 为英文）、双语 `SECURITY.md`、双语 `CONTRIBUTING.md`
+- 文档内所有相对链接均已人工核对，当前 0 断链
 
 ---
 

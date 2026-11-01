@@ -1,6 +1,6 @@
 # OTA code signing certificate directory (security audit #24)
 
-[中文版](README.zh.md) · [English](README.en.md)
+[中文版](README.md) · English (this page)
 
 This directory holds the public key certificate needed for **Expo Updates code signing**.
 
