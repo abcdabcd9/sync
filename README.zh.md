@@ -3,12 +3,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Expo SDK](https://img.shields.io/badge/Expo%20SDK-58-000020.svg)](https://docs.expo.dev/versions/v58.0.0/)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](#)
+[![Author](https://img.shields.io/badge/author-abcdabcd9-blue.svg)](https://github.com/abcdabcd9)
 
 一个自己写的手机 App，把健康打卡、聊天、放映厅、浏览器塞进了一个壳里。
 
 用 Expo + React Native 写的，后端是 Supabase。
 
 [English](README.en.md) · [中文](README.zh.md)
+
+由 [@abcdabcd9](https://github.com/abcdabcd9) 独立开发 · 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
 > **本项目只开源源码，不提供预编译安装包。**
 >

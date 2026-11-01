@@ -3,12 +3,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Expo SDK](https://img.shields.io/badge/Expo%20SDK-58-000020.svg)](https://docs.expo.dev/versions/v58.0.0/)
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](#)
+[![Author](https://img.shields.io/badge/author-abcdabcd9-blue.svg)](https://github.com/abcdabcd9)
 
 A mobile app I built myself, packing health check-ins, chat, a movie room, and a browser into one shell.
 
 Written with Expo + React Native, backed by Supabase.
 
 [中文版](README.zh.md) · [English](README.en.md)
+
+Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
 > **This project is source-only. No prebuilt installers are provided.**
 >
