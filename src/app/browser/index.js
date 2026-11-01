@@ -37,7 +37,7 @@ export default function BrowserScreen() {
   const params = useLocalSearchParams();
   const { loadUrl, emitCommand } = useCinema();
 
-  const startUrl = params.targetUrl || 'https://nnyy.in/';
+  const startUrl = params.targetUrl || 'https://www.bing.com';
   const webViewRef = useRef(null);
 
   // 🗂️ 菜单 / 🎬 嗅探弹窗的 UI 状态与动画
