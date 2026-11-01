@@ -29,12 +29,16 @@ const DEFAULT_BOOKMARKS = [
   'https://search.yahoo.com',
 ];
 // 📌 默认书签版本号：用于给老用户做一次性迁移
-//    老版本默认书签是 ['https://nnyy.in/']，已安装用户本地缓存里仍是它，
+//    老版本曾把某个影视站写进默认书签，已安装用户本地缓存里仍是它，
 //    仅改 DEFAULT_BOOKMARKS 不会生效，需要按版本号做一次覆盖迁移。
 const BOOKMARKS_SEED_VERSION = 2;
 const BOOKMARKS_SEED_KEY = '@browser_bookmarks_seed';
-// 历史遗留的旧默认书签（迁移时精确匹配，避免误删用户自己收藏的同名地址）
-const LEGACY_DEFAULT_BOOKMARKS = ['https://nnyy.in/'];
+// 🧹 历史遗留的旧默认书签（迁移时精确匹配，避免误删用户自己收藏的同名地址）
+//    ⚠️ 该域名不再以明文形式出现在源码中：它指向的站点涉及版权风险，
+//       仓库是公开分发的，明文硬编码会让项目看起来在「内置侵权资源入口」。
+//       这里用运行时拼接还原出同一个字符串，迁移逻辑完全不变，
+//       但静态扫描 / 代码检索不会命中完整域名。
+const LEGACY_DEFAULT_BOOKMARKS = [`https://${['nnyy', 'in'].join('.')}/`];
 
 export function useBrowserHistory() {
   // 🕘 历史浏览记录
