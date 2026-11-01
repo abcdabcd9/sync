@@ -96,10 +96,15 @@ export function useChatMessages(targetId, user) {
       if (cancelled) return;
 
       try {
+        // ⚠️ 软删除过滤：deleted_by 包含当前用户的消息不返回。
+        //    「删除该聊天 / 清空聊天记录」只把 auth.uid() 追加进 deleted_by，
+        //    物理行保留，因此对方仍能看到全部历史（单边删除语义）。
+        //    PostgREST 的 cs（contains）操作符：deleted_by 数组包含 {我的ID}。
         const { data, error } = await supabase
           .from('messages')
           .select('*')
           .or(`and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`)
+          .not('deleted_by', 'cs', `{${user.id}}`)
           .order('created_at', { ascending: false })
           .limit(FETCH_LIMIT);
 
@@ -199,6 +204,17 @@ export function useChatMessages(targetId, user) {
           const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
             || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
           if (!isRelevant) return;
+
+          // ⚠️ 软删除防护：若这条消息的 deleted_by 已包含我（我删过这个会话），
+          //    则 UPDATE 事件（如对方撤回）不应把它重新塞回我的列表。
+          //    payload.new.deleted_by 是 UUID[]，用 includes 判断即可。
+          const deletedBy = Array.isArray(payload.new.deleted_by) ? payload.new.deleted_by : [];
+          if (deletedBy.includes(user.id)) {
+            // 已在我这边删除 → 从当前列表移除（若存在），不再显示
+            setMessages(prev => prev.filter(m => m.id !== payload.new.id));
+            return;
+          }
+
           const updatedMsg = formatDbMsg(payload.new, user.id);
           setMessages(prev => prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg, localUri: m.localUri, localThumbUri: m.localThumbUri } : m));
         }

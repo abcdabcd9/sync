@@ -88,20 +88,25 @@ export default function ChatSettingsScreen() {
 
   // ===== 5. 清空聊天记录 =====
   //
-  // ⚠️ 旧实现直接 `.from('messages').delete().or(...)`，但 messages 的 RLS
-  //    删除策略是 `messages_delete_own: USING (auth.uid() = user_id)`，
-  //    只能删「自己发出的」消息。PostgREST 会先按 USING 过滤可删行，
-  //    对方发来的行被静默过滤 —— 不报错、也不删除。
-  //    结果：清空后重新进入会话，对方的消息又全部拉回来。
+  // ⚠️ 语义（重要，勿改）：**单边删除**。
+  //    只清空「我」这边的聊天记录，对方手机上的记录完全不受影响。
+  //    好友关系保留。
   //
-  // ✅ 新实现：调用 RPC delete_conversation（SECURITY DEFINER），
-  //    在服务端校验「我 ↔ 对方」参与关系后双向删除。
-  //    语义与「删除该聊天」一致：只删聊天记录，不解除好友关系。
+  // ⚠️ 历史教训：
+  //    最初用 `.from('messages').delete().or(...)`，被 RLS 的
+  //    `messages_delete_own: USING (auth.uid() = user_id)` 静默过滤，
+  //    只能删掉自己发的那一半，对方消息删不掉。
+  //    后来改用迁移 18 的物理双向 DELETE —— 又变成「我清空 → 对方也没了」，
+  //    同样是错误语义。
+  //    迁移 19 已改为软删除：只把 auth.uid() 追加进 messages.deleted_by，
+  //    物理行保留，对方照常可见。
+  //
+  // ✅ 当前实现：RPC delete_conversation（软删除）+ 本地缓存清理。
   const handleClearHistory = () => {
     haptic.warning();
     Alert.alert(
       '清空聊天记录',
-      `确定要清空与「${targetName || '该好友'}」的全部聊天记录吗？此操作不可恢复。`,
+      `确定要清空与「${targetName || '该好友'}」的全部聊天记录吗？\n\n仅从你的设备上删除，对方仍可看到这些消息。此操作不可恢复。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -122,7 +127,7 @@ export default function ChatSettingsScreen() {
               ]);
               prefs.clearChat(targetId);
               haptic.success();
-              Alert.alert('已清空', '聊天记录已删除。');
+              Alert.alert('已清空', '聊天记录已从你的设备删除，对方不受影响。');
             } catch (e) {
               haptic.error();
               Alert.alert('清空失败', e?.message || '请稍后重试。');

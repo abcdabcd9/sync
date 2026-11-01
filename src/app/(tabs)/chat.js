@@ -134,27 +134,29 @@ export default function ChatMainScreen() {
     prefs.hide(chat.id);
   };
 
-  // 删除该聊天：删除聊天记录 + 从列表移除窗口
+  // 删除该聊天：仅删「我方」聊天记录 + 从列表移除窗口
   //
-  // ⚠️ 语义：**不解除好友关系**。好友仍在「联系人」里，
-  //    之后从联系人点开即可重新发起聊天（届时是一个空会话）。
+  // ⚠️ 语义（重要，勿改）：
+  //    「删除该聊天」= **单边删除**。只让我自己看不到这段历史，
+  //    对方手机上的聊天记录、会话窗口、好友关系全部不受影响。
+  //    好友关系始终保留，之后可从「联系人」点开重新发起聊天。
   //
-  // ⚠️ 旧实现只调用 prefs.clearChat(chat.id)，仅清掉本地 AsyncStorage 里的
-  //    「隐藏 / 置顶」标记，数据库里的 messages 一行都没动。
-  //    表现就是「删了但聊天记录还在」，重新进入会话又全部拉回来。
+  // ⚠️ 历史教训：
+  //    迁移 18 的 delete_conversation 是物理双向 DELETE，
+  //    导致「我删了 → 对方也没了」，这是错误的产品语义。
+  //    迁移 19 已改为软删除：只把 auth.uid() 追加进 messages.deleted_by，
+  //    物理行保留，对方照常可见。
   //
-  // ✅ 新实现：
-  //    1. 调用 RPC delete_conversation 双向删除 messages
-  //       （RLS 的 messages_delete_own 只允许删「自己发出的」消息，
-  //        对方发来的删不掉，必须走 SECURITY DEFINER 函数在服务端校验参与关系后删除）
+  // ✅ 当前实现：
+  //    1. RPC delete_conversation → 软删除（仅标记我方已删）
   //    2. 清理本地聊天记录缓存与已删除 ID 列表
-  //    3. 从会话列表移除窗口（prefs.clearChat 清隐藏/置顶标记）
+  //    3. prefs.clearChat → 移除列表窗口（与「不显示该聊天」同款效果）
   const handleDeleteChat = (chat) => {
     if (!chat) return;
     haptic.warning();
     Alert.alert(
       '删除该聊天',
-      `确定要删除与「${getDisplayName(chat)}」的聊天记录吗？\n\n仅删除聊天记录与列表窗口，好友关系保留，之后可从「联系人」重新发起聊天。`,
+      `确定要删除与「${getDisplayName(chat)}」的聊天记录吗？\n\n仅从你的设备上删除，对方仍可看到这些消息。好友关系保留，之后可从「联系人」重新发起聊天。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -173,13 +175,13 @@ export default function ChatMainScreen() {
                 `@chatMessages_${user.id}_${chat.id}`,
                 `@deletedMsgIds_${user.id}_${chat.id}`,
               ]);
-              // 从列表移除窗口（清掉隐藏/置顶标记）
+              // 从列表移除窗口（与「不显示该聊天」同款效果：清掉隐藏/置顶标记）
               prefs.clearChat(chat.id);
               if (isTablet && selectedChat?.id === chat.id) setSelectedChat(null);
 
               haptic.success();
               refresh();
-              Alert.alert('已删除', '聊天记录已删除，好友关系保留。');
+              Alert.alert('已删除', '聊天记录已从你的设备删除，对方不受影响。');
             } catch (e) {
               haptic.error();
               Alert.alert('删除失败', e?.message || '请稍后重试。');
@@ -474,11 +476,15 @@ export default function ChatMainScreen() {
         </Pressable>
       </Modal>
 
-      {/* 右上角「+」小弹窗：联系人 / 添加好友 */}
+      {/* 右上角「+」小弹窗：联系人 / 添加好友
+          ⚠️ animationType 用 "none"：iOS 上 Modal 的 fade 关闭动画约 300ms，
+             若与 router.push 的页面过渡同时进行，两者会互相阻塞，
+             表现为「点了按钮要等一下才跳转」。
+             去掉 Modal 动画后，导航可立即开始，跳转明显更快。 */}
       <Modal
         visible={plusMenuVisible}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setPlusMenuVisible(false)}
       >
         <Pressable style={styles.plusOverlay} onPress={() => setPlusMenuVisible(false)}>
@@ -491,9 +497,10 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.plusMenuItem}
               onPress={() => {
-                setPlusMenuVisible(false);
+                // 先导航再关菜单：让页面过渡立即开始，不被 Modal 关闭流程拖慢
                 haptic.light();
                 router.push('/chat/contacts');
+                setPlusMenuVisible(false);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -507,9 +514,10 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.plusMenuItem}
               onPress={() => {
-                setPlusMenuVisible(false);
+                // 先导航再关菜单：让页面过渡立即开始，不被 Modal 关闭流程拖慢
                 haptic.light();
                 router.push('/chat/search');
+                setPlusMenuVisible(false);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"

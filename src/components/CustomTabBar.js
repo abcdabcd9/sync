@@ -33,11 +33,16 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
     if (!user) return;
 
     const fetchUnread = async () => {
+      // ⚠️ 软删除过滤：deleted_by 包含当前用户的消息不计入未读角标。
+      //    否则「删除该聊天」后，对方发来的旧未读消息仍会让底栏显示红点，
+      //    但点进会话却看不到任何消息（因为 useChatMessages 已过滤）。
+      //    与 useChatMessages / useChatList 的过滤条件保持一致（单边删除语义）。
       const { count } = await supabase
         .from('messages')
         .select('*', { count: 'exact', head: true })
         .eq('receiver_id', user.id)
-        .eq('is_read', false);
+        .eq('is_read', false)
+        .not('deleted_by', 'cs', `{${user.id}}`);
       if (count !== null) setUnreadCount(count);
     };
     fetchUnread();

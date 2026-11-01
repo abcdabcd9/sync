@@ -224,10 +224,16 @@ export function useChatList(user) {
       }
 
       // 批量抓取最近 200 条消息，用于渲染真实预览
+      //
+      // ⚠️ 软删除过滤：deleted_by 包含当前用户的消息不参与预览计算。
+      //    否则「删除该聊天」后，虽然窗口被 prefs.clearChat 移除了，
+      //    但只要会话因好友关系重新出现在列表里，预览又会显示旧消息内容。
+      //    与 useChatMessages 的过滤条件保持一致（单边删除语义）。
       const { data: recentMsgs, error: mError } = await supabase
         .from('messages')
         .select('*')
         .or(`user_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`)
+        .not('deleted_by', 'cs', `{${currentUserId}}`)
         .order('created_at', { ascending: false })
         .limit(200);
       if (mError) throw mError;
@@ -314,6 +320,11 @@ export function useChatList(user) {
         { event: 'UPDATE', schema: 'public', table: 'messages', filter: receiverFilter },
         (payload) => {
           const msg = payload.new;
+          // ⚠️ 软删除防护：若这条消息的 deleted_by 已包含我（我删过这个会话），
+          //    则 UPDATE 事件（如对方撤回）不应把预览重新塞回我的列表。
+          const deletedBy = Array.isArray(msg.deleted_by) ? msg.deleted_by : [];
+          if (deletedBy.includes(user.id)) return;
+
           // 对方撤回/编辑消息时，预览也要跟着变
           const partnerId = msg.user_id;
           setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
