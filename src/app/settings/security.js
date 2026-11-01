@@ -39,6 +39,14 @@ const USER_SCOPED_KEY_PREFIXES = [
   'sync_chat_prefs_v1_',     // 会话级偏好：置顶/隐藏/免打扰/星标/拉黑/背景（useChatPrefs）
 ];
 
+// 🧹 M-6：聊天消息缓存的「用户维度」前缀（user.id 位于中间，后接对方 ID）
+//    改造后 Key 形如 @chatMessages_<userId>_<targetId>，
+//    因此不能再用 startsWith 匹配，需用 includes 判断 user.id 是否在 Key 中。
+const USER_SCOPED_CHAT_CACHE_PREFIXES = [
+  '@chatMessages_',   // 消息缓存（useChatMessages / invite_friend / bind_partner）
+  '@deletedMsgIds_',  // 本地已删除消息 ID 集合
+];
+
 // 🚫 绝对不能删除的「全局 / 设备级」key（多账号共享或与账号无关）
 const GLOBAL_KEY_PREFIXES = [
   '@app_known_accounts', // 本机多账号档案
@@ -50,15 +58,16 @@ const GLOBAL_KEY_PREFIXES = [
   '@browser_bookmarks', '@browser_history', // 浏览器书签/历史
 ];
 
-// 🚫 按「对方 ID」而非「当前用户 ID」命名的聊天缓存：
-//    这些 key 属于会话双方共享的本地缓存，删除会误伤其他账号的聊天记录
-const PEER_SCOPED_KEY_PREFIXES = [
-  '@chatMessages_',
-  '@deletedMsgIds_',
-];
-
 const isGlobalKey = (key) => GLOBAL_KEY_PREFIXES.some((p) => key.startsWith(p));
-const isPeerScopedKey = (key) => PEER_SCOPED_KEY_PREFIXES.some((p) => key.startsWith(p));
+
+// 🧹 M-6：判断是否为「当前用户」的聊天缓存
+//    Key 格式：@chatMessages_<userId>_<targetId> / @deletedMsgIds_<userId>_<targetId>
+//    必须同时满足：命中聊天缓存前缀 + 包含当前 user.id
+//    这样既能清掉自己的缓存，又不会误删其他账号的聊天记录。
+const isCurrentUserChatCache = (key, userId) =>
+  !!userId &&
+  USER_SCOPED_CHAT_CACHE_PREFIXES.some((p) => key.startsWith(p)) &&
+  key.includes(userId);
 
 /**
  * 精准清理「当前用户」相关的本地状态，绝不误删全盘数据。
@@ -66,7 +75,9 @@ const isPeerScopedKey = (key) => PEER_SCOPED_KEY_PREFIXES.some((p) => key.starts
  * 策略：
  *   1. 显式移除已知的用户级 key（收藏 / 会话偏好）
  *   2. 扫描全部 key，移除「包含当前 user.id」的 key（覆盖未来新增的用户级 key）
- *   3. 始终跳过全局 key 与按对方 ID 命名的聊天缓存，保证其他账号数据不受影响
+ *   3. 始终跳过全局 key，保证其他账号数据与设备级配置不受影响
+ *   4. M-6 起聊天缓存 Key 已含 user.id，会随 ② 一并清除；
+ *      其他账号的缓存因不含当前 user.id 而天然被排除
  *
  * @param {string} userId 当前登录用户 ID（必须在 signOut 之前取得）
  */
@@ -83,8 +94,14 @@ const clearCurrentUserLocalState = async (userId) => {
     const allKeys = await AsyncStorage.getAllKeys();
     allKeys.forEach((key) => {
       if (!key.includes(userId)) return;
-      if (isGlobalKey(key)) return;      // 全局 key 绝不删除
-      if (isPeerScopedKey(key)) return;  // 对方维度的聊天缓存绝不删除
+      if (isGlobalKey(key)) return; // 全局 key 绝不删除
+      // 聊天缓存需额外确认前缀，避免误删「恰好包含该 id 字符串」的其他 key
+      if (
+        USER_SCOPED_CHAT_CACHE_PREFIXES.some((p) => key.startsWith(p)) &&
+        !isCurrentUserChatCache(key, userId)
+      ) {
+        return;
+      }
       keysToRemove.add(key);
     });
   } catch {

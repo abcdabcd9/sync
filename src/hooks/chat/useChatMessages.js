@@ -62,8 +62,12 @@ export function useChatMessages(targetId, user) {
   const messagesRef = useRef([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-  const CACHE_MSG_KEY = `@chatMessages_${targetId}`;
-  const CACHE_DEL_KEY = `@deletedMsgIds_${targetId}`;
+  // 🔒 M-6：缓存 Key 必须带上「当前用户 ID」做账号隔离
+  //    旧格式 @chatMessages_${targetId} 只按对方 ID 命名，同一台设备上
+  //    切换账号后，A 账号与某好友的聊天记录会被 B 账号读到（若 B 也认识该好友），
+  //    造成跨账号本地数据泄露。加入 user.id 后每个账号拥有独立缓存命名空间。
+  const CACHE_MSG_KEY = `@chatMessages_${user?.id}_${targetId}`;
+  const CACHE_DEL_KEY = `@deletedMsgIds_${user?.id}_${targetId}`;
 
   useEffect(() => {
     if (!user || !targetId) return;

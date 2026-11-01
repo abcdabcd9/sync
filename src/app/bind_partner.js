@@ -211,7 +211,8 @@ export default function BindPartnerScreen() {
           }
 
           // ✅ 云端成功后才写本地缓存
-          const cacheKey = `@chatMessages_${friendId}`;
+          // 🔒 M-6：Key 必须与 useChatMessages 保持一致（含当前用户 ID）
+          const cacheKey = `@chatMessages_${user.id}_${friendId}`;
           const cached = await AsyncStorage.getItem(cacheKey);
           const msgs = cached ? JSON.parse(cached) : [];
           await AsyncStorage.setItem(cacheKey, JSON.stringify([newMsg, ...msgs]));

@@ -82,8 +82,10 @@ export default function InviteFriendScreen() {
     }
 
     // ✅ 云端成功后才写本地缓存
-    const cacheKey = `@chatMessages_${friend.id}`;
-    const delKey = `@deletedMsgIds_${friend.id}`;
+    // 🔒 M-6：Key 必须与 useChatMessages 保持一致（含当前用户 ID），
+    //    否则这里写入的缓存读不到，且注销时无法被清理，成为孤儿数据。
+    const cacheKey = `@chatMessages_${user.id}_${friend.id}`;
+    const delKey = `@deletedMsgIds_${user.id}_${friend.id}`;
     const [cached, deletedStr] = await Promise.all([
       AsyncStorage.getItem(cacheKey),
       AsyncStorage.getItem(delKey),

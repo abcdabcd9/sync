@@ -41,9 +41,11 @@ export default function AuthScreen() {
   const { signIn, signUp } = useAuth();
   const { rememberAccount } = useAccountSwitcher();
 
-  // 🔀 切换账号：/settings/accounts 会带 ?email= 跳过来，预填邮箱省去重复输入
+  // 🔒 L-4：切换账号不再携带明文邮箱参数（本机档案已脱敏），
+  //    保留 params 读取仅为兼容旧链接，且仅接受看起来合法的邮箱串。
   const params = useLocalSearchParams();
-  const presetEmail = typeof params.email === 'string' ? params.email : '';
+  const presetEmail =
+    typeof params.email === 'string' && params.email.includes('@') ? params.email : '';
 
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState(presetEmail);
@@ -113,7 +115,9 @@ export default function AuthScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         // 🔀 记录到本机账号档案，供 /settings/accounts 快速切换
-        // 只存 id / 邮箱 / 昵称 / sync_id，绝不存密码或 token
+        // 🔒 L-4：email 从「当前 session 动态获取」，且只用于即时计算
+        //    掩码（emailMasked）与指纹（emailHash），明文不会落盘。
+        //    绝不存密码或 token。
         if (data?.session) {
           await rememberAccount({
             id: data.user.id,

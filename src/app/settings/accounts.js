@@ -15,12 +15,15 @@ import SettingsPage, { Group, GroupTitle } from '../../components/settings/Setti
  *
  * 行为说明：
  *   - 列出本机登录过的账号档案（最多 5 个），当前账号高亮并标「当前」
- *   - 点击其他账号 → 二次确认 → signOut 当前账号 → 跳 /auth 并预填该账号邮箱
+ *   - 点击其他账号 → 二次确认 → signOut 当前账号 → 跳 /auth
  *   - 长按 / 右侧按钮 → 从本机档案移除（不影响云端账号）
  *
  * 为什么切换要重新登录：
  *   Supabase 会话在 AsyncStorage 里是单例，无法同时持有多个活跃 session。
- *   所以「切换」= 登出 + 带邮箱跳登录页，用户只需再输一次密码。
+ *   所以「切换」= 登出 + 跳登录页，用户需重新输入邮箱与密码。
+ *
+ * 🔒 L-4：本机档案不再保存明文邮箱，只保留掩码（emailMasked）用于展示。
+ *   因此切换时**不再预填邮箱**——安全优先，避免明文 PII 落盘与回填。
  */
 
 function formatLastUsed(ts) {
@@ -36,8 +39,13 @@ function formatLastUsed(ts) {
   return '很久以前使用';
 }
 
+// 🔒 L-4：档案中已无明文 email，展示统一回退到 emailMasked
+function displayNameOf(account) {
+  return account.nickname || account.syncId || account.emailMasked || '未命名账号';
+}
+
 function initialOf(account) {
-  const source = account.nickname || account.syncId || account.email || '?';
+  const source = account.nickname || account.syncId || account.emailMasked || '?';
   return source.substring(0, 2).toUpperCase();
 }
 
@@ -60,7 +68,7 @@ export default function AccountsSettingsScreen() {
     haptic.medium();
     Alert.alert(
       '切换账号',
-      `将退出当前账号，并切换到「${account.nickname || account.syncId || account.email}」。\n\n出于安全考虑，需要重新输入该账号的密码。`,
+      `将退出当前账号，并切换到「${displayNameOf(account)}」。\n\n出于安全考虑，需要重新输入该账号的邮箱与密码。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -70,10 +78,8 @@ export default function AccountsSettingsScreen() {
             try {
               await signOut();
               haptic.success();
-              router.replace({
-                pathname: '/auth',
-                params: account.email ? { email: account.email } : {},
-              });
+              // 🔒 L-4：不再携带明文邮箱参数，用户自行输入
+              router.replace('/auth');
             } catch (e) {
               console.warn('⚠️ 切换账号失败:', e?.message ?? e);
               haptic.error();
@@ -91,7 +97,7 @@ export default function AccountsSettingsScreen() {
     haptic.warning();
     Alert.alert(
       '从本机移除',
-      `将从本机账号列表中移除「${account.nickname || account.syncId || account.email}」。\n\n这不会删除云端账号，你仍可以用邮箱密码重新登录。`,
+      `将从本机账号列表中移除「${displayNameOf(account)}」。\n\n这不会删除云端账号，你仍可以用邮箱密码重新登录。`,
       [
         { text: '取消', style: 'cancel' },
         {
@@ -151,7 +157,7 @@ export default function AccountsSettingsScreen() {
           onPress={() => handleSwitch(account)}
           activeOpacity={0.6}
           accessibilityRole="button"
-          accessibilityLabel={`切换到 ${account.nickname || account.syncId || account.email}`}
+          accessibilityLabel={`切换到 ${displayNameOf(account)}`}
         >
           <View style={[styles.avatar, { backgroundColor: account.avatarColor }]}>
             {isBusy ? (
@@ -173,7 +179,7 @@ export default function AccountsSettingsScreen() {
               ) : null}
             </View>
             <Text style={[styles.sub, { color: colors.textSecondary }]} numberOfLines={1}>
-              {account.syncId ? `ID: ${account.syncId}` : account.email || '—'}
+              {account.syncId ? `ID: ${account.syncId}` : account.emailMasked || '—'}
             </Text>
             {formatLastUsed(account.lastUsedAt) ? (
               <Text style={[styles.meta, { color: colors.textSecondary }]}>
@@ -195,7 +201,7 @@ export default function AccountsSettingsScreen() {
             onPress={() => handleForget(account)}
             activeOpacity={0.6}
             accessibilityRole="button"
-            accessibilityLabel={`从本机移除 ${account.nickname || account.email}`}
+            accessibilityLabel={`从本机移除 ${displayNameOf(account)}`}
           >
             <Ionicons name="close-circle-outline" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -207,7 +213,7 @@ export default function AccountsSettingsScreen() {
   return (
     <SettingsPage
       title="切换账号"
-      footer="本机最多保留 5 个账号档案，仅保存昵称、ID 与邮箱，不保存密码或登录凭证。移除档案不会删除云端账号。"
+      footer="本机最多保留 5 个账号档案，仅保存昵称、ID 与脱敏邮箱（如 al***@gmail.com），不保存明文邮箱、密码或登录凭证。移除档案不会删除云端账号。"
     >
       <GroupTitle>本机账号</GroupTitle>
 
