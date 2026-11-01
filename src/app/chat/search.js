@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/chat/search.js ---
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -19,21 +19,21 @@ export default function ChatSearchScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
-  // 🔒 安全审计 #16：搜索防抖节流
+  // 🔒 安全审计 #16：搜索节流
   // 用户每敲一个字符都会触发 onChangeText，若直接查询 Supabase 的 sync_id，
-  // 会形成高频碰撞查询（可被用于枚举 Sync ID）。这里用 500ms 防抖 + 在途请求去重，
-  // 保证同一时间最多只有一个查询，且只在用户停止输入后才真正发起。
-  const searchTimerRef = useRef(null);
+  // 会形成高频碰撞查询（可被用于枚举 Sync ID）。
+  //
+  // ⚠️ 旧实现用 500ms 防抖「自动」调用 handleSearchAdd，导致：
+  //    用户只输入 1 个字符，停顿 500ms 后就会自动发起搜索并弹出
+  //    「未找到用户」/「Sync ID 至少 3 个字符」的提示框。
+  //    在 iOS 上表现为「没点按钮就开始一直自动搜索」，体验极差。
+  //
+  // ✅ 新实现：**只允许手动触发**（点「搜索」按钮或键盘回车）。
+  //    输入框只负责更新文本，不再自动发起任何查询。
+  //    同时保留「在途请求去重」与「同一关键词不重复查询」两道防线，
+  //    防止用户连点按钮造成并发查询。
   const searchInFlightRef = useRef(false);
   const lastQueriedRef = useRef('');
-
-  // 组件卸载时清理定时器，避免内存泄漏与卸载后 setState
-  useEffect(
-    () => () => {
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    },
-    []
-  );
 
   const handleSearchAdd = useCallback(async () => {
     const keyword = searchQuery.trim();
@@ -121,17 +121,11 @@ export default function ChatSearchScreen() {
     ]);
   }, [searchQuery, user]);
 
-  // 🔒 安全审计 #16：输入监听走 500ms 防抖，避免逐字符触发 Supabase 查询
+  // 输入监听：只更新文本，绝不自动发起查询（必须手动点「搜索」或按回车）
   const handleSearchChange = (text) => {
     setSearchQuery(text);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     // 关键词变化后允许重新查询同一 Sync ID
     if (text.trim() !== lastQueriedRef.current) lastQueriedRef.current = '';
-    if (!text.trim()) return;
-    searchTimerRef.current = setTimeout(() => {
-      searchTimerRef.current = null;
-      handleSearchAdd();
-    }, 500);
   };
 
   return (

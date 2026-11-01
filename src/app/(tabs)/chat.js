@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/(tabs)/chat.js ---
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   Dimensions,
   Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -40,8 +41,16 @@ export default function ChatMainScreen() {
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
-  const { conversations, unreadCounts, friendsMap, latestMessages, loading, refresh, getDisplayName } =
-    useChatList(user);
+  const {
+    conversations,
+    unreadCounts,
+    friendsMap,
+    latestMessages,
+    lastMsgTimes,
+    loading,
+    refresh,
+    getDisplayName,
+  } = useChatList(user);
 
   // 会话级偏好（置顶 / 隐藏 / 免打扰 / 星标）—— 持久化到 AsyncStorage，按用户隔离
   const prefs = useChatPrefs(user);
@@ -111,22 +120,63 @@ export default function ChatMainScreen() {
   const handleHideChat = (chat) => {
     if (!chat) return;
     haptic.medium();
+    // 先记录「隐藏那一刻的最新消息时间戳」作为基线，
+    // 否则 effect 无法区分「历史消息」与「真正的新消息」。
+    markHiddenBaseline(chat.id);
     prefs.hide(chat.id);
   };
 
-  // 删除该聊天：二次确认后隐藏并取消置顶
+  // 删除该聊天：删除聊天记录 + 从列表移除窗口
+  //
+  // ⚠️ 语义：**不解除好友关系**。好友仍在「联系人」里，
+  //    之后从联系人点开即可重新发起聊天（届时是一个空会话）。
+  //
+  // ⚠️ 旧实现只调用 prefs.clearChat(chat.id)，仅清掉本地 AsyncStorage 里的
+  //    「隐藏 / 置顶」标记，数据库里的 messages 一行都没动。
+  //    表现就是「删了但聊天记录还在」，重新进入会话又全部拉回来。
+  //
+  // ✅ 新实现：
+  //    1. 调用 RPC delete_conversation 双向删除 messages
+  //       （RLS 的 messages_delete_own 只允许删「自己发出的」消息，
+  //        对方发来的删不掉，必须走 SECURITY DEFINER 函数在服务端校验参与关系后删除）
+  //    2. 清理本地聊天记录缓存与已删除 ID 列表
+  //    3. 从会话列表移除窗口（prefs.clearChat 清隐藏/置顶标记）
   const handleDeleteChat = (chat) => {
     if (!chat) return;
     haptic.warning();
     Alert.alert(
       '删除该聊天',
-      `确定要删除与「${getDisplayName(chat)}」的聊天吗？删除后该会话将从列表中移除，收到新消息时会重新出现。`,
+      `确定要删除与「${getDisplayName(chat)}」的聊天记录吗？\n\n仅删除聊天记录与列表窗口，好友关系保留，之后可从「联系人」重新发起聊天。`,
       [
         { text: '取消', style: 'cancel' },
         {
           text: '删除',
           style: 'destructive',
-          onPress: () => prefs.clearChat(chat.id),
+          onPress: async () => {
+            if (!user?.id) return;
+            try {
+              const { error: msgErr } = await supabase.rpc('delete_conversation', {
+                p_partner_id: chat.id,
+              });
+              if (msgErr) throw msgErr;
+
+              // 本地缓存清理：聊天记录缓存 + 已删除 ID 列表
+              await AsyncStorage.multiRemove([
+                `@chatMessages_${user.id}_${chat.id}`,
+                `@deletedMsgIds_${user.id}_${chat.id}`,
+              ]);
+              // 从列表移除窗口（清掉隐藏/置顶标记）
+              prefs.clearChat(chat.id);
+              if (isTablet && selectedChat?.id === chat.id) setSelectedChat(null);
+
+              haptic.success();
+              refresh();
+              Alert.alert('已删除', '聊天记录已删除，好友关系保留。');
+            } catch (e) {
+              haptic.error();
+              Alert.alert('删除失败', e?.message || '请稍后重试。');
+            }
+          },
         },
       ]
     );
@@ -157,15 +207,44 @@ export default function ChatMainScreen() {
 
   const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, left: 0, chat: null });
 
-  // 隐藏恢复机制：只要该会话产生了新消息（收或发），就取消隐藏
-  // latestMessages 由 useChatList 的实时监听更新，因此这里能捕获到收发两个方向
+  // 隐藏恢复机制：只有该会话「产生了新消息」时才取消隐藏
+  //
+  // ⚠️ 旧实现用 `if (latestMessages[id]) prefs.unhide(id)` 判断，存在致命缺陷：
+  //    latestMessages 是 useChatList 每次 fetchAll() 都重新构造的新对象，
+  //    即使内容完全没变，对象引用也会变化 → effect 重跑 → 只要该会话历史上
+  //    有过任何消息（几乎必然），就会立刻被 unhide。
+  //    结果：「不显示该聊天」刚点完就被撤销，看起来完全没生效。
+  //
+  // ✅ 新实现：记录「隐藏那一刻该会话的最新消息时间戳」作为基线，
+  //    只有 lastMsgTimes[id] 严格大于基线（即真的来了新消息）才恢复显示。
+  const hiddenBaselineRef = useRef({});
+
+  // 隐藏时写入基线（在 handleHideChat 中调用）
+  const markHiddenBaseline = useCallback(
+    (id) => {
+      hiddenBaselineRef.current[id] = lastMsgTimes[id] || 0;
+    },
+    [lastMsgTimes]
+  );
+
   useEffect(() => {
     if (!prefs.loaded || prefs.hidden.length === 0) return;
     prefs.hidden.forEach((id) => {
-      if (latestMessages[id]) prefs.unhide(id);
+      const baseline = hiddenBaselineRef.current[id];
+      const current = lastMsgTimes[id] || 0;
+      // 基线缺失（例如冷启动后仍是隐藏态）→ 用当前时间戳补齐，不触发恢复
+      if (baseline === undefined) {
+        hiddenBaselineRef.current[id] = current;
+        return;
+      }
+      // 只有「时间戳前进」才算真的来了新消息
+      if (current > baseline) {
+        delete hiddenBaselineRef.current[id];
+        prefs.unhide(id);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestMessages, prefs.loaded, prefs.hidden]);
+  }, [lastMsgTimes, prefs.loaded, prefs.hidden]);
 
   // 过滤「不显示」的会话，并把「置顶」的会话排到最前（保持原有相对顺序）
   const visibleConversations = useMemo(() => {

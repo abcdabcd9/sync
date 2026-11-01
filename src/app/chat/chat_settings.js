@@ -1,6 +1,7 @@
 // --- START OF FILE src/app/chat/chat_settings.js ---
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
@@ -86,6 +87,16 @@ export default function ChatSettingsScreen() {
   };
 
   // ===== 5. 清空聊天记录 =====
+  //
+  // ⚠️ 旧实现直接 `.from('messages').delete().or(...)`，但 messages 的 RLS
+  //    删除策略是 `messages_delete_own: USING (auth.uid() = user_id)`，
+  //    只能删「自己发出的」消息。PostgREST 会先按 USING 过滤可删行，
+  //    对方发来的行被静默过滤 —— 不报错、也不删除。
+  //    结果：清空后重新进入会话，对方的消息又全部拉回来。
+  //
+  // ✅ 新实现：调用 RPC delete_conversation（SECURITY DEFINER），
+  //    在服务端校验「我 ↔ 对方」参与关系后双向删除。
+  //    语义与「删除该聊天」一致：只删聊天记录，不解除好友关系。
   const handleClearHistory = () => {
     haptic.warning();
     Alert.alert(
@@ -98,21 +109,24 @@ export default function ChatSettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!user || !targetId) return;
-            // 🔒 归属校验：只删除「我参与的」这段会话
-            const { error } = await supabase
-              .from('messages')
-              .delete()
-              .or(
-                `and(user_id.eq.${user.id},receiver_id.eq.${targetId}),and(user_id.eq.${targetId},receiver_id.eq.${user.id})`
-              );
-            if (error) {
+            try {
+              const { error } = await supabase.rpc('delete_conversation', {
+                p_partner_id: targetId,
+              });
+              if (error) throw error;
+
+              // 清理本地聊天记录缓存，避免离线时又从缓存里读回来
+              await AsyncStorage.multiRemove([
+                `@chatMessages_${user.id}_${targetId}`,
+                `@deletedMsgIds_${user.id}_${targetId}`,
+              ]);
+              prefs.clearChat(targetId);
+              haptic.success();
+              Alert.alert('已清空', '聊天记录已删除。');
+            } catch (e) {
               haptic.error();
-              Alert.alert('清空失败', error.message);
-              return;
+              Alert.alert('清空失败', e?.message || '请稍后重试。');
             }
-            prefs.clearChat(targetId);
-            haptic.success();
-            Alert.alert('已清空', '聊天记录已删除。');
           },
         },
       ]
