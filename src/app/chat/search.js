@@ -149,7 +149,11 @@ export default function ChatSearchScreen() {
           maxLength={15}
           autoFocus
         />
-        {isSearching && <ActivityIndicator size="small" color={palette.textSecondary} />}
+        {/* 固定占位：始终渲染同尺寸容器，避免 isSearching 切换时
+            输入框内部宽度突变导致整页布局跳动（iOS 上表现为窗口闪烁） */}
+        <View style={styles.spinnerSlot}>
+          {isSearching ? <ActivityIndicator size="small" color={palette.textSecondary} /> : null}
+        </View>
       </View>
 
       <TouchableOpacity
@@ -164,7 +168,7 @@ export default function ChatSearchScreen() {
       </TouchableOpacity>
 
       <Text style={[styles.hint, { color: palette.textSecondary }]}>
-        为保护隐私，Sync ID 至少 3 个字符才会发起查询；连续输入时会自动防抖，避免高频请求。
+        为保护隐私，Sync ID 至少 3 个字符才会发起查询。
       </Text>
     </SettingsPage>
   );
@@ -182,6 +186,8 @@ const styles = StyleSheet.create({
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 16, height: '100%' },
+  // 固定 20×20 占位，与 ActivityIndicator size="small" 尺寸一致
+  spinnerSlot: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   submitBtn: {
     marginTop: 16,
     height: 48,

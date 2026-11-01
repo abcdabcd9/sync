@@ -18,7 +18,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../hooks/useAuth';
@@ -66,19 +66,27 @@ export default function ChatMainScreen() {
 
   // 列表入场动画（原 subTabSlideAnim 保留，避免视觉回退）
   // ⚠️ 必须用 useState 惰性初始化：useRef(...).current 在渲染期读取 ref，违反 react-hooks/refs
+  //
+  // ⚠️ 只在「首次进入本 tab」时播放一次，**不能**放在 useFocusEffect 里。
+  //    原因：useFocusEffect 在每次页面重新获得焦点时都会执行 —— 包括从二级
+  //    聊天页 router.back() 返回时。旧实现每次返回都会：
+  //      1) setValue(80) 把列表瞬间推到下方 80px（向下跳）
+  //      2) 弹簧回弹到 0，friction=7 / tension=60 是欠阻尼参数，会过冲再回来
+  //    视觉上就是「先向下弹簧、再向上弹簧」的抖动。
+  //    改用 useEffect（仅挂载时执行一次），返回时列表保持原位不动。
   const [listSlideAnim] = useState(() => new Animated.Value(80));
+  const hasPlayedEntryAnimRef = useRef(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      listSlideAnim.setValue(80);
-      Animated.spring(listSlideAnim, {
-        toValue: 0,
-        friction: 7,
-        tension: 60,
-        useNativeDriver: true,
-      }).start();
-    }, [listSlideAnim])
-  );
+  useEffect(() => {
+    if (hasPlayedEntryAnimRef.current) return;
+    hasPlayedEntryAnimRef.current = true;
+    Animated.spring(listSlideAnim, {
+      toValue: 0,
+      friction: 7,
+      tension: 60,
+      useNativeDriver: true,
+    }).start();
+  }, [listSlideAnim]);
 
   // 一级 tab 页不再保留 iOS 边缘右滑返回首页手势：
   // 底栏常驻，用户直接点底栏切换即可，避免与列表横向滚动/长按冲突。

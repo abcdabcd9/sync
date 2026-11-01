@@ -25,8 +25,13 @@ export default function SettingsPage({ title, children, footer }) {
   };
 
   return (
+    // ⚠️ 背景色必须同时铺在最外层 View 上：
+    //    iOS 上 SafeAreaView 首帧的安全区高度为 0，第二帧才测量出来，
+    //    若背景只画在 SafeAreaView 内部，首帧会露出下层页面的内容，
+    //    表现为「进入页面时窗口闪一下」。
+    //    外层 View 铺满全屏并带同色背景，可彻底遮住这个首帧空档。
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top']}>
         <View style={styles.navBar}>
           <TouchableOpacity
             style={styles.backBtn}
