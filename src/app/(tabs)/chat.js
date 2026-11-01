@@ -205,7 +205,15 @@ export default function ChatMainScreen() {
     setMenuConfig({ visible: true, top, left, chat: item });
   };
 
-  const closeActionMenu = () => setMenuConfig({ visible: false, top: 0, left: 0, chat: null });
+  // 关闭会话长按菜单
+  //
+  // ⚠️ 只把 visible 置 false，**绝不重置 top / left / chat**。
+  //    原因：iOS 的 <Modal animationType="fade"> 在 visible 变 false 后
+  //    并不会立刻卸载，而是继续播放约 300ms 的淡出动画。
+  //    旧实现同时把 top/left 重置为 0，导致淡出期间菜单卡片被重新布局到
+  //    屏幕左上角 —— 视觉上就是「点按钮后弹窗闪一下跑到左上角」。
+  //    保留原坐标，淡出动画就会在原地完成，不再跳动。
+  const closeActionMenu = () => setMenuConfig((prev) => ({ ...prev, visible: false }));
 
   // 隐藏恢复机制：只有该会话「产生了新消息」时才取消隐藏
   //
@@ -392,9 +400,11 @@ export default function ChatMainScreen() {
             <TouchableOpacity
               style={styles.contextMenuItem}
               onPress={() => {
+                // 先取快照再关闭：closeActionMenu 不再清空 chat，
+                // 但显式传参可彻底摆脱对状态更新时序的依赖。
                 const chat = menuConfig.chat;
                 closeActionMenu();
-                handleMarkRead(chat);
+                if (chat) handleMarkRead(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -410,7 +420,7 @@ export default function ChatMainScreen() {
               onPress={() => {
                 const chat = menuConfig.chat;
                 closeActionMenu();
-                handleTogglePin(chat);
+                if (chat) handleTogglePin(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -428,7 +438,7 @@ export default function ChatMainScreen() {
               onPress={() => {
                 const chat = menuConfig.chat;
                 closeActionMenu();
-                handleHideChat(chat);
+                if (chat) handleHideChat(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
@@ -444,7 +454,7 @@ export default function ChatMainScreen() {
               onPress={() => {
                 const chat = menuConfig.chat;
                 closeActionMenu();
-                handleDeleteChat(chat);
+                if (chat) handleDeleteChat(chat);
               }}
               activeOpacity={0.6}
               accessibilityRole="button"
