@@ -222,11 +222,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // ---- 5. 服务端发起真正的推送 ----
-  // 🔒 载荷统一：title 与 data.targetName 一律由服务端权威覆盖，
-  //    客户端传入的任何 title / targetName（'聊天'、'1'、'TA' 等）全部丢弃。
-  const safeData: Record<string, unknown> = { ...(data ?? {}) };
-  safeData.targetName = senderNickname; // 点击跳转时携带的真实昵称
-  if (!safeData.targetId) safeData.targetId = senderId; // 兜底：跳转目标会话的对方 ID
+  // 🔒 M-3：载荷白名单化。
+  //    旧实现 `{ ...(data ?? {}) }` 会把客户端传入的任意字段原样透传到
+  //    Expo Push 服务并最终落到接收端通知栏 / 深链参数中，攻击者可借此注入
+  //    伪造的跳转目标、超长字符串（撑爆通知栏 / 触发下游解析异常）或
+  //    任意自定义字段（污染客户端路由逻辑）。
+  //    现改为「只提取已知字段 + 强制类型与长度约束」，未知字段一律丢弃。
+  const safeData: Record<string, unknown> = {
+    // 通知类型：仅接受字符串，截断至 32 字符，缺省为 'chat'
+    type: typeof data?.type === 'string' ? data.type.slice(0, 32) : 'chat',
+    // 跳转目标会话 ID：仅接受字符串，截断至 64 字符，缺省回退为发送者 ID
+    targetId: typeof data?.targetId === 'string' ? data.targetId.slice(0, 64) : senderId,
+  };
+  // 服务端权威覆盖：昵称永远来自数据库，绝不信任客户端
+  safeData.targetName = senderNickname;
 
   // 🚫 纯文字策略：title 与 body 一律剥离 Emoji，确保通知栏 100% 无表情符号
   const safeTitle = stripEmoji(senderNickname) || '健康搭子';
