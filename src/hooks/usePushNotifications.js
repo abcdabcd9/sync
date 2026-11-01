@@ -43,7 +43,15 @@ export function usePushNotifications() {
 
       registerForPushNotificationsAsync()
         .then(async (token) => {
-          if (!token) return;
+          // 🛡️ 严格非空校验：只有拿到「有效非空字符串」才写库。
+          //    模拟器 / 权限被拒 / 缺 projectId / 获取失败时，上游一律返回 null，
+          //    此处必须短路，绝不能用 null 覆盖云端已有的有效 Token
+          //    （否则真机上已注册的推送会被模拟器登录清空，导致收不到消息）。
+          //    额外覆盖 ''、'   '、非字符串等边界值。
+          if (!token || typeof token !== 'string' || token.trim() === '') {
+            console.log('[Push] 检测到 Token 为空（如模拟器环境），跳过 Supabase Token 更新，保留现有 Token');
+            return;
+          }
           const { error } = await supabase
             .from('profiles')
             .update({ expo_push_token: token })

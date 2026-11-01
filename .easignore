@@ -1,3 +1,60 @@
-node_modules/
-.git/
-dist/
+# =============================================================================
+# EAS Build 上传忽略清单
+#
+# ⚠️ 重要：EAS Build 上传构建上下文时使用的是本文件（.easignore），
+#    而不是 .gitignore。若本文件存在，.gitignore 会被完全忽略。
+#    因此所有「绝不能上传到 Expo 云端」的敏感文件都必须在此显式列出。
+#
+# 参考：https://docs.expo.dev/build-reference/easignore/
+# =============================================================================
+
+# ---- 依赖与构建产物 ----
+node_modules
+.git
+dist
+.expo
+web-build
+*.tsbuildinfo
+
+# ---- 🔴 环境变量与密钥（最高优先级，禁止上传）----
+.env
+.env.*
+!.env.example
+
+# Supabase 本地开发配置（可能含 service_role key / JWT secret）
+supabase/.env
+supabase/.env.*
+supabase/functions/.env
+supabase/functions/.env.*
+supabase/.temp
+supabase/.branches
+
+# ---- 🔴 签名与证书 ----
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+*.cer
+*.cert
+credentials.json
+.eas-credentials
+
+# ---- 🔴 平台推送配置文件 ----
+google-services.json
+GoogleService-Info.plist
+push.json
+sync.json
+
+# ---- 🔴 内部文档与审计报告（不进入构建产物）----
+security-audit.md
+security-audit.pdf
+plans/
+
+# ---- 本地缓存与临时文件 ----
+*.log
+.DS_Store
+.cache
+coverage

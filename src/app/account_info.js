@@ -1,5 +1,5 @@
 // --- START OF FILE src/app/account_info.js ---
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator
@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -197,104 +197,92 @@ export default function AccountInfoScreen() {
   }, [user]);
 
   // =========================================================================
-  // 💞 实时同步：守护伴侣绑定关系 + 对方昵称
+  // 💞 守护伴侣绑定关系 + 对方昵称的同步策略
   // =========================================================================
   // 场景：
-  //   1. 我在别的设备/别处绑定了搭子 → 本页「守护伴侣」行立刻显示对方名字
-  //   2. 对方解绑 → 本页立刻回到「未绑定」
-  //   3. 对方改昵称 → 本页显示的名字立刻更新
+  //   1. 我在别的设备/别处绑定了搭子 → 本页「守护伴侣」行显示对方名字
+  //   2. 对方解绑 → 本页回到「未绑定」
+  //   3. 对方改昵称 → 本页显示的名字更新
   //
-  // ⚠️ 为什么订阅 profiles 而不是只订阅自己那一行：
-  //   伴侣的昵称存在「伴侣自己的 profiles 行」里，只订阅自己那一行收不到对方改名。
-  //   这里订阅整表 UPDATE，靠 RLS 兜底（Realtime 推送前按订阅者 RLS 逐行校验），
-  //   无权看的行不会推送，不会泄露他人资料。
+  // 🔒 H-3 安全加固：不再订阅 profiles 的 Realtime 广播
+  //   原实现订阅 `{ event: 'UPDATE', table: 'profiles' }`（无 filter），
+  //   意味着**全站任何用户改资料**都会触发本页重查。
+  //   而 profiles 的 SELECT 策略是 USING (true)（搜人必需），
+  //   等于任何登录用户都能收到全站用户资料变更的事件流。
+  //   迁移 16_Realtime白名单 已把 profiles 移出 publication。
   //
-  // ⚠️ 为什么收到事件后重新查一次而不是直接用 payload：
-  //   payload.new 只有变更的那一行，而「守护伴侣」需要两跳查询
-  //   （我的 bound_partner_id → 伴侣的 nickname）。重新查一次最简单可靠。
-  useEffect(() => {
-    if (!user?.id) return undefined;
-
+  //   为什么不能改成 filter: id=eq.<自己>：
+  //   伴侣的昵称存在「伴侣自己的 profiles 行」里，只订阅自己那一行
+  //   收不到对方改名；而伴侣 id 是动态的，无法在订阅时静态确定。
+  //   Realtime 的 filter 只支持单值 eq，也无法表达「我 + 我的伴侣」两行。
+  //
+  //   替代方案（本 effect）：
+  //   · 页面重新获得焦点时重查一次（useFocusEffect）—— 覆盖「对方改昵称」
+  //   · 绑定/解绑动作本身在本地立即刷新（bind_partner / ChatRoomInner
+  //     已调用 refreshPartner，本页返回时焦点刷新即可拿到最新值）
+  //   · 下拉刷新 / 重新进入本页
+  //   伴侣关系变更是低频事件，焦点刷新足够，且不产生任何全站广播。
+  //
+  // ⚠️ 为什么重查而不是用 payload：
+  //   「守护伴侣」需要两跳查询（我的 bound_partner_id → 伴侣的 nickname），
+  //   重新查一次最简单可靠。
+  const syncPartner = useCallback(async () => {
+    if (!user?.id) return;
     const currentUserId = user.id;
-    const channelName = `account_info_realtime_${currentUserId}_${Date.now()}`;
 
-    supabase
-      .getChannels()
-      .filter((ch) => ch.topic === `realtime:${channelName}`)
-      .forEach((ch) => supabase.removeChannel(ch));
+    try {
+      const { data: mine } = await supabase
+        .from('profiles')
+        .select('id, username, sync_id, nickname, last_id_modified_at, bound_partner_id')
+        .eq('id', currentUserId)
+        .single();
 
-    // 防抖：合并短时间内的多次 UPDATE
-    let debounceTimer = null;
-    const syncPartner = async () => {
-      try {
-        const { data: mine } = await supabase
+      if (!mine) return;
+
+      // 自己的资料（昵称 / Sync ID）同步到界面
+      const nextProfile = normalizeProfile(mine);
+      setProfile(nextProfile);
+      writeProfileCache(nextProfile);
+
+      // 伴侣昵称：两跳查询
+      if (mine.bound_partner_id) {
+        const { data: partner } = await supabase
           .from('profiles')
-          .select('id, username, sync_id, nickname, last_id_modified_at, bound_partner_id')
-          .eq('id', currentUserId)
+          .select('nickname, username')
+          .eq('id', mine.bound_partner_id)
           .single();
-
-        if (!mine) return;
-
-        // 自己的资料（昵称 / Sync ID）实时同步到界面
-        const nextProfile = normalizeProfile(mine);
-        setProfile(nextProfile);
-        writeProfileCache(nextProfile);
-
-        // 伴侣昵称：两跳查询
-        if (mine.bound_partner_id) {
-          const { data: partner } = await supabase
-            .from('profiles')
-            .select('nickname, username')
-            .eq('id', mine.bound_partner_id)
-            .single();
-          const partnerName = partner?.nickname || partner?.username;
-          if (partnerName) {
-            setBoundPartnerName(partnerName);
-            writeProfileCache({
-              ...nextProfile,
-              bound_partner_id: mine.bound_partner_id,
-              bound_partner_nickname: partnerName,
-            });
-          } else {
-            setBoundPartnerName('守护伴侣');
-          }
-        } else {
-          // 已解绑 → 立刻回到「未绑定」
-          setBoundPartnerName('未绑定');
+        const partnerName = partner?.nickname || partner?.username;
+        if (partnerName) {
+          setBoundPartnerName(partnerName);
           writeProfileCache({
             ...nextProfile,
-            bound_partner_id: null,
-            bound_partner_nickname: null,
+            bound_partner_id: mine.bound_partner_id,
+            bound_partner_nickname: partnerName,
           });
+        } else {
+          setBoundPartnerName('守护伴侣');
         }
-      } catch (e) {
-        // 实时同步失败不影响主流程，静默降级
-        console.warn('守护伴侣实时同步失败:', e?.message ?? e);
+      } else {
+        // 已解绑 → 回到「未绑定」
+        setBoundPartnerName('未绑定');
+        writeProfileCache({
+          ...nextProfile,
+          bound_partner_id: null,
+          bound_partner_nickname: null,
+        });
       }
-    };
+    } catch (e) {
+      // 同步失败不影响主流程，静默降级
+      console.warn('守护伴侣同步失败:', e?.message ?? e);
+    }
+  }, [user]);
 
-    const scheduleSync = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        syncPartner();
-      }, 400);
-    };
-
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        scheduleSync
-      )
-      .subscribe();
-
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id]);
+  // 每次页面获得焦点时同步一次（替代原 Realtime 订阅）
+  useFocusEffect(
+    useCallback(() => {
+      syncPartner();
+    }, [syncPartner])
+  );
 
   const handleCopyId = async () => {
     if (!profile?.sync_id) return;

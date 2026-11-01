@@ -332,12 +332,11 @@ export function useChatList(user) {
   }, [user]);
 
   // =========================================================================
-  // 关系网实时监听：friends / friend_requests / profiles
+  // 关系网实时监听：friends / friend_requests
   // =========================================================================
   // 为什么需要：
   //   1. friends          —— 对方删我好友 / 我加好友成功 → 会话列表与联系人立刻变化
   //   2. friend_requests  —— 收到好友请求 → 联系人页红点与请求卡片立刻出现
-  //   3. profiles         —— 好友改昵称/头像 → 我这边显示的名字立刻更新
   //
   // ⚠️ 为什么用「防抖全量刷新」而不是「增量改本地状态」：
   //   friends 表的一次关系变化会牵动 friends / friendsMap / requests / 未读数
@@ -350,6 +349,23 @@ export function useChatList(user) {
   //   只能作用于单列，无法表达 (user_id = me OR friend_id = me)。
   //   因此这里不加 filter，靠 RLS 兜底 —— Realtime 推送前会按订阅者 RLS 逐行校验，
   //   无权看的行不会推送，不会造成数据泄露。
+  //
+  // 🔒 H-3 安全加固：已移除对 profiles 的 Realtime 订阅
+  //   原实现订阅 `{ event: 'UPDATE', table: 'profiles' }`（无 filter），
+  //   用于「好友改昵称/头像时刷新列表」。
+  //   但 profiles 的 SELECT 策略是 USING (true)（搜人必需），
+  //   无 filter 订阅等于**任何登录用户都能收到全站用户资料变更的事件流**。
+  //   迁移 16_Realtime白名单 已把 profiles 移出 publication。
+  //
+  //   为什么不能改成 filter：
+  //   需要监听「所有好友」的资料变更，而 Realtime 的 filter 只支持单值 eq，
+  //   无法表达 id IN (好友1, 好友2, ...)；逐个好友建频道在好友多时
+  //   会撑爆连接数（Supabase 免费版并发频道上限很低）。
+  //
+  //   替代方案（好友改昵称属于低频事件，以下时机足够覆盖）：
+  //   · useFocusEffect —— 每次进入会话列表 / 联系人页都会 fetchAll()
+  //   · friends / friend_requests 变更事件 —— 已订阅，会触发全量刷新
+  //   · 下拉刷新 / 手动 refresh()
   useEffect(() => {
     if (!user?.id) return undefined;
 
@@ -384,12 +400,6 @@ export function useChatList(user) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'friend_requests' },
-        scheduleRefresh
-      )
-      // 好友资料变更（昵称 / 头像）→ 列表里显示的名字变化
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
         scheduleRefresh
       )
       .subscribe();
