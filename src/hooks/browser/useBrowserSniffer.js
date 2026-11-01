@@ -27,6 +27,24 @@ import { MANUAL_SNIFF_SCRIPT } from '../../scripts/browser';
 // 🎚️ 筛选选项（顺序即 UI 展示顺序）
 export const FILTER_OPTIONS = ['ALL', 'MP4', 'M3U8', 'MOV'];
 
+/**
+ * 🔒 M-5：嗅探 URL 协议白名单校验
+ *
+ * 嗅探结果来自网页注入脚本，属于**不可信输入**：恶意页面可以伪造
+ * VIDEO_FOUND / VIDEO_FOUND_LIST 消息，把 `javascript:`、`data:`、
+ * `file:`、`intent:` 等危险 scheme 塞进播放列表，诱导用户点击后
+ * 触发脚本执行或本地文件读取。
+ *
+ * 这里只放行 http / https 两种协议，其余一律丢弃。
+ */
+const isSafeMediaUrl = (url) => {
+  if (typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  // 大小写不敏感匹配，且要求协议后紧跟内容（排除 "http://" 这类空主机）
+  return /^https?:\/\/\S+/i.test(trimmed);
+};
+
 export function useBrowserSniffer({ onMediaFound } = {}) {
   // 🎞️ 嗅探到的视频源列表
   const [sniffedMediaList, setSniffedMediaList] = useState([]);
@@ -57,9 +75,15 @@ export function useBrowserSniffer({ onMediaFound } = {}) {
 
   // 🎬 合并新片源：去重 + 置顶 + 触感反馈 + 布局动画
   //    ✅ 仅当「确实新增了片源」时才反馈，并通知编排层弹出选择窗口
+  //    🔒 M-5：入列前统一做协议白名单过滤，非 http(s) 一律丢弃
   const pushMedia = useCallback((incoming) => {
+    const safeIncoming = (Array.isArray(incoming) ? incoming : [])
+      .filter(isSafeMediaUrl)
+      .map((url) => url.trim());
+    // 🔇 全部被过滤掉：静默返回，不触发动画/震动/弹窗
+    if (safeIncoming.length === 0) return;
     setSniffedMediaList((prev) => {
-      const next = mergeMediaList(prev, incoming);
+      const next = mergeMediaList(prev, safeIncoming);
       if (next !== prev) {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

@@ -288,6 +288,12 @@ export default function BrowserScreen() {
           style={styles.webview}
           originWhitelist={['https://*', 'about:*']}
           javaScriptEnabled={true}
+          // 🔒 M-4：禁止 WebView 读取本地文件系统，阻断 file:// 越权读取沙箱数据
+          allowFileAccess={false}
+          // 🔒 M-4：禁止 file:// 页面发起跨域请求（Android 上该开关默认可能为 true）
+          allowUniversalAccessFromFileURLs={false}
+          // 🔒 M-4：禁止 file:// 页面读取其他 file:// 资源
+          allowFileAccessFromFileURLs={false}
           setSupportMultipleWindows={false}
           contentMode={isDesktopMode ? 'desktop' : 'mobile'}
           allowsBackForwardNavigationGestures={true}
