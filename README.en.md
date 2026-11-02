@@ -21,6 +21,17 @@ Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@
 >
 > In short: this is code you can run yourself, not a download-and-go app.
 
+> **⚠️ Development is currently paused (since 2026-11-01)**
+>
+> The author is a high-school student in Spain and needs to put the focus back on schoolwork for the coming year, so development is paused — **this is not an abandoned project**.
+>
+> - **The code is complete and runnable**: `npx tsc --noEmit` passes and CI is green. What's paused is "adding features", not "keeping it working".
+> - **Issues and PRs are still read**, but responses may be slow. Thanks for understanding.
+> - **Resume date**: summer 2027, with the goal of finishing phases 1–5 of [`docs/specs/`](docs/specs/) (foundation / home / space / chat / cinema + browser).
+> - **Detailed plan**: [`docs/ROADMAP_2027_SUMMER.md`](docs/ROADMAP_2027_SUMMER.md) — it lists the six phases, their durations, the risk points, and the fallback plans.
+>
+> If you want to pick this up and continue, that roadmap is the best place to start.
+
 ---
 
 ## What it does
