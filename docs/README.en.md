@@ -17,6 +17,7 @@ This directory holds all documentation for the Sync project. Code lives in [`../
 | --- | --- |
 | [`DEV_LOG.md`](DEV_LOG.md) | Development log: what was done in each phase, what broke, and how it was fixed, in chronological order. Start here when asking "why is this change like this?" |
 | [`TFG_DATA.md`](TFG_DATA.md) | Project data summary for the thesis / defense (scale, tech stack, effort statistics) |
+| [`ROADMAP_2027_SUMMER.md`](ROADMAP_2027_SUMMER.md) · [中文](ROADMAP_2027_SUMMER.md) | 2027 summer execution manual: the order of the six phases, effort estimates, risk points, fallback plans, daily workflow, and acceptance criteria. **Read only this file when work resumes** |
 
 ## 3. Design documents (`specs/`)
 
