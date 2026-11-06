@@ -21,10 +21,14 @@ This directory holds all documentation for the Sync project. Code lives in [`../
 
 ## 3. Design documents (`specs/`)
 
-These are design drafts written before the refactor. They describe the **target architecture**, which does not necessarily match the current code. When reading, distinguish "already implemented" from "reserved design".
+`specs/` holds two different kinds of document. Know which one you're reading:
+
+- **`CODEBASE_MAP.md`** — written against the **current code**. If you want to know how the app actually runs today, read this one.
+- **Everything else** — design drafts written before the refactor, describing the **target architecture**. They don't necessarily match the current code, so distinguish "already implemented" from "reserved design".
 
 | Document | Content |
 | --- | --- |
+| [`specs/CODEBASE_MAP.md`](specs/CODEBASE_MAP.md) · [中文](specs/CODEBASE_MAP.md) | **Architecture of the current code**: tech stack, five-layer split, full route tree, business modules, data model, data layer, realtime sync, chat subsystem. Describes what exists, not what's planned |
 | [`specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md) | Architecture diagrams: module layering, data flow, screen relationships |
 | [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md) | Refactor execution plan, part 1 |
 | [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md) | Refactor execution plan, part 2 |

@@ -21,10 +21,14 @@
 
 ## 三、设计文档（`specs/`）
 
-这些是重构前的设计稿，描述的是**目标架构**，不一定等于当前代码。读的时候注意区分「已实现」和「预留设计」。
+`specs/` 里混着两类东西，读之前先分清：
+
+- **`CODEBASE_MAP.md`** —— 照着**当前代码**写的现状说明。想知道「现在到底是怎么跑的」，看这份。
+- **其余文档** —— 重构前写的**目标架构**，不一定等于当前代码。读的时候注意区分「已实现」和「预留设计」。
 
 | 文档 | 内容 |
 | --- | --- |
+| [`specs/CODEBASE_MAP.md`](specs/CODEBASE_MAP.md) · [EN](specs/CODEBASE_MAP.en.md) | **当前代码的架构说明**：技术栈、五层分层、完整路由树、业务模块、数据模型、数据层、实时同步、聊天子系统。描述现状，不是目标态 |
 | [`specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md) | 架构图：模块分层、数据流、页面关系 |
 | [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md) | 重构执行方案 第一部分 |
 | [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md) | 重构执行方案 第二部分 |
