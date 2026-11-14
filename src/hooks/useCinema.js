@@ -58,8 +58,14 @@ export function CinemaProvider({ children }) {
   const player = useVideoPlayer(null, (p) => {
     p.loop = false;
     p.muted = false;
-    p.staysActiveInBackground = true; 
-    p.preservesPitch = true; 
+    p.staysActiveInBackground = true;
+    p.preservesPitch = true;
+    // 🎚️ 放宽 seek 精度：默认 tolerance 为 0（精确 seek），每次拖动都要让解码器
+    //    重新对齐到关键帧，即使数据已在本地缓存也可能停顿几十到几百毫秒。
+    //    设为 ±0.5s 后，播放器可以就近跳到关键帧，拖动明显更快；
+    //    代价是落点有 ±0.5s 误差 —— 追剧场景完全可接受。
+    //    注意：这是「加速 seek」的唯一有效杠杆，缓存条本身不改变 seek 速度。
+    p.seekTolerance = { toleranceBefore: 0.5, toleranceAfter: 0.5 };
   });
 
   useEffect(() => {
@@ -86,8 +92,15 @@ export function CinemaProvider({ children }) {
   const lastPlayingState = useRef(false);
   const lastVideoTime = useRef(null);
   const lastForceSyncTime = useRef(0);
-  const seekLockTimer = useRef(0); 
+  const seekLockTimer = useRef(0);
   const currentUrlRef = useRef(null);
+  // 🎚️ 用户正在拖动进度条 / 屏幕横向快进中。
+  //    拖动期间 currentTime 会被人为跳变，若轮询照常计算漂移，会把「用户主动 seek」
+  //    误判成「播放漂移」并广播 AUTO_SYNC，导致对方画面乱跳。
+  //    这里用 ref 让轮询循环即时读取（不触发重渲染），并在拖动期间跳过漂移判定。
+  const isScrubbingRef = useRef(false);
+  // 供 cinema 页调用的开关（稳定引用，避免每次渲染新建函数）
+  const setScrubbing = useCallback((v) => { isScrubbingRef.current = !!v; }, []);
   // 🍎 记录当前剧集播放页，供 remoteCommand 重载时作为 Referer
   const episodePageUrlRef = useRef(null);
   const SYNC_THRESHOLD = 2.5;
@@ -122,6 +135,15 @@ export function CinemaProvider({ children }) {
       if (!player) return;
       const currentVideoTime = player.currentTime;
       const currentPlaying = player.playing;
+
+      // 🎚️ 用户正在拖动进度条 / 屏幕横向快进：
+      //    此时 currentTime 是人为主观跳变，不是播放漂移。
+      //    只刷新基准值（避免松手瞬间被误判为巨大漂移），绝不广播 AUTO_SYNC。
+      if (isScrubbingRef.current) {
+        lastVideoTime.current = currentVideoTime;
+        lastPlayingState.current = currentPlaying;
+        return;
+      }
 
       if (isHandlingRemote.current) {
         lastVideoTime.current = currentVideoTime;
@@ -427,6 +449,8 @@ export function CinemaProvider({ children }) {
     player, currentUrl, isMinimized, setIsMinimized, partnerStatus, emitCommand,
     loadUrl, closePlayer, isPlaying, togglePlay, cinemaRoomId, setCinemaRoomId,
     danmakuList, emitDanmaku,
+    // 🎚️ 拖动进度条开关：拖动期间屏蔽漂移检测，避免误发 AUTO_SYNC
+    setScrubbing,
     // 📺 选集相关
     episodeList, episodePageUrl, currentEpisodeIndex, episodeSwitchRequest,
     episodeListRequested, episodeListRequest,

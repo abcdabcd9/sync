@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/cinema.js ---
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, useWindowDimensions, PanResponder, Animated, TextInput, KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, Dimensions, StatusBar, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, useWindowDimensions, PanResponder, Animated, TextInput, KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, Dimensions, StatusBar, BackHandler, ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -8,6 +8,8 @@ import * as Crypto from 'expo-crypto';
 import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
+// ⏳ useEvent：订阅 expo-video 播放器事件（用于读取 status 判断是否正在加载）
+import { useEvent } from 'expo';
 import * as Brightness from 'expo-brightness';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useAppTheme } from '../context/ThemeContext';
@@ -46,6 +48,8 @@ export default function CinemaScreen() {
   const {
     player, partnerStatus, emitCommand, setIsMinimized, cinemaRoomId, setCinemaRoomId, danmakuList, emitDanmaku,
     loadUrl, currentUrl,
+    // 🎚️ 拖动进度条开关（拖动期间屏蔽同步漂移检测）
+    setScrubbing,
     // 📺 选集
     episodeList, currentEpisodeIndex, episodeSwitchRequest, requestEpisode, applyEpisodeList,
     episodeListRequest,
@@ -84,6 +88,50 @@ export default function CinemaScreen() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(player?.playing || false);
 
+  // 📊 缓存进度（秒）：expo-video 的 player.bufferedPosition
+  //    - iOS：返回「包含 currentTime 的 loadedTimeRanges 区间」的末尾；无 item 时 -1，当前点未缓存时 0
+  //    - Android：ExoPlayer 的前向 bufferedPosition；无 item 时 -1，STATE_BUFFERING 时 0
+  //    两端都只给「一个前向点」，拿不到完整区间列表，所以只能画「当前点 → 已缓存点」这一段。
+  //    -1 / 0 一律归一化为 0（= 不画缓存条），避免出现「缓存条从 0 开始」的错误视觉。
+  const [bufferedTime, setBufferedTime] = useState(0);
+  // 缓存条刷新阈值：变化超过 0.5s 才 setState，避免每 500ms 都触发一次无谓重渲染
+  const bufferedRef = useRef(0);
+  // 🕒 松手 seek 时若目标落在缓存区外，立即弹「正在加载中」（跳过 400ms 延迟）
+  //    这是一个「一次性强制显示」标记，由 seek 时置 true，status 离开 loading 时清掉。
+  const [forceLoadingHint, setForceLoadingHint] = useState(false);
+
+  // ⏳ 播放器加载状态：expo-video 的 status 只有 'idle' | 'loading' | 'readyToPlay' | 'error'。
+  //    'loading' 覆盖了「首次打开 / 拖动 seek 后重新拉流 / 网络抖动缓冲」三种情况，
+  //    正好对应「画面卡住但没坏」的场景 —— 用它驱动屏幕正中央的「正在加载中」提示，
+  //    避免用户以为软件卡死。
+  //    useEvent 会在 statusChange 事件到达时自动触发重渲染，无需轮询。
+  const playerStatusEvent = useEvent(player, 'statusChange', { status: player?.status ?? 'idle' });
+  const playerStatus = playerStatusEvent?.status ?? 'idle';
+  // 🕒 延迟显示：短于 400ms 的加载（例如 2X 切换时的瞬时缓冲）不弹提示，
+  //    否则提示会一闪而过，反而显得界面在抖动。
+  //    实现上只用一个「已确认加载」的标记：定时器到点才置 true，
+  //    状态离开 loading 时由 effect 的清理函数取消定时器，
+  //    渲染时再用 playerStatus === 'loading' 兜底判断，
+  //    这样 effect 体内不会同步 setState（避免级联渲染告警）。
+  const [loadingConfirmed, setLoadingConfirmed] = useState(false);
+  useEffect(() => {
+    if (playerStatus !== 'loading') return undefined;
+    const timer = setTimeout(() => setLoadingConfirmed(true), 400);
+    return () => {
+      clearTimeout(timer);
+      setLoadingConfirmed(false);
+    };
+  }, [playerStatus]);
+  // 🕒 强制标记的生命周期：一旦离开 loading 就清掉，避免下次加载被误判为「缓存外」
+  useEffect(() => {
+    if (playerStatus === 'loading') return undefined;
+    if (!forceLoadingHint) return undefined;
+    const timer = setTimeout(() => setForceLoadingHint(false), 0);
+    return () => clearTimeout(timer);
+  }, [playerStatus, forceLoadingHint]);
+  // 缓存区外 seek → forceLoadingHint 为 true 时立即显示，不等 400ms
+  const showLoadingHint = playerStatus === 'loading' && (loadingConfirmed || forceLoadingHint);
+
   const [inputText, setInputText] = useState('');
   const [showInput, setShowInput] = useState(false);
   const [indicatorText, setIndicatorText] = useState('');
@@ -105,7 +153,6 @@ export default function CinemaScreen() {
   const lastTapTime = useRef(0);
 
   const gestureLock = useRef('none');
-  const lastSeekRef = useRef(0);
   const lastBrightnessTime = useRef(0); // 🍎 硬件节流专用 Ref
   // 🔊 音量节流专用 Ref：避免每帧写原生 volume 导致音频欠载 / 破音
   const lastVolumeTime = useRef(0);
@@ -258,10 +305,28 @@ export default function CinemaScreen() {
         if (!isScrubbing.current && gestureLock.current === 'none') {
           const cur = player.currentTime || 0;
           const dur = player.duration || 1;
-          setCurrentTime(cur); 
+          setCurrentTime(cur);
           setDuration(dur); durationRef.current = dur;
           setProgress(cur / dur); progressRef.current = cur / dur;
           setIsPlaying(player.playing);
+
+          // 📊 缓存进度：复用同一个 500ms 轮询，不新增定时器。
+          //    -1（无媒体）/ 0（当前点未缓存）统一归一化为 0 → 不画缓存条。
+          //    变化不足 0.5s 时不 setState，避免无谓重渲染。
+          //    ⚠️ 拖动期间（isScrubbing）整个分支被跳过，缓存条不会跟着手指乱跳。
+          let buf = 0;
+          try {
+            const raw = player.bufferedPosition;
+            if (typeof raw === 'number' && isFinite(raw) && raw > 0) {
+              buf = Math.min(raw, dur);
+            }
+          } catch (_e) {
+            buf = 0;
+          }
+          if (Math.abs(buf - bufferedRef.current) > 0.5 || (buf === 0 && bufferedRef.current !== 0)) {
+            bufferedRef.current = buf;
+            setBufferedTime(buf);
+          }
         }
       }, 500);
     }
@@ -300,18 +365,61 @@ export default function CinemaScreen() {
     showUI();
   };
 
-  // ⏩ 统一设置播放速率，避免爆音：
-  //    1) 值未变化时直接跳过 —— 反复写 playbackRate 会让原生音频重采样器重建，
-  //       在 1.0 ↔ 2.0 之间来回跳变时产生瞬态爆音（用户反馈的「有概率爆音」）。
-  //    2) preservesPitch 只在首次设置（其默认值本就是 true），不再每次赋值。
-  //    3) 先设速率再 play()，避免音频管线刚启动就被改速率。
+  // ⏩ 统一设置播放速率（幂等，且绝不触发多余的原生写入）
+  //
+  //    🐞 修复「点按 2X / 长按 2X / 结束 2X 时画面停顿一下」：
+  //    根因在 expo-video 原生实现里 ——
+  //      · iOS  VideoPlayer.swift 的 `playbackRate.didSet` 会【无条件】执行
+  //        `ref.rate = playbackRate`，即使新旧值相同。写 rate 会让 AVPlayer 的
+  //        timeControlStatus 短暂进入 .waitingToPlayAtSpecifiedRate，
+  //        VideoPlayerObserver 随即把 status 置为 .loading → 画面卡一帧到几百毫秒。
+  //      · Android VideoModule.kt 的 playbackRate setter 每次都新建
+  //        PlaybackParameters 并赋给 ExoPlayer，会重建音频 SonicAudioProcessor
+  //        并重新评估缓冲 → 短暂 STATE_BUFFERING。
+  //      · iOS `preservesPitch.didSet` 会重设 audioTimePitchAlgorithm
+  //        (.spectral ↔ .varispeed)，这是更重的音频管线重建。
+  //    因此这里做三件事：
+  //      1) 速率相同 → 直接 return，一次原生写入都不发（旧实现已做，保留）。
+  //      2) preservesPitch 只在【确实为 false】时才写，且只写一次（用 ref 记住），
+  //         避免每次切速率都重建音频管线。
+  //      3) 不再在改速率后调用 play() —— 播放中改速率本来就会继续播；
+  //         暂停态改速率也不需要自动起播（由调用方显式决定），
+  //         避免「改速率 + play()」两次原生调用叠加造成二次卡顿。
+  //
+  //    🐞 第二版修复「点按 2X 时【按下】和【松手】各卡顿一次」：
+  //    按下卡顿来自 onResponderGrant 里的 Haptics.impactAsync(Heavy)。
+  //    iOS 上 Heavy 触感会触发 CoreHaptics 引擎启动（首次约 30~80ms），
+  //    且与 AVPlayer 的音频会话争抢，表现为按下瞬间画面顿一下。
+  //    松手卡顿来自松手时连续三次原生调用：setSpeedLocked(重渲染) +
+  //    playbackRate 写入 + Haptics(Light)。这里把触感降级为 Selection
+  //    （最轻、无引擎启动开销），并把速率写入延后到下一帧，
+  //    让「按钮高亮」先渲染完成，避免同一帧内 JS 渲染与原生写速率叠加。
+  const pitchFixedRef = useRef(false);
   const applyPlaybackRate = useCallback((rate) => {
     if (!player) return;
+    // 1) 幂等：值没变就什么都不做（关键，避免原生 didSet 无条件写 rate）
     if (player.playbackRate === rate) return;
-    if (player.preservesPitch !== true) player.preservesPitch = true;
+    // 2) preservesPitch 默认就是 true，只有被外部改成 false 时才需要纠正一次
+    if (!pitchFixedRef.current && player.preservesPitch !== true) {
+      player.preservesPitch = true;
+      pitchFixedRef.current = true;
+    }
+    // 3) 只写速率，不附带 play()
     player.playbackRate = rate;
-    if (!player.playing) { player.play(); setIsPlaying(true); }
   }, [player]);
+
+  // ⏩ 延后一帧写速率：让 React 先把「2X 高亮」渲染出来，
+  //    避免同一帧内「重渲染 + 原生写 rate」叠加导致掉帧。
+  //    用 requestAnimationFrame 而非 setTimeout(0)，保证在下一帧绘制前执行。
+  const applyPlaybackRateDeferred = useCallback((rate) => {
+    if (!player) return;
+    if (player.playbackRate === rate) return;
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => applyPlaybackRate(rate));
+    } else {
+      setTimeout(() => applyPlaybackRate(rate), 16);
+    }
+  }, [player, applyPlaybackRate]);
 
   const formatTime = (sec) => {
   // 🍎 如果是直播流（无穷大或无效），直接显示 LIVE！
@@ -322,30 +430,34 @@ export default function CinemaScreen() {
   return `${m}:${s}`;
 };
 
+  // 🎚️ 进度条拖动（方案 A：拖动期间只更新 UI，松手才真正 seek 一次）
+  //    旧实现每 150ms 写一次 player.currentTime，对 HLS 而言每次都是一次完整的
+  //    网络 seek（重新拉取 ts 分片 + 解析），拖动 3 秒会产生约 20 次 seek 请求，
+  //    播放器永远追不上 → 表现为「拖动后加载极慢 / 转圈」。
+  //    新实现：拖动中只改本地进度状态（画面停在拖动前的帧），松手时一次性 seek，
+  //    网络 seek 次数从 ~20 次降到 1 次。
   const seekPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         if (!player) return;
         if (hideTimer.current) clearTimeout(hideTimer.current);
-        gestureLock.current = 'horizontal'; 
+        gestureLock.current = 'horizontal';
         isScrubbing.current = true;
-        wasPlayingRef.current = isPlaying; 
+        // 🎚️ 通知同步层：拖动期间屏蔽漂移检测，避免把用户 seek 误判为播放漂移
+        setScrubbing(true);
+        wasPlayingRef.current = isPlaying;
         initialTrackX.current = progressRef.current * trackWidthRef.current;
+        // 拖动期间暂停，释放解码器，避免「边播边 seek」双重负载
+        if (player.playing) player.pause();
       },
       onPanResponderMove: (evt, gestureState) => {
         if (!player) return;
         let p = (initialTrackX.current + gestureState.dx) / trackWidthRef.current;
         p = Math.max(0, Math.min(1, p));
-        progressRef.current = p; setProgress(p); 
-        const newTime = p * durationRef.current;
-        setCurrentTime(newTime);
-        
-        const now = Date.now();
-        if (now - lastSeekRef.current > 150) {
-          player.currentTime = newTime;
-          lastSeekRef.current = now;
-        }
+        progressRef.current = p; setProgress(p);
+        // 仅更新 UI 时间显示，绝不写 player.currentTime
+        setCurrentTime(p * durationRef.current);
       },
       onPanResponderRelease: () => {
         if (!player) return;
@@ -353,16 +465,38 @@ export default function CinemaScreen() {
         isScrubbing.current = false;
         
         const newTime = progressRef.current * durationRef.current;
-        player.currentTime = newTime; 
+        // 📊 缓存判定：目标点落在缓存区外 → 必然要拉流，立即弹「正在加载中」；
+        //    落在缓存区内 → 大概率很快，不强制弹（仍走 400ms 延迟兜底）。
+        //    注意 bufferedRef 在拖动期间不刷新，这里读到的是「按下前」的缓存位置，
+        //    正是我们需要的基准（拖动本身不会改变缓存）。
+        const isBuffered = bufferedRef.current > 0 && newTime <= bufferedRef.current + 0.5;
+        if (!isBuffered) setForceLoadingHint(true);
+        // 全程唯一一次真实 seek
+        player.currentTime = newTime;
         emitCommand('FORCE_SYNC', newTime);
         
-        setTimeout(() => {
-          if (wasPlayingRef.current) {
-            player.play(); setIsPlaying(true); emitCommand('PLAY', newTime);
-          }
-        }, 50);
+        // 松手后立即恢复播放（不再固定 50ms 延迟，避免 seek 未就绪时 play 造成二次等待）
+        if (wasPlayingRef.current) {
+          player.play(); setIsPlaying(true); emitCommand('PLAY', newTime);
+        }
+        // 🎚️ 解除拖动标记：放在 seek 之后，让轮询以新位置为基准重新计算漂移
+        setScrubbing(false);
         showUI();
-      }
+      },
+      // 🛡️ 手势被系统中断（来电 / 下拉通知 / 切后台）：必须兜底恢复播放，
+      //    否则 player 会一直停在 Grant 里 pause() 的暂停状态。
+      onPanResponderTerminate: () => {
+        gestureLock.current = 'none';
+        isScrubbing.current = false;
+        if (player && wasPlayingRef.current && !player.playing) {
+          player.play();
+          setIsPlaying(true);
+        }
+        // 🛡️ 无条件兜底解除拖动标记
+        setScrubbing(false);
+      },
+      // 🛡️ 手势被其他组件抢走（如父级 ScrollView）：同样需要兜底
+      onPanResponderTerminationRequest: () => true
     })
   ).current;
 
@@ -391,6 +525,8 @@ export default function CinemaScreen() {
             if (Math.abs(dx) > Math.abs(dy)) {
               gestureLock.current = 'horizontal';
               wasPlayingRef.current = isPlaying;
+              // 🎚️ 进入横向快进：通知同步层屏蔽漂移检测
+              setScrubbing(true);
             } else {
               gestureLock.current = x0 < w / 2 ? 'brightness' : 'volume';
             }
@@ -398,17 +534,14 @@ export default function CinemaScreen() {
         }
 
         if (gestureLock.current === 'horizontal') {
-          const deltaSec = (dx / w) * 180; 
+          const deltaSec = (dx / w) * 180;
           const newTime = Math.max(0, Math.min(initialTime.current + deltaSec, durationRef.current));
-          setCurrentTime(newTime); 
+          setCurrentTime(newTime);
           progressRef.current = newTime / durationRef.current; setProgress(progressRef.current);
           setIndicatorText(`${deltaSec > 0 ? '快进' : '快退'}至 ${formatTime(newTime)}`);
-         
-          const now = Date.now();
-          if (now - lastSeekRef.current > 150) {
-            player.currentTime = newTime;
-            lastSeekRef.current = now;
-          }
+          // 🎚️ 方案 A：滑动过程中只更新 UI 与指示器，不写 player.currentTime。
+          //    真正的 seek 统一在 onPanResponderRelease 的 horizontal 分支执行一次，
+          //    避免 HLS 在滑动期间被反复打断导致加载极慢。
 
         } else if (gestureLock.current === 'brightness') {
           const delta = -(dy / h) * 1.5; 
@@ -461,13 +594,36 @@ export default function CinemaScreen() {
             else { controlsVisibleRef.current ? hideUI() : showUI(); lastTapTime.current = now; }
           }
         } else if (gestureLock.current === 'horizontal') {
-          player.currentTime = progressRef.current * durationRef.current;
-          emitCommand('FORCE_SYNC', player.currentTime);
+          // 🎚️ 方案 A：滑动全程唯一一次真实 seek
+          const targetTime = progressRef.current * durationRef.current;
+          // 📊 与进度条拖动一致：目标落在缓存区外 → 立即弹「正在加载中」
+          const isBuffered = bufferedRef.current > 0 && targetTime <= bufferedRef.current + 0.5;
+          if (!isBuffered) setForceLoadingHint(true);
+          player.currentTime = targetTime;
+          emitCommand('FORCE_SYNC', targetTime);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          if (wasPlayingRef.current) { player.play(); setIsPlaying(true); emitCommand('PLAY', player.currentTime); }
+          if (wasPlayingRef.current) { player.play(); setIsPlaying(true); emitCommand('PLAY', targetTime); }
+          // 解除拖动标记：放在 seek 之后，让轮询以新位置为基准
+          setScrubbing(false);
           showUI();
         }
         gestureLock.current = 'none';
+        // 🛡️ 无条件兜底：任何分支结束都必须解除拖动标记，
+        //    否则 isScrubbingRef 卡在 true 会让同步漂移检测永久失效。
+        setScrubbing(false);
+      },
+      // 🛡️ 手势被系统中断：兜底恢复播放并解除拖动标记
+      onPanResponderTerminate: () => {
+        if (gestureLock.current === 'horizontal') {
+          if (player && wasPlayingRef.current && !player.playing) {
+            player.play();
+            setIsPlaying(true);
+          }
+        }
+        gestureLock.current = 'none';
+        setIndicatorText('');
+        // 🛡️ 无条件兜底解除拖动标记
+        setScrubbing(false);
       }
     })
   ).current;
@@ -635,6 +791,16 @@ export default function CinemaScreen() {
             ))}
           </View>
 
+          {/* ⏳ 加载提示：屏幕正中央，纯展示层（pointerEvents="none" 不拦截任何手势） */}
+          {showLoadingHint && (
+            <View style={styles.loadingOverlay} pointerEvents="none">
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="large" color="#FFFFFF" />
+                <Text style={styles.loadingText}>正在加载中</Text>
+              </View>
+            </View>
+          )}
+
           <View style={StyleSheet.absoluteFill} {...screenPanResponder.panHandlers}>
             <View style={{ flex: 1, justifyContent: 'center' }}>
               {indicatorText !== '' && (
@@ -717,6 +883,21 @@ export default function CinemaScreen() {
               
               <View style={styles.progressTrackContainer} onLayout={(e) => { trackWidthRef.current = e.nativeEvent.layout.width || 1; }} {...seekPanResponder.panHandlers}>
                 <View style={styles.progressTrack}>
+                  {/* 📊 缓存条：从当前播放点画到已缓存点（前向缓存）。
+                      仅当 bufferedTime 有效且确实领先当前进度时才渲染，
+                      避免出现「缓存条从 0 开始」或「负宽度」的错误视觉。
+                      层级在 progressFill 之下，不遮挡蓝色已播放条。 */}
+                  {bufferedTime > 0 && duration > 0 && bufferedTime > currentTime + 0.2 && (
+                    <View
+                      style={[
+                        styles.progressBuffered,
+                        {
+                          left: `${progress * 100}%`,
+                          width: `${Math.max(0, Math.min(1, bufferedTime / duration) - progress) * 100}%`,
+                        },
+                      ]}
+                    />
+                  )}
                   <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
                   <View style={[styles.progressThumb, { left: `${progress * 100}%` }]} />
                 </View>
@@ -732,7 +913,10 @@ export default function CinemaScreen() {
                 onStartShouldSetResponder={() => true}
                 onResponderGrant={() => {
                   if (!player) return;
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                  // 🐞 按下不再用 Heavy 触感：iOS 上 Heavy 会启动 CoreHaptics 引擎
+                  //    （首次 30~80ms）并与 AVPlayer 音频会话争抢 → 按下瞬间画面顿一下。
+                  //    改用 Selection（最轻、无引擎启动开销），按下反馈依然存在。
+                  Haptics.selectionAsync();
                   // 按下即开始计时：超过 250ms 视为「长按快进」，否则视为「点按锁定」
                   speedLongPressRef.current = false;
                   if (speedPressTimer.current) clearTimeout(speedPressTimer.current);
@@ -755,19 +939,33 @@ export default function CinemaScreen() {
                     if (!speedLockedRef.current) {
                       applyPlaybackRate(1.0);
                       setIndicatorText('');
-                      emitCommand('FORCE_SYNC', player.currentTime);
+                      // 🐞 不再广播 FORCE_SYNC：倍速只是本机播放速率，不改变播放位置。
+                      //    旧实现每次结束长按都发 FORCE_SYNC，对方设备收到后会执行
+                      //    player.currentTime = safeTime（一次真实网络 seek）→ 对方画面卡顿。
+                      //    倍速切换本身不需要任何位置同步。
                       showUI();
                     }
                     return;
                   }
 
                   // 点按：切换 2x 锁定（不弹屏幕中间提示，仅按钮高亮）
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  // 🐞 松手卡顿修复：
+                  //    ① 触感从 Light 降为 Selection（Light 在部分机型上仍会拉起触感引擎）；
+                  //    ② 先 setSpeedLocked 让按钮高亮在本帧渲染，速率写入延后到下一帧
+                  //       （applyPlaybackRateDeferred），避免「重渲染 + 原生写 rate」同帧叠加；
+                  //    ③ 不再广播任何同步指令（位置未变）。
+                  Haptics.selectionAsync();
                   const next = !speedLockedRef.current;
                   speedLockedRef.current = next;
                   setSpeedLocked(next);
-                  applyPlaybackRate(next ? 2.0 : 1.0);
-                  if (!next) emitCommand('FORCE_SYNC', player.currentTime);
+                  applyPlaybackRateDeferred(next ? 2.0 : 1.0);
+                  // 仅当原本处于暂停态时，点按 2X 需要显式起播（applyPlaybackRate
+                  // 已不再自动 play，避免「改速率 + play」两次原生调用叠加卡顿）。
+                  if (next && !player.playing) {
+                    player.play();
+                    setIsPlaying(true);
+                    emitCommand('PLAY', player.currentTime);
+                  }
                   showUI();
                 }}
                 onResponderTerminate={() => {
@@ -779,7 +977,7 @@ export default function CinemaScreen() {
                     if (!speedLockedRef.current) {
                       applyPlaybackRate(1.0);
                       setIndicatorText('');
-                      emitCommand('FORCE_SYNC', player.currentTime);
+                      // 🐞 同 onResponderRelease：倍速回滚不改变播放位置，无需 FORCE_SYNC
                       showUI();
                     }
                   }
@@ -871,6 +1069,34 @@ const styles = StyleSheet.create({
   danmakuText: { fontSize: 20, fontWeight: '900', letterSpacing: 1 },
   indicatorBox: { position: 'absolute', top: '45%', alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 24, paddingVertical: 16, borderRadius: 20 },
   indicatorText: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
+
+  // ⏳ 加载提示：铺满全屏并绝对居中（横竖屏都居中），纯展示不拦截手势
+  //    🐞 修复「提示跑到屏幕最上方」：
+  //    父容器是 `StyleSheet.absoluteFill` 的 View，但该父级没有显式定位基准，
+  //    在部分 RN 版本下 absoluteFillObject 展开后缺少 top/left 的可靠基准，
+  //    导致 flex 居中失效、内容贴顶。这里显式写死 top/left/right/bottom: 0，
+  //    并补上 flexDirection: 'column'，保证垂直方向也参与居中计算。
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  loadingBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 28,
+    paddingVertical: 22,
+    borderRadius: 18,
+    minWidth: 140,
+  },
+  loadingText: { color: '#FFF', fontSize: 15, fontWeight: '600', marginTop: 12, letterSpacing: 0.5 },
   
   immersiveTopBar: { position: 'absolute', top: 0, width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 },
   // 顶栏左右两侧固定宽度，保证中间状态栏绝对居中
@@ -906,6 +1132,8 @@ const styles = StyleSheet.create({
   
   progressTrackContainer: { flex: 1, height: 40, justifyContent: 'center', marginHorizontal: 16 },
   progressTrack: { height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, position: 'relative', justifyContent: 'center' },
+  // 📊 缓存条：比轨道亮、比蓝色已播放条暗，视觉上明确区分「已缓存但未播放」
+  progressBuffered: { position: 'absolute', height: '100%', backgroundColor: 'rgba(255,255,255,0.35)', borderRadius: 2 },
   progressFill: { position: 'absolute', left: 0, height: '100%', backgroundColor: '#0A84FF', borderRadius: 2 },
   progressThumb: { position: 'absolute', width: 16, height: 16, backgroundColor: '#FFF', borderRadius: 8, marginLeft: -8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.6, elevation: 5 },
   
