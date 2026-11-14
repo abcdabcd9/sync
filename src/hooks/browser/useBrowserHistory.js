@@ -20,14 +20,43 @@ import { isSafeUrl, buildHistoryTitle, HISTORY_KEY, HISTORY_LIMIT } from '../../
 const BOOKMARKS_KEY = '@browser_bookmarks';
 // 🔖 首次启动的默认书签：主流搜索引擎入口
 //    ⚠️ 必须全部为 https://，否则会被 isSafeUrl 拦截而无法加载
+//    📝 结构为 { url, title }：title 为空时书签页只显示网址
 const DEFAULT_BOOKMARKS = [
-  'https://www.bing.com',
-  'https://www.google.com',
-  'https://www.baidu.com',
-  'https://duckduckgo.com',
-  'https://www.sogou.com',
-  'https://search.yahoo.com',
+  { url: 'https://www.bing.com', title: 'Bing 必应' },
+  { url: 'https://www.google.com', title: 'Google 谷歌' },
+  { url: 'https://www.baidu.com', title: '百度' },
+  { url: 'https://duckduckgo.com', title: 'DuckDuckGo' },
+  { url: 'https://www.sogou.com', title: '搜狗' },
+  { url: 'https://search.yahoo.com', title: 'Yahoo 雅虎' },
 ];
+
+// 🧩 书签条目归一化：兼容历史版本「纯 URL 字符串」缓存
+//    · 字符串 → { url, title: '' }（旧数据没有标题，书签页会退化为只显示网址）
+//    · 对象   → 只保留合法字段，title 统一 trim
+const normalizeBookmark = (item) => {
+  if (typeof item === 'string') {
+    return isSafeUrl(item) ? { url: item, title: '' } : null;
+  }
+  if (!item || typeof item !== 'object') return null;
+  const url = typeof item.url === 'string' ? item.url : '';
+  if (!isSafeUrl(url)) return null;
+  const title = typeof item.title === 'string' ? item.title.trim() : '';
+  return { url, title };
+};
+
+// 🧩 批量归一化 + 按 url 去重（保留首次出现的顺序）
+const normalizeBookmarkList = (list) => {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((raw) => {
+    const item = normalizeBookmark(raw);
+    if (!item || seen.has(item.url)) return;
+    seen.add(item.url);
+    out.push(item);
+  });
+  return out;
+};
 // 📌 默认书签版本号：用于给老用户做一次性迁移
 //    老版本曾把某个影视站写进默认书签，已安装用户本地缓存里仍是它，
 //    仅改 DEFAULT_BOOKMARKS 不会生效，需要按版本号做一次覆盖迁移。
@@ -69,7 +98,8 @@ export function useBrowserHistory() {
         }
 
         const parsed = JSON.parse(cached);
-        const current = Array.isArray(parsed) ? parsed.filter((it) => typeof it === 'string') : [];
+        // 🧩 兼容旧版「纯 URL 字符串」缓存，统一归一化为 { url, title }
+        const current = normalizeBookmarkList(parsed);
 
         // 种子版本已最新：原样使用
         if (Number(seedVersion) >= BOOKMARKS_SEED_VERSION) {
@@ -78,8 +108,8 @@ export function useBrowserHistory() {
         }
 
         // 一次性迁移：移除旧默认书签 → 前置新默认书签 → 去重
-        const withoutLegacy = current.filter((it) => !LEGACY_DEFAULT_BOOKMARKS.includes(it));
-        const merged = Array.from(new Set([...DEFAULT_BOOKMARKS, ...withoutLegacy]));
+        const withoutLegacy = current.filter((it) => !LEGACY_DEFAULT_BOOKMARKS.includes(it.url));
+        const merged = normalizeBookmarkList([...DEFAULT_BOOKMARKS, ...withoutLegacy]);
 
         setBookmarksList(merged);
         await AsyncStorage.multiSet([
@@ -143,20 +173,21 @@ export function useBrowserHistory() {
 
   // 🏷️ 判定是否已收藏
   const isBookmarked = useCallback(
-    (url) => !!url && bookmarksList.includes(url),
+    (url) => !!url && bookmarksList.some((it) => it.url === url),
     [bookmarksList]
   );
 
   // 🏷️ 收藏 / 取消收藏（切换式）
+  //    title 为网页自带标题（WebView navState.title），为空时书签页只显示网址
   //    返回 { ok, action: 'added' | 'removed' | 'invalid' }
   const toggleBookmark = useCallback(
-    async (url) => {
+    async (url, title) => {
       if (!isSafeUrl(url)) return { ok: false, action: 'invalid' };
 
-      const already = bookmarksList.includes(url);
+      const already = bookmarksList.some((it) => it.url === url);
       const next = already
-        ? bookmarksList.filter((it) => it !== url)
-        : [url, ...bookmarksList];
+        ? bookmarksList.filter((it) => it.url !== url)
+        : [normalizeBookmark({ url, title }), ...bookmarksList].filter(Boolean);
 
       setBookmarksList(next);
       try {
@@ -170,7 +201,7 @@ export function useBrowserHistory() {
   // 🗑️ 删除指定书签（供列表删除按钮使用）
   const removeBookmark = useCallback(
     async (url) => {
-      const next = bookmarksList.filter((it) => it !== url);
+      const next = bookmarksList.filter((it) => it.url !== url);
       setBookmarksList(next);
       try {
         await AsyncStorage.setItem(BOOKMARKS_KEY, JSON.stringify(next));

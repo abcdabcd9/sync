@@ -39,6 +39,8 @@ export function useBrowserNavigation({
 
   // 真实已加载 URL（WebView 回调中读取，避免闭包过期）
   const actualLoadedUrl = useRef(startUrl);
+  // 🏷️ 当前网页自带标题（WebView navState.title），收藏书签时直接复用，不做任何自定义命名
+  const actualLoadedTitle = useRef('');
   // 🔙 Android 返回键回调读取的最新 canGoBack（避免 effect 频繁重订阅）
   const canGoBackRef = useRef(canGoBack);
 
@@ -195,6 +197,8 @@ export function useBrowserNavigation({
       setCanGoBack(navState.canGoBack);
       setCanGoForward(navState.canGoForward);
       actualLoadedUrl.current = navState.url;
+      // 🏷️ 同步网页标题（空标题时保留空串，书签页会退化为只显示网址）
+      actualLoadedTitle.current = typeof navState.title === 'string' ? navState.title.trim() : '';
       if (isSafeUrl(navState.url) && navState.url !== inputUrl && !navState.url.includes('cn.bing.com')) {
         setInputUrl(navState.url);
       }
@@ -247,6 +251,7 @@ export function useBrowserNavigation({
     canGoForward,
     isDesktopMode,
     actualLoadedUrl,
+    actualLoadedTitle,
     // 定时器（供影院跳转复用）
     launchTimerRef,
     // 动作

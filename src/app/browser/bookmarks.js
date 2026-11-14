@@ -10,20 +10,15 @@ import { useBrowserSession } from '../../context/BrowserSessionContext';
 import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
 import EmptyState from '../../components/ui/EmptyState';
 import { haptic } from '../../constants/haptics';
-import { ellipsisMiddle, isSafeUrl, getDomain } from '../../constants/browser';
-
-// 🏷️ 常见站点展示名（默认搜索引擎书签用，未命中则回退到域名）
-const SITE_LABELS = {
-  'bing.com': 'Bing 必应',
-  'google.com': 'Google 谷歌',
-  'baidu.com': '百度',
-  'duckduckgo.com': 'DuckDuckGo',
-  'sogou.com': '搜狗',
-  'yahoo.com': 'Yahoo 雅虎',
-};
+import { ellipsisMiddle, isSafeUrl } from '../../constants/browser';
 
 // params: 无
 // 影院书签独立页：点击回浏览器加载 / 删除书签
+//
+// 📝 展示规则（与历史记录页保持一致，不做任何自定义命名）：
+//    · 主行：网页自带标题（title）
+//    · 副行：缩小版网址
+//    · 无标题时：主行留空，只显示缩小版网址，整体垂直居中、左对齐
 export default function BrowserBookmarks() {
   const { colors } = useAppTheme();
   const { bookmarksList, removeBookmark } = useBrowserHistory();
@@ -49,30 +44,33 @@ export default function BrowserBookmarks() {
   );
 
   const renderItem = ({ item }) => {
-    const domain = getDomain(item);
-    const label = SITE_LABELS[domain];
+    const { url, title } = item;
+    const hasTitle = typeof title === 'string' && title.length > 0;
     return (
       <View style={[styles.row, { borderBottomColor: colors.separator }]}>
-        <TouchableOpacity style={styles.rowContent} onPress={() => handleLoad(item)} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.rowContent} onPress={() => handleLoad(url)} activeOpacity={0.7}>
           <Ionicons name="globe-outline" size={20} color={colors.textSecondary} style={styles.globe} />
           <View style={styles.textBox}>
-            {label ? (
-              <>
-                <Text style={[styles.siteName, { color: colors.textPrimary }]} numberOfLines={1}>
-                  {label}
-                </Text>
-                <Text style={[styles.urlSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {ellipsisMiddle(item, 30, 14)}
-                </Text>
-              </>
-            ) : (
-              <Text style={[styles.url, { color: colors.textPrimary }]} numberOfLines={1}>
-                {ellipsisMiddle(item, 34, 16)}
+            {/* 主行：网页自带标题；无标题时不渲染，网址自然垂直居中 */}
+            {hasTitle && (
+              <Text style={[styles.siteName, { color: colors.textPrimary }]} numberOfLines={1}>
+                {title}
               </Text>
             )}
+            {/* 副行：缩小版网址 */}
+            <Text
+              style={[
+                styles.urlSub,
+                { color: hasTitle ? colors.textSecondary : colors.textPrimary },
+                !hasTitle && styles.urlSubSolo,
+              ]}
+              numberOfLines={1}
+            >
+              {ellipsisMiddle(url, 30, 14)}
+            </Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(item)}>
+        <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(url)}>
           <Ionicons name="trash-outline" size={20} color={colors.primary} />
         </TouchableOpacity>
       </View>
@@ -91,7 +89,7 @@ export default function BrowserBookmarks() {
         <FlashList
           data={bookmarksList}
           renderItem={renderItem}
-          keyExtractor={(item) => item}
+          keyExtractor={(item) => item.url}
           estimatedItemSize={56}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -115,10 +113,12 @@ const styles = StyleSheet.create({
   },
   rowContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   globe: { marginRight: 12 },
-  textBox: { flex: 1 },
-  siteName: { fontSize: 15, fontWeight: '500' },
-  urlSub: { fontSize: 12, marginTop: 2 },
-  url: { flex: 1, fontSize: 15 },
+  // 文本容器：垂直居中 + 左对齐（无标题时网址单行居中）
+  textBox: { flex: 1, justifyContent: 'center', alignItems: 'flex-start' },
+  siteName: { fontSize: 15, fontWeight: '500', textAlign: 'left' },
+  urlSub: { fontSize: 12, marginTop: 2, textAlign: 'left' },
+  // 无标题时网址独占一行：去掉上边距，字号略放大以保持视觉重量
+  urlSubSolo: { marginTop: 0, fontSize: 15 },
   deleteBtn: { padding: 8, marginLeft: 8 },
 });
 // --- END OF FILE src/app/browser/bookmarks.js ---

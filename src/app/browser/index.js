@@ -98,7 +98,7 @@ export default function BrowserScreen() {
   // 🧭 导航域（阶段 5）
   const {
     currentUrl, inputUrl, setInputUrl, canGoBack, canGoForward,
-    isDesktopMode, actualLoadedUrl,
+    isDesktopMode, actualLoadedUrl, actualLoadedTitle,
     handleSubmitUrl, handleGoBack, handleGoForward, handleClose,
     toggleDesktopMode, handleNavigationStateChange, injectUrl, goCinema,
   } = useBrowserNavigation({
@@ -267,6 +267,8 @@ export default function BrowserScreen() {
     haptic.light();
     // ⚠️ ref 引用恒定，不放入依赖数组
     const targetUrl = actualLoadedUrl.current;
+    // 🏷️ 直接使用网页自带标题，不做任何自定义命名（空标题时书签页只显示网址）
+    const targetTitle = actualLoadedTitle.current;
     // 🔒 仅允许保存 https:// 安全链接（拒绝 http:// 与非法协议）
     if (!isSafeUrl(targetUrl)) {
       Alert.alert('无法收藏', '仅支持收藏 HTTPS 安全链接。');
@@ -278,7 +280,7 @@ export default function BrowserScreen() {
       closeMenu();
       return;
     }
-    const result = await toggleBookmark(targetUrl);
+    const result = await toggleBookmark(targetUrl, targetTitle);
     if (!result.ok) {
       Alert.alert('无法收藏', '仅支持收藏 HTTPS 安全链接。');
       closeMenu();
