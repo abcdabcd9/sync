@@ -26,6 +26,7 @@ export function useBrowserNavigation({
   emitCommand,
   addHistory,
   closeMenu,
+  onUrlVisited,
 }) {
   const router = useRouter();
   const navigation = useNavigation();
@@ -200,9 +201,11 @@ export function useBrowserNavigation({
       // 🕘 单页应用（SPA）路由切换不会触发 onLoadEnd，这里兜底记录
       if (navState.url && !navState.loading) {
         addHistory(navState.url, navState.title);
+        // 🕘 记录上次访问网址（供下次打开浏览器时恢复）
+        onUrlVisited?.(navState.url);
       }
     },
-    [inputUrl, addHistory]
+    [inputUrl, addHistory, onUrlVisited]
   );
 
   // 🕘 加载历史 / 书签：仅让 WebView 加载网页 + 关闭菜单
@@ -213,6 +216,24 @@ export function useBrowserNavigation({
       setInputUrl(url);
       setCurrentUrl(url);
       actualLoadedUrl.current = url;
+    },
+    []
+  );
+
+  // 🔗 外部注入 URL（历史 / 书签页交接）：仅切换 WebView 地址，不触发影院逻辑
+  //    ⚠️ 与 loadUrlInWebView 行为一致，独立命名以表达「跨页交接」语义
+  //    🐞 修复「注入后返回箭头仍高亮」：注入等于在 WebView 里重新起一个页面，
+  //       旧的 canGoBack / canGoForward 属于上一个页面栈，必须立即复位，
+  //       否则底部前进/后退按钮会短暂显示为可用（点击无反应）。
+  //       真正的状态会在新页面 onNavigationStateChange 回调中重新同步。
+  const injectUrl = useCallback(
+    (url) => {
+      if (!isSafeUrl(url)) return;
+      setInputUrl(url);
+      setCurrentUrl(url);
+      actualLoadedUrl.current = url;
+      setCanGoBack(false);
+      setCanGoForward(false);
     },
     []
   );
@@ -236,6 +257,7 @@ export function useBrowserNavigation({
     toggleDesktopMode,
     handleNavigationStateChange,
     loadUrlInWebView,
+    injectUrl,
     goCinema,
   };
 }

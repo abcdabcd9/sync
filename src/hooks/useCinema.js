@@ -11,8 +11,20 @@ const CinemaContext = createContext();
 
 export function CinemaProvider({ children }) {
   const [currentUrl, setCurrentUrl] = useState(null);
-  const [isMinimized, setIsMinimized] = useState(false); 
+  const [isMinimized, setIsMinimized] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // 📺 选集上下文：由隐藏 WebView 抓取整部剧的选集列表后写入
+  //    episodeList: [{ url, label, vodId, sourceId, episodeId }]
+  //    episodePageUrl: 当前正在嗅探的剧集播放页（用于判断是否同一部剧）
+  const [episodeList, setEpisodeList] = useState([]);
+  const [episodePageUrl, setEpisodePageUrl] = useState(null);
+  const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(-1);
+  // 🔄 切集请求：{ url, index, nonce } —— 由 cinema 页监听并驱动隐藏 WebView 重新嗅探
+  const [episodeSwitchRequest, setEpisodeSwitchRequest] = useState(null);
+  // 🚀 首次抓取请求：{ url, nonce } —— 投屏后自动抓一次选集列表（不切集，只抓列表）
+  const [episodeListRequested, setEpisodeListRequested] = useState(false);
+  const [episodeListRequest, setEpisodeListRequest] = useState(null);
 
   const [cinemaRoomId, setCinemaRoomId] = useState(null);
   const { partnerStatus, remoteCommand, emitCommand, danmakuList, emitDanmaku } = useSyncRoom(cinemaRoomId);
@@ -136,17 +148,70 @@ export function CinemaProvider({ children }) {
     };
   }, [startPolling, stopPolling]);
 
+  // 🐞 修复「最小化后点悬浮窗/影院卡回到影院，视频从 0 秒重播」：
+  //    remoteCommand 由 useSyncRoom 持有（CinemaProvider 内），影院页卸载后仍残留。
+  //    影院页重新挂载时本 effect 会以「同一条旧指令」再次执行，若其 url 与当前
+  //    播放源不一致就会 replaceAsync → 从 0:00 重播。
+  //    这里用「指令对象引用」去重：同一条指令只处理一次，重新挂载后不会重放。
+  const handledRemoteCommandRef = useRef(null);
+
   useEffect(() => {
     if (!remoteCommand) return;
+    // 同一条指令只消费一次（防止影院页重新挂载 / 重渲染时重复执行）
+    if (handledRemoteCommandRef.current === remoteCommand) return;
+    handledRemoteCommandRef.current = remoteCommand;
     isHandlingRemote.current = true;
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
     
     const { type, time, url } = remoteCommand;
     const now = Date.now();
 
+    // 🛡️ 防误重载：指令携带的 url 与「当前播放源」一致时，说明只是同步信令，
+    //    绝不能 replaceAsync（否则视频从头开始）。此处先于 loadedUri 判断，
+    //    避免播放器尚未就绪（loadedUri 为 null）时误走重载分支。
+    if (url && url === currentUrlRef.current) {
+      if (!player) return;
+      const safeTime = isNaN(time) ? 0 : time;
+      if (type === 'PLAY') {
+        if (!player.playing) { player.play(); setIsPlaying(true); }
+      } else if (type === 'PAUSE') {
+        if (player.playing) { player.pause(); setIsPlaying(false); }
+      }
+      if (Math.abs(player.currentTime - safeTime) > SYNC_THRESHOLD) {
+        player.currentTime = safeTime;
+        lastVideoTime.current = safeTime;
+        seekLockTimer.current = now;
+      }
+      silenceTimer.current = setTimeout(() => { isHandlingRemote.current = false; }, 1200);
+      return;
+    }
+
     if (url && url !== currentUrlRef.current) {
+      // 🛡️ 防误重载：若播放器当前已加载的正是该源（例如影院页重新挂载后
+      //    收到自己/对方携带同一 URL 的指令），只做时间同步，绝不 replaceAsync，
+      //    否则视频会从头开始播放。
+      const loadedUri = player?.currentSource?.uri ?? null;
+      if (loadedUri && loadedUri === url) {
+        currentUrlRef.current = url;
+        setCurrentUrl(url);
+        if (!player) return;
+        const safeTime = isNaN(time) ? 0 : time;
+        if (type === 'PLAY') {
+          if (!player.playing) { player.play(); setIsPlaying(true); }
+        } else if (type === 'PAUSE') {
+          if (player.playing) { player.pause(); setIsPlaying(false); }
+        }
+        if (Math.abs(player.currentTime - safeTime) > SYNC_THRESHOLD) {
+          player.currentTime = safeTime;
+          lastVideoTime.current = safeTime;
+          seekLockTimer.current = now;
+        }
+        silenceTimer.current = setTimeout(() => { isHandlingRemote.current = false; }, 1200);
+        return;
+      }
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setCurrentUrl(url); 
+      setCurrentUrl(url);
       if (player) player.replaceAsync(url);
       
       setTimeout(() => {
@@ -154,12 +219,12 @@ export function CinemaProvider({ children }) {
           const safeTime = isNaN(time) ? 0 : time;
           player.currentTime = safeTime;
           if (type === 'PLAY') { player.play(); setIsPlaying(true); }
-          lastVideoTime.current = safeTime; 
-          isHandlingRemote.current = false; 
-          seekLockTimer.current = Date.now(); 
+          lastVideoTime.current = safeTime;
+          isHandlingRemote.current = false;
+          seekLockTimer.current = Date.now();
         }
-      }, 1000); 
-      return; 
+      }, 1000);
+      return;
     }
 
     if (!player) return;
@@ -183,8 +248,21 @@ export function CinemaProvider({ children }) {
     silenceTimer.current = setTimeout(() => { isHandlingRemote.current = false; }, 1200);
   }, [remoteCommand]);
 
-  const loadUrl = useCallback((url) => {
+  // 📺 loadUrl(url, pageUrl?)
+  //    pageUrl：该 m3u8 对应的「剧集播放页」URL（如 /play/392563-36-700596.html）
+  //    传入后影院可据此启动隐藏 WebView 抓取整部剧的选集列表
+  const loadUrl = useCallback((url, pageUrl = null) => {
     setCurrentUrl(url);
+    if (pageUrl) {
+      setEpisodePageUrl(pageUrl);
+      // 换剧/换集 → 清空旧选集列表，等待隐藏 WebView 重新抓取
+      setEpisodeList([]);
+      setCurrentEpisodeIndex(-1);
+      // 🚀 首次抓取：投屏时自动抓一次选集列表（不切集，只抓列表）
+      //    由 cinema 页监听 episodeListRequest 并挂载隐藏 WebView
+      setEpisodeListRequested(true);
+      setEpisodeListRequest({ url: pageUrl, nonce: Date.now() });
+    }
     if (Platform.OS === 'ios') {
       if(player) player.pause();
       setTimeout(() => {
@@ -203,6 +281,20 @@ export function CinemaProvider({ children }) {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     if(player) { player.pause(); player.replaceAsync(null); }
     setCurrentUrl(null); setIsMinimized(false); setIsPlaying(false);
+    // 🐞 修复「关闭影院后重新进入，约 10 秒后自动嗅探并播放上一次的视频」：
+    //    loadUrl(url, pageUrl) 会写入 episodeListRequest / episodeSwitchRequest，
+    //    这两个请求是「一次性」的，但此前只在 applyEpisodeList 成功时才清空。
+    //    若用户在隐藏 WebView 抓取完成前就关闭影院（或抓取失败），请求会残留在
+    //    CinemaProvider（全局 Context，不随影院页卸载而销毁）里。
+    //    下次进入影院时 cinema.js 的监听 effect 读到旧请求 → 重新挂载隐藏 WebView
+    //    → 15 秒兜底手动嗅探命中旧 m3u8 → 自动播放上次的视频。
+    //    这里在关闭播放器时一并清空所有选集/嗅探请求，彻底切断残留链路。
+    setEpisodeList([]);
+    setEpisodePageUrl(null);
+    setCurrentEpisodeIndex(-1);
+    setEpisodeSwitchRequest(null);
+    setEpisodeListRequested(false);
+    setEpisodeListRequest(null);
     if (cinemaRoomId) {
       // 🍎 P2-16 修复：邀请卡片的 type 固定为 'cinema_invite'（见 invite_friend.js），
       //    但 text 字段可能被清空/撤回，仅靠 .eq('text', roomId) 强匹配会失效。
@@ -254,7 +346,59 @@ export function CinemaProvider({ children }) {
     if (player.playing) { player.pause(); setIsPlaying(false); } else { player.play(); setIsPlaying(true); }
   }, [player]);
 
-  const value = { player, currentUrl, isMinimized, setIsMinimized, partnerStatus, emitCommand, loadUrl, closePlayer, isPlaying, togglePlay, cinemaRoomId, setCinemaRoomId, danmakuList, emitDanmaku };
+  // 📺 写入选集列表（隐藏 WebView 抓取完成后调用）
+  const applyEpisodeList = useCallback((list, pageUrl) => {
+    // 🐞 无论列表是否为空，都必须清空「一次性」抓取请求：
+    //    空列表（容器未渲染 / 抓取失败）时若不清空，episodeListRequest 会一直残留，
+    //    影院页每次重新挂载都会重新挂载隐藏 WebView → 兜底嗅探 → 误播旧视频。
+    setEpisodeListRequested(false);
+    setEpisodeListRequest(null);
+    if (!Array.isArray(list) || list.length === 0) return;
+    setEpisodeList(list);
+    if (pageUrl) setEpisodePageUrl(pageUrl);
+    // 根据当前播放页定位当前集索引
+    const idx = pageUrl ? list.findIndex((ep) => ep.url === pageUrl) : -1;
+    setCurrentEpisodeIndex(idx);
+  }, []);
+
+  // 📺 请求切换到指定集：驱动隐藏 WebView 重新嗅探该集播放页
+  const requestEpisode = useCallback((index) => {
+    if (index < 0 || index >= episodeList.length) return;
+    const ep = episodeList[index];
+    if (!ep) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCurrentEpisodeIndex(index);
+    setEpisodeSwitchRequest({ url: ep.url, index, nonce: Date.now() });
+  }, [episodeList]);
+
+  // 📺 上一集 / 下一集
+  const playPrevEpisode = useCallback(() => {
+    if (currentEpisodeIndex > 0) requestEpisode(currentEpisodeIndex - 1);
+  }, [currentEpisodeIndex, requestEpisode]);
+
+  const playNextEpisode = useCallback(() => {
+    if (currentEpisodeIndex >= 0 && currentEpisodeIndex < episodeList.length - 1) {
+      requestEpisode(currentEpisodeIndex + 1);
+    }
+  }, [currentEpisodeIndex, episodeList.length, requestEpisode]);
+
+  // 📺 清空选集上下文（关闭播放器时）
+  const clearEpisodes = useCallback(() => {
+    setEpisodeList([]);
+    setEpisodePageUrl(null);
+    setCurrentEpisodeIndex(-1);
+    setEpisodeSwitchRequest(null);
+  }, []);
+
+  const value = {
+    player, currentUrl, isMinimized, setIsMinimized, partnerStatus, emitCommand,
+    loadUrl, closePlayer, isPlaying, togglePlay, cinemaRoomId, setCinemaRoomId,
+    danmakuList, emitDanmaku,
+    // 📺 选集相关
+    episodeList, episodePageUrl, currentEpisodeIndex, episodeSwitchRequest,
+    episodeListRequested, episodeListRequest,
+    applyEpisodeList, requestEpisode, playPrevEpisode, playNextEpisode, clearEpisodes,
+  };
   return <CinemaContext.Provider value={value}>{children}</CinemaContext.Provider>;
 }
 export function useCinema() { return useContext(CinemaContext); }

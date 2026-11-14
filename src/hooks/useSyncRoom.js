@@ -93,7 +93,18 @@ export function useSyncRoom(roomId) {
       else setPartnerStatus('等待对方加入...');
     });
 
-    channel.subscribe((status) => { if (status === 'SUBSCRIBED') channel.track({ status: 'watching' }); });
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        channel.track({ status: 'watching' });
+        // 🐞 修复「最小化后点悬浮窗/影院卡回到影院，视频从 0 秒重播」：
+        //    remoteCommand 是「一次性」的远端指令，但此前从不重置。
+        //    影院页卸载（最小化 → router.back()）时本 Hook 仍存活于 CinemaProvider，
+        //    残留的 remoteCommand 会在影院页重新挂载时被 useCinema 的 effect 再次消费，
+        //    若指令里的 url 与当前播放源不一致就会 replaceAsync → 从头播放。
+        //    订阅成功（新房间连接就绪）时清空旧指令，保证重新挂载的影院页不会重放。
+        setRemoteCommand(null);
+      }
+    });
     channelRef.current = channel;
 
     return () => {

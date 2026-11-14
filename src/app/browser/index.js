@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useAppTheme } from '../../context/ThemeContext';
+import { useBrowserSession } from '../../context/BrowserSessionContext';
 import { useCinema } from '../../hooks/useCinema';
 
 // 🧩 领域 Hook（阶段 2~5 抽离）
@@ -36,8 +37,17 @@ export default function BrowserScreen() {
   const { isDark, colors: palette } = useAppTheme();
   const params = useLocalSearchParams();
   const { loadUrl, emitCommand } = useCinema();
+  const { pendingUrl, pendingSeq, consumePendingUrl, lastUrl, rememberUrl } = useBrowserSession();
 
-  const startUrl = params.targetUrl || 'https://www.bing.com';
+  // 🌐 起始网址优先级：显式参数 > 上次访问网址 > 默认首页
+  //    ⚠️ 仅首次挂载生效（useState 惰性初始化），后续切换走 injectUrl
+  //    🐞 修复「冷启动不恢复上次网址」：
+  //       lastUrl 由 BrowserSessionProvider 异步从 AsyncStorage 读取，
+  //       首帧渲染时仍为 null，而 useBrowserNavigation 内部用 useState(startUrl)
+  //       惰性初始化，之后 lastUrl 水合完成也不会再同步 → 恢复功能形同虚设。
+  //       这里用 ref 记录「是否已应用过起始网址」，等 lastUrl 就绪后补一次注入。
+  const startUrl = params.targetUrl || lastUrl || 'https://www.bing.com';
+  const startUrlAppliedRef = useRef(!!params.targetUrl);
   const webViewRef = useRef(null);
 
   // 🗂️ 菜单 / 🎬 嗅探弹窗的 UI 状态与动画
@@ -90,8 +100,36 @@ export default function BrowserScreen() {
     currentUrl, inputUrl, setInputUrl, canGoBack, canGoForward,
     isDesktopMode, actualLoadedUrl,
     handleSubmitUrl, handleGoBack, handleGoForward, handleClose,
-    toggleDesktopMode, handleNavigationStateChange, goCinema,
-  } = useBrowserNavigation({ startUrl, webViewRef, loadUrl, emitCommand, addHistory, closeMenu });
+    toggleDesktopMode, handleNavigationStateChange, injectUrl, goCinema,
+  } = useBrowserNavigation({
+    startUrl,
+    webViewRef,
+    loadUrl,
+    emitCommand,
+    addHistory,
+    closeMenu,
+    onUrlVisited: rememberUrl,
+  });
+
+  // 🔗 消费历史 / 书签页交接过来的 URL（同一实例内切换，不新建浏览器）
+  useEffect(() => {
+    if (!pendingUrl) return;
+    injectUrl(pendingUrl);
+    consumePendingUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- consumePendingUrl 为稳定引用
+  }, [pendingUrl, pendingSeq, injectUrl]);
+
+  // 🕘 冷启动补注入上次网址：
+  //    lastUrl 异步水合完成后（首帧为 null），若本次进入没有显式 targetUrl、
+  //    且尚未应用过起始网址，则把上次网址注入 WebView。
+  //    ⚠️ 只在「首次」补一次，避免用户已手动导航后被强行拉回。
+  useEffect(() => {
+    if (startUrlAppliedRef.current) return;
+    if (!lastUrl) return;
+    if (params.targetUrl) return;
+    startUrlAppliedRef.current = true;
+    injectUrl(lastUrl);
+  }, [lastUrl, params.targetUrl, injectUrl]);
 
   // 📊 加载进度条（阶段 5）：加载完成后注入广告清理 + 写入历史
   //    ⚠️ 回调内读取 actualLoadedUrl.current，故不放入依赖数组（ref 引用恒定）
@@ -178,6 +216,8 @@ export default function BrowserScreen() {
   }, [sniffedMediaList.length, triggerManualSniff, openPicker]);
 
   // ▶ 启动影院：支持传入指定片源 URL（默认取列表首项）
+  //    📺 同时把当前网页 URL 一起传给影院（用户无感）：
+  //       若当前页是 /play/ 剧集播放页，影院可据此抓取整部剧的选集列表
   const handleLaunchCinema = useCallback(
     (url) => {
       const target = typeof url === 'string' && url ? url : sniffedMediaList[0]?.url;
@@ -185,10 +225,12 @@ export default function BrowserScreen() {
       haptic.heavy();
       Keyboard.dismiss();
       closePicker();
-      loadUrl(target);
+      const pageUrl = actualLoadedUrl.current || currentUrl || null;
+      loadUrl(target, pageUrl);
       goCinema();
     },
-    [sniffedMediaList, closePicker, loadUrl, goCinema]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- actualLoadedUrl 为 ref，引用恒定
+    [sniffedMediaList, closePicker, loadUrl, goCinema, currentUrl]
   );
 
   // 📋 复制片源链接

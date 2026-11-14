@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { useAppTheme } from '../../context/ThemeContext';
+import { useBrowserSession } from '../../context/BrowserSessionContext';
 import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
 import EmptyState from '../../components/ui/EmptyState';
 import { haptic } from '../../constants/haptics';
@@ -16,15 +17,18 @@ import { ellipsisMiddle, formatHistoryTime, isSafeUrl } from '../../constants/br
 export default function BrowserHistory() {
   const { colors } = useAppTheme();
   const { historyList, deleteHistory, clearHistory } = useBrowserHistory();
+  const { setPendingUrl } = useBrowserSession();
 
+  // 🔗 点击历史：把 URL 交给已有浏览器实例，然后回退（不再新建第二个浏览器）
   const handleLoad = useCallback((url) => {
     if (!isSafeUrl(url)) {
       Alert.alert('链接不安全', '该历史链接不是 HTTPS 安全地址，已阻止加载。');
       return;
     }
     haptic.light();
-    router.replace({ pathname: '/browser', params: { targetUrl: url } });
-  }, []);
+    setPendingUrl(url);
+    router.back();
+  }, [setPendingUrl]);
 
   const handleDelete = useCallback(
     (id) => {

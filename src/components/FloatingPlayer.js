@@ -53,6 +53,21 @@ export default function FloatingPlayer() {
   const isCinemaRoute = pathname === '/cinema' || pathname.startsWith('/cinema/');
   const isHidden = (isCinemaRoute && !isMinimized) || forceHide;
 
+  // 🍎 悬浮窗可见性统一规则（用户要求）：
+  //    ① 只要离开了放映厅 → 悬浮窗出现（由 isHidden 的 isCinemaRoute 分支保证）；
+  //    ② 只要回到了放映厅 → 悬浮窗必须消失。
+  //    之前从「空间 → 放映厅」进入时，isMinimized 仍残留为 true，
+  //    导致 isHidden = (true && !true) = false，悬浮窗不消失。
+  //    这里在进入影院路由时无条件复位最小化标记，确保悬浮窗一定隐藏。
+  useEffect(() => {
+    if (isCinemaRoute && isMinimized) {
+      // 用微任务延后，避免在 effect 内同步 setState 触发级联渲染告警
+      const t = setTimeout(() => setIsMinimized(false), 0);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [isCinemaRoute, isMinimized, setIsMinimized]);
+
   useEffect(() => {
     if (isHidden) {
       Animated.timing(slideAnim, { 
@@ -140,7 +155,13 @@ export default function FloatingPlayer() {
     dockAnim.setValue(0);
     dockSideRef.current = 'none';
     setDockSide('none');
-    router.push('/cinema');
+    // 🍎 修复「回到影院视频从头开始」：
+    //    影院路由仍在栈中（最小化而非 pop）时，只取消最小化即可复用现有页面实例，
+    //    绝不能再 push 一个全新的 /cinema —— 新实例会重建房间/重新挂载播放器，
+    //    导致视频重新加载。仅当影院路由确实不在栈中时才 push。
+    if (!isCinemaRoute) {
+      router.push('/cinema');
+    }
   };
 
   if (!currentUrl) return null;

@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { HealthProvider, useHealthData } from '../hooks/useHealthData';
 import { CinemaProvider } from '../hooks/useCinema';
+import { BrowserSessionProvider } from '../context/BrowserSessionContext';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import FloatingPlayer from '../components/FloatingPlayer';
@@ -66,7 +67,9 @@ export default function RootLayout() {
       <AuthProvider>
         <HealthProvider>
           <CinemaProvider>
-            <RootNavigation />
+            <BrowserSessionProvider>
+              <RootNavigation />
+            </BrowserSessionProvider>
           </CinemaProvider>
         </HealthProvider>
       </AuthProvider>
