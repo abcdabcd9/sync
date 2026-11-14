@@ -9,6 +9,32 @@ import { supabase } from '../services/supabase';
 
 const CinemaContext = createContext();
 
+// 🍎 iOS 防盗链修复：m3u8 在 WebView 里能播（带 Referer / Cookie），
+//    但 expo-video 的原生播放器（iOS AVPlayer）直接请求时不带 Referer，
+//    被 CDN 以 HTTP 403 Forbidden 拒绝（CoreMediaErrorDomain -12660）。
+//    这里把播放源包装成 VideoSourceObject，附带 Referer（剧集播放页）与移动 UA，
+//    让原生播放器请求带上与 WebView 一致的头部，绕过防盗链。
+const MOBILE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
+// 说明：expo-video 的 VideoSourceObject.headers 会把头部随「视频请求」一起发送
+//      （官方文档：Only for Android/iOS — Specifies headers sent with the video request）。
+//      这里附加 Referer（剧集播放页）+ 移动 UA + Origin，绕过常见 CDN 的防盗链校验。
+//      注：Cookie 需要原生 CookieManager（@react-native-cookies/cookies）才能读取，
+//      本项目未安装该原生依赖，故不注入 Cookie，避免引入需重新构建的依赖。
+function buildVideoSource(url, referer) {
+  if (!url) return null;
+  // 仅对 http(s) 媒体源附加头部；本地/空源原样返回
+  if (!/^https?:/i.test(url)) return url;
+  const headers = { 'User-Agent': MOBILE_UA };
+  if (referer && /^https?:/i.test(referer)) {
+    headers.Referer = referer;
+    // 部分 CDN 校验 Origin，一并带上（取 referer 的 origin）
+    try { headers.Origin = new URL(referer).origin; } catch (_e) {}
+  }
+  return { uri: url, headers };
+}
+
 export function CinemaProvider({ children }) {
   const [currentUrl, setCurrentUrl] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -50,7 +76,7 @@ export function CinemaProvider({ children }) {
             allowsRecording: true,
           });
         }
-      } catch (e) {}
+      } catch (_e) {}
     };
     setupAudioMixing();
   }, []);
@@ -62,9 +88,12 @@ export function CinemaProvider({ children }) {
   const lastForceSyncTime = useRef(0);
   const seekLockTimer = useRef(0); 
   const currentUrlRef = useRef(null);
-  const SYNC_THRESHOLD = 2.5; 
+  // 🍎 记录当前剧集播放页，供 remoteCommand 重载时作为 Referer
+  const episodePageUrlRef = useRef(null);
+  const SYNC_THRESHOLD = 2.5;
 
   useEffect(() => { currentUrlRef.current = currentUrl; }, [currentUrl]);
+  useEffect(() => { episodePageUrlRef.current = episodePageUrl; }, [episodePageUrl]);
 
   useEffect(() => {
     if (partnerStatus.includes('已加入') && currentUrlRef.current && player) {
@@ -212,7 +241,8 @@ export function CinemaProvider({ children }) {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setCurrentUrl(url);
-      if (player) player.replaceAsync(url);
+      // 🍎 附带 Referer / UA，绕过 iOS 原生播放器的防盗链 403
+      if (player) player.replaceAsync(buildVideoSource(url, episodePageUrlRef.current));
       
       setTimeout(() => {
         if (player) {
@@ -263,15 +293,18 @@ export function CinemaProvider({ children }) {
       setEpisodeListRequested(true);
       setEpisodeListRequest({ url: pageUrl, nonce: Date.now() });
     }
+    // 🍎 附带 Referer / UA，绕过 iOS 原生播放器的防盗链 403
+    //    referer 优先用本次传入的 pageUrl，其次用当前剧集页
+    const source = buildVideoSource(url, pageUrl || episodePageUrlRef.current);
     if (Platform.OS === 'ios') {
       if(player) player.pause();
       setTimeout(() => {
-        if(player) player.replaceAsync(url); 
+        if(player) player.replaceAsync(source);
         setIsMinimized(false);
         setTimeout(() => { if(player) { player.play(); setIsPlaying(true); } }, 1000);
       }, 50);
     } else {
-      if(player) player.replaceAsync(url); 
+      if(player) player.replaceAsync(source);
       setIsMinimized(false);
       setTimeout(() => { if(player) { player.play(); setIsPlaying(true); } }, 800);
     }
