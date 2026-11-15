@@ -9,9 +9,12 @@ import { BlurView } from 'expo-blur';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { VideoView } from 'expo-video';
 // ⏳ useEvent：订阅 expo-video 播放器事件（用于读取 status 判断是否正在加载）
-import { useEvent } from 'expo';
+// 🐞 useEventListener：回调式订阅（playToEnd 无参数，useEvent 返回值恒为 undefined，无法用作触发信号）
+import { useEvent, useEventListener } from 'expo';
 import * as Brightness from 'expo-brightness';
 import * as ScreenOrientation from 'expo-screen-orientation';
+// 💡 屏幕常亮：播放中禁止息屏（expo-keep-awake 是 expo 自带模块，无需额外安装）
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useAuth } from '../hooks/useAuth';
@@ -19,6 +22,14 @@ import EpisodeDrawer from '../components/cinema/EpisodeDrawer';
 import HiddenSnifferWebView from '../components/cinema/HiddenSnifferWebView';
 
 const IS_ANDROID = Platform.OS === 'android';
+
+// 🐞 模块级「最近一次使用的影院房间号」：
+//    影院页被卸载（最小化 → router.back()）后重新挂载时，CinemaProvider 里的
+//    cinemaRoomId 可能已被清空（closePlayer）或尚未写入（首次 effect 未跑完）。
+//    若此时生成新 UUID，会重建 Supabase Channel → presence 重新 sync →
+//    partnerStatus 变化 → 广播 PLAY → 播放器被 replaceAsync/seek 到 0。
+//    用模块级变量记住上一次的房间号，保证同一次 App 会话内房间号稳定不变。
+let lastCinemaRoomId = null;
 
 const DanmakuItem = React.memo(({ text, color, screenWidth }) => {
   const translateX = useRef(new Animated.Value(screenWidth)).current;
@@ -53,6 +64,8 @@ export default function CinemaScreen() {
     // 📺 选集
     episodeList, currentEpisodeIndex, episodeSwitchRequest, requestEpisode, applyEpisodeList,
     episodeListRequest,
+    // 📺 自动下一集：复用已有的 playNextEpisode（内部已做边界判断）
+    playNextEpisode,
   } = useCinema();
 
   // 🍎 P2-15 修复：房间号使用 useState 惰性初始化，仅在组件首次挂载时生成一次。
@@ -62,7 +75,14 @@ export default function CinemaScreen() {
   // 🍎 补充修复：组件被重新挂载（如从悬浮窗最大化回到影院）时，优先复用上下文中
   //    已存在的 cinemaRoomId，避免生成新房间号 → 重建 Supabase Channel → 触发
   //    partnerStatus 变化 → 广播 PLAY 指令 → 播放器 replaceAsync 导致视频从头开始。
-  const [roomId] = useState(() => cinemaRoomId || Crypto.randomUUID());
+  // 🐞 安卓补充修复：重新挂载时 cinemaRoomId 可能为 null（例如从「空间 → 放映厅」
+  //    直接进入，或 Provider 刚被重建），此时若生成新 UUID，会与「最小化前」的房间
+  //    不一致 → 重建 Channel → presence 重新 sync → partnerStatus 变化 →
+  //    useCinema 里 partnerStatus 的 effect 广播 PLAY(currentTime) 到新房间，
+  //    同时旧房间的残留指令也可能被消费 → 播放器被 replaceAsync/seek 到 0。
+  //    这里把「最近一次使用的房间号」持久化到模块级变量，重新挂载时优先复用，
+  //    保证同一次 App 会话内房间号稳定不变。
+  const [roomId] = useState(() => cinemaRoomId || lastCinemaRoomId || Crypto.randomUUID());
   const [activeRoomId, setActiveRoomId] = useState(null);
 
   const [isImmersive, setIsImmersive] = useState(false);
@@ -136,6 +156,25 @@ export default function CinemaScreen() {
   const [showInput, setShowInput] = useState(false);
   const [indicatorText, setIndicatorText] = useState('');
 
+  // 💬 弹幕开关：默认开启（保持原有行为不变），关闭后不再渲染任何弹幕
+  const [danmakuEnabled, setDanmakuEnabled] = useState(true);
+
+  // 📺 自动连播开关：默认开启（保持原有行为不变）。
+  //    关闭后片尾不再自动跳集，用户仍可用「下一集」按钮手动切换。
+  const [autoNextEnabled, setAutoNextEnabled] = useState(true);
+  const autoNextEnabledRef = useRef(true);
+
+  // 🎚️ 音量/亮度手势的竖向反馈条：{ type: 'volume' | 'brightness', value: 0~1 }
+  //    仅在手势进行中显示，松手/中断后置 null。纯展示层，不拦截手势。
+  const [gestureHud, setGestureHud] = useState(null);
+
+  // 🧰 底栏「更多」菜单：把弹幕输入 / 2X / 选集 / 弹幕开关收进一个弹出层，
+  //    解决底栏图标过多过杂的问题。纯 UI 状态，不改变任何功能逻辑。
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  // 菜单展开态镜像：供 showUI 等非渲染路径同步读取，避免闭包过期
+  const moreMenuVisibleRef = useRef(false);
+  useEffect(() => { moreMenuVisibleRef.current = showMoreMenu; }, [showMoreMenu]);
+
   // ⏩ 2X 锁定状态：点按锁定 2 倍速，再点取消（长按仍为临时快进）
   const [speedLocked, setSpeedLocked] = useState(false);
   const speedLockedRef = useRef(false);
@@ -149,8 +188,10 @@ export default function CinemaScreen() {
   const initialTrackX = useRef(0);
   const trackWidthRef = useRef(1);
   const isScrubbing = useRef(false);
-  const wasPlayingRef = useRef(false); 
+  const wasPlayingRef = useRef(false);
   const lastTapTime = useRef(0);
+  // 🐞 大跨度 seek 后的播放兜底重试定时器（HLS 重新拉流期间 play() 会被原生侧丢弃）
+  const resumeRetryTimer = useRef(null);
 
   const gestureLock = useRef('none');
   const lastBrightnessTime = useRef(0); // 🍎 硬件节流专用 Ref
@@ -162,6 +203,8 @@ export default function CinemaScreen() {
     // 优先使用邀请链接带入的 roomId；否则使用本组件惰性生成的稳定 roomId。
     // 一旦确定，不再因重渲染而改变，避免意外掉线。
     const targetRoom = params.roomId || roomId;
+    // 🐞 记住本次使用的房间号，供下次重新挂载时复用（见文件顶部 lastCinemaRoomId 说明）
+    lastCinemaRoomId = targetRoom;
     if (targetRoom !== cinemaRoomId) {
       setCinemaRoomId(targetRoom);
     }
@@ -298,9 +341,26 @@ export default function CinemaScreen() {
     return unsubscribe;
   }, [navigation, handleLayeredBack, setIsMinimized]);
 
+  // 🐞 修复「安卓：最小化后点悬浮窗 / 点放映厅卡回到影院，进度条全部清空并从 0 重播」：
+  //    旧实现只在「沉浸式全屏」时轮询进度，非全屏（2 级放映厅）时 progress/currentTime
+  //    完全靠事件驱动。影院页重新挂载后这些 state 全部回到初始值（0），而播放器
+  //    其实还在原位置继续播 —— 于是进度条显示 0、时间显示 00:00，看起来像「重新开始」。
+  //    这里把轮询条件从 isImmersive 放宽为「只要有 player 就跑」，并在挂载后
+  //    立即用播放器真实位置做一次同步，保证重新进入影院时进度条立刻回到正确位置。
   useEffect(() => {
     let interval;
-    if (player && isImmersive) {
+    if (player) {
+      // 立即同步一次（不等 500ms），避免重新挂载后出现「进度条空一帧」
+      const syncOnce = () => {
+        if (isScrubbing.current || gestureLock.current !== 'none') return;
+        const cur = player.currentTime || 0;
+        const dur = player.duration || 1;
+        setCurrentTime(cur);
+        setDuration(dur); durationRef.current = dur;
+        setProgress(cur / dur); progressRef.current = cur / dur;
+        setIsPlaying(player.playing);
+      };
+      syncOnce();
       interval = setInterval(() => {
         if (!isScrubbing.current && gestureLock.current === 'none') {
           const cur = player.currentTime || 0;
@@ -331,7 +391,50 @@ export default function CinemaScreen() {
       }, 500);
     }
     return () => clearInterval(interval);
-  }, [player, isImmersive]);
+  }, [player]);
+
+  // 💡 屏幕常亮：仅在「沉浸式全屏 + 正在播放」时激活，其余情况立即释放。
+  //    用固定 tag，保证多次激活/释放不会叠加锁；卸载时兜底释放。
+  //    注意：deactivateKeepAwake 在未激活时调用是安全的（原生侧幂等）。
+  useEffect(() => {
+    const KEEP_AWAKE_TAG = 'cinema-playback';
+    if (isImmersive && isPlaying) {
+      activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    } else {
+      deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
+    }
+    return () => {
+      deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
+    };
+  }, [isImmersive, isPlaying]);
+
+  // 📺 播放结束自动下一集：
+  //    - 用 useEventListener 回调式订阅 expo-video 的 playToEnd（播放到片尾时触发一次）
+  //      🐞 不能用 useEvent：playToEnd 事件没有参数，useEvent 的返回值恒为 undefined，
+  //         写成 `if (!playToEndEvent) return` 会导致 effect 永远提前返回 → 自动连播完全失效。
+  //    - 仅在「有下一集」时自动切换；最后一集播完保持原样（停在片尾），不弹任何东西
+  //    - 切换走已有的 playNextEpisode → requestEpisode → 隐藏 WebView 重新嗅探，
+  //      不新增任何播放/同步逻辑，避免与现有同步机制冲突
+  //    - 用 ref 做一次性防抖：playToEnd 在个别机型上可能连发，避免连续跳两集
+  const autoNextGuardRef = useRef(false);
+  // 回调里读取最新的选集状态，避免闭包过期（useEventListener 内部已用 ref 保存最新回调）
+  const autoNextStateRef = useRef({ index: -1, total: 0 });
+  useEffect(() => {
+    autoNextStateRef.current = { index: currentEpisodeIndex, total: episodeList.length };
+  }, [currentEpisodeIndex, episodeList.length]);
+
+  useEventListener(player, 'playToEnd', () => {
+    if (autoNextGuardRef.current) return;
+    // 📺 自动连播开关关闭时，片尾不做任何动作（用户可手动点「下一集」）
+    if (!autoNextEnabledRef.current) return;
+    const { index, total } = autoNextStateRef.current;
+    // 边界判断：只有确实存在下一集才自动切换
+    if (index < 0 || index >= total - 1) return;
+    autoNextGuardRef.current = true;
+    playNextEpisode();
+    // 800ms 后解锁：足够覆盖一次切集请求，又不会长期锁死后续的片尾事件
+    setTimeout(() => { autoNextGuardRef.current = false; }, 800);
+  });
 
   const showUI = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -340,6 +443,8 @@ export default function CinemaScreen() {
     // 🧰 工具栏展开时不启动自动隐藏：用户正在挑选「同步 / 浏览器」按钮，
     //    5 秒后突然整层消失会打断操作。收起工具栏后由 handleToggleToolbar 重新计时。
     if (toolbarVisibleRef.current) return;
+    // 🧰 「更多」菜单展开时同样不自动隐藏，否则菜单会跟着底栏一起消失
+    if (moreMenuVisibleRef.current) return;
     hideTimer.current = setTimeout(hideUI, 5000);
   };
 
@@ -349,6 +454,8 @@ export default function CinemaScreen() {
     setToolbarVisible(false);
     toolbarVisibleRef.current = false;
     toolbarAnim.setValue(0);
+    // 🧰 同时收起「更多」菜单，避免菜单悬空在无底栏的画面上
+    setShowMoreMenu(false);
     Animated.timing(controlsOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
       setControlsVisible(false); controlsVisibleRef.current = false;
     });
@@ -357,6 +464,10 @@ export default function CinemaScreen() {
   const handleTogglePlay = () => {
     if (!player) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // 🐞 用户手动暂停/播放时，取消 seek 后的兜底重试，
+    //    否则「拖完立刻点暂停」会在 800ms 后被强行恢复播放。
+    if (resumeRetryTimer.current) { clearTimeout(resumeRetryTimer.current); resumeRetryTimer.current = null; }
+    wasPlayingRef.current = !isPlaying;
     if (isPlaying) {
       player.pause(); setIsPlaying(false); emitCommand('PAUSE', player.currentTime);
     } else {
@@ -446,7 +557,10 @@ export default function CinemaScreen() {
         isScrubbing.current = true;
         // 🎚️ 通知同步层：拖动期间屏蔽漂移检测，避免把用户 seek 误判为播放漂移
         setScrubbing(true);
-        wasPlayingRef.current = isPlaying;
+        // 🐞 必须读 player.playing 实时值，不能读 isPlaying state：
+        //    拖动期间 500ms 轮询被 isScrubbing 跳过，state 可能已过期（例如刚被同步层
+        //    暂停/恢复过），导致松手后误判为「本来就没在播」→ 大跨度拖动后停在暂停态。
+        wasPlayingRef.current = player.playing;
         initialTrackX.current = progressRef.current * trackWidthRef.current;
         // 拖动期间暂停，释放解码器，避免「边播边 seek」双重负载
         if (player.playing) player.pause();
@@ -475,9 +589,18 @@ export default function CinemaScreen() {
         player.currentTime = newTime;
         emitCommand('FORCE_SYNC', newTime);
         
-        // 松手后立即恢复播放（不再固定 50ms 延迟，避免 seek 未就绪时 play 造成二次等待）
+        // 🐞 松手后恢复播放：大跨度 seek（跨很多分钟）时 HLS 需要重新拉取分片，
+        //    紧跟 seek 同步调用 play() 会被原生侧丢弃（player 仍在 buffering），
+        //    表现为「拖远了就停在暂停态」。这里改为「立即 play + 800ms 兜底重试」，
+        //    重试时若用户已手动暂停（wasPlayingRef 被置 false）则不再强行播放。
         if (wasPlayingRef.current) {
           player.play(); setIsPlaying(true); emitCommand('PLAY', newTime);
+          if (resumeRetryTimer.current) clearTimeout(resumeRetryTimer.current);
+          resumeRetryTimer.current = setTimeout(() => {
+            if (!player) return;
+            if (!wasPlayingRef.current) return;
+            if (!player.playing) { player.play(); setIsPlaying(true); }
+          }, 800);
         }
         // 🎚️ 解除拖动标记：放在 seek 之后，让轮询以新位置为基准重新计算漂移
         setScrubbing(false);
@@ -524,7 +647,8 @@ export default function CinemaScreen() {
           if (Math.abs(dx) > 30 || Math.abs(dy) > 30) {
             if (Math.abs(dx) > Math.abs(dy)) {
               gestureLock.current = 'horizontal';
-              wasPlayingRef.current = isPlaying;
+              // 🐞 与进度条拖动一致：读 player.playing 实时值，避免 state 过期导致松手不恢复播放
+              wasPlayingRef.current = player.playing;
               // 🎚️ 进入横向快进：通知同步层屏蔽漂移检测
               setScrubbing(true);
             } else {
@@ -544,9 +668,10 @@ export default function CinemaScreen() {
           //    避免 HLS 在滑动期间被反复打断导致加载极慢。
 
         } else if (gestureLock.current === 'brightness') {
-          const delta = -(dy / h) * 1.5; 
+          const delta = -(dy / h) * 1.5;
           let newB = Math.max(0, Math.min(1, initialBrightness.current + delta));
-          setIndicatorText(`亮度 ${Math.round(newB * 100)}%`);
+          // 🎚️ 竖向反馈条已包含图标 + 百分比，屏幕中间的指示块不再重复显示
+          setGestureHud({ type: 'brightness', value: newB });
 
           // 🍎 核心修复：对系统硬件 API 增加 150ms 节流阀，解除 Bridge 大塞车
           const now = Date.now();
@@ -558,8 +683,8 @@ export default function CinemaScreen() {
         } else if (gestureLock.current === 'volume') {
           const delta = -(dy / h) * 1.5;
           let newV = Math.max(0, Math.min(1, initialVolume.current + delta));
-          // 指示文字仍实时更新，保证视觉跟手
-          setIndicatorText(`音量 ${Math.round(newV * 100)}%`);
+          // 🎚️ 竖向反馈条已包含图标 + 百分比，屏幕中间的指示块不再重复显示
+          setGestureHud({ type: 'volume', value: newV });
 
           // 🍎 与亮度分支一致：150ms 节流 + 1% 量化去重
           //    每帧直接写 player.volume 会让原生音频管线反复重建 → 断续 / 破音
@@ -577,6 +702,8 @@ export default function CinemaScreen() {
       onPanResponderRelease: (evt, gestureState) => {
         if (!player) return;
         setIndicatorText('');
+        // 🎚️ 手势结束：收起竖向反馈条（无论哪个分支都必须收起）
+        setGestureHud(null);
 
         // 🔊 松手补写最终音量：节流窗口可能吞掉最后一帧，保证音量与指示器一致
         if (gestureLock.current === 'volume') {
@@ -602,7 +729,16 @@ export default function CinemaScreen() {
           player.currentTime = targetTime;
           emitCommand('FORCE_SYNC', targetTime);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          if (wasPlayingRef.current) { player.play(); setIsPlaying(true); emitCommand('PLAY', targetTime); }
+          if (wasPlayingRef.current) {
+            player.play(); setIsPlaying(true); emitCommand('PLAY', targetTime);
+            // 🐞 大跨度快进同样需要兜底重试（原因见进度条拖动分支）
+            if (resumeRetryTimer.current) clearTimeout(resumeRetryTimer.current);
+            resumeRetryTimer.current = setTimeout(() => {
+              if (!player) return;
+              if (!wasPlayingRef.current) return;
+              if (!player.playing) { player.play(); setIsPlaying(true); }
+            }, 800);
+          }
           // 解除拖动标记：放在 seek 之后，让轮询以新位置为基准
           setScrubbing(false);
           showUI();
@@ -622,6 +758,8 @@ export default function CinemaScreen() {
         }
         gestureLock.current = 'none';
         setIndicatorText('');
+        // 🎚️ 手势中断：同样收起竖向反馈条
+        setGestureHud(null);
         // 🛡️ 无条件兜底解除拖动标记
         setScrubbing(false);
       }
@@ -785,8 +923,9 @@ export default function CinemaScreen() {
           
           <VideoView style={StyleSheet.absoluteFill} player={player} allowsFullscreen={false} nativeControls={false} contentFit="contain" />
 
+          {/* 💬 弹幕层：受 danmakuEnabled 开关控制，关闭时整层不渲染（不影响已收到的数据） */}
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            {danmakuList.map((dm) => (
+            {danmakuEnabled && danmakuList.map((dm) => (
               <DanmakuItem key={dm.id} text={dm.text} color={dm.color} screenWidth={SCREEN_WIDTH} />
             ))}
           </View>
@@ -808,6 +947,28 @@ export default function CinemaScreen() {
               )}
             </View>
           </View>
+
+          {/* 🎚️ 音量/亮度竖向反馈条：左侧=亮度，右侧=音量，纯展示不拦截手势 */}
+          {gestureHud && (
+            <View
+              style={[
+                styles.gestureHudWrap,
+                gestureHud.type === 'brightness' ? styles.gestureHudLeft : styles.gestureHudRight,
+              ]}
+              pointerEvents="none"
+            >
+              <Ionicons
+                name={gestureHud.type === 'brightness' ? 'sunny' : 'volume-high'}
+                size={20}
+                color="rgba(255,255,255,0.9)"
+                style={{ marginBottom: 10 }}
+              />
+              <View style={styles.gestureHudTrack}>
+                <View style={[styles.gestureHudFill, { height: `${Math.round(gestureHud.value * 100)}%` }]} />
+              </View>
+              <Text style={styles.gestureHudText}>{Math.round(gestureHud.value * 100)}%</Text>
+            </View>
+          )}
 
           <Animated.View style={[styles.immersiveTopBar, {
             opacity: controlsOpacity,
@@ -905,19 +1066,17 @@ export default function CinemaScreen() {
               
               <Text style={styles.timeText}>{formatTime(duration)}</Text>
 
+              {/* 💬 发送弹幕（从「更多」菜单移回底栏） */}
               <TouchableOpacity onPress={() => { setShowInput(true); setControlsVisible(false); }} style={styles.dockIconBtn}>
                 <Ionicons name="chatbox-ellipses" size={IS_ANDROID ? 20 : 24} color="#FFF" />
               </TouchableOpacity>
-              
+
+              {/* ⏩ 2X 倍速（从「更多」菜单移回底栏）：点按锁定/取消，长按临时快进 */}
               <View
                 onStartShouldSetResponder={() => true}
                 onResponderGrant={() => {
                   if (!player) return;
-                  // 🐞 按下不再用 Heavy 触感：iOS 上 Heavy 会启动 CoreHaptics 引擎
-                  //    （首次 30~80ms）并与 AVPlayer 音频会话争抢 → 按下瞬间画面顿一下。
-                  //    改用 Selection（最轻、无引擎启动开销），按下反馈依然存在。
                   Haptics.selectionAsync();
-                  // 按下即开始计时：超过 250ms 视为「长按快进」，否则视为「点按锁定」
                   speedLongPressRef.current = false;
                   if (speedPressTimer.current) clearTimeout(speedPressTimer.current);
                   speedPressTimer.current = setTimeout(() => {
@@ -934,33 +1093,20 @@ export default function CinemaScreen() {
                   if (speedPressTimer.current) { clearTimeout(speedPressTimer.current); speedPressTimer.current = null; }
 
                   if (speedLongPressRef.current) {
-                    // 长按结束：恢复原逻辑（若未锁定则回到 1x）
                     speedLongPressRef.current = false;
                     if (!speedLockedRef.current) {
                       applyPlaybackRate(1.0);
                       setIndicatorText('');
-                      // 🐞 不再广播 FORCE_SYNC：倍速只是本机播放速率，不改变播放位置。
-                      //    旧实现每次结束长按都发 FORCE_SYNC，对方设备收到后会执行
-                      //    player.currentTime = safeTime（一次真实网络 seek）→ 对方画面卡顿。
-                      //    倍速切换本身不需要任何位置同步。
                       showUI();
                     }
                     return;
                   }
 
-                  // 点按：切换 2x 锁定（不弹屏幕中间提示，仅按钮高亮）
-                  // 🐞 松手卡顿修复：
-                  //    ① 触感从 Light 降为 Selection（Light 在部分机型上仍会拉起触感引擎）；
-                  //    ② 先 setSpeedLocked 让按钮高亮在本帧渲染，速率写入延后到下一帧
-                  //       （applyPlaybackRateDeferred），避免「重渲染 + 原生写 rate」同帧叠加；
-                  //    ③ 不再广播任何同步指令（位置未变）。
                   Haptics.selectionAsync();
                   const next = !speedLockedRef.current;
                   speedLockedRef.current = next;
                   setSpeedLocked(next);
                   applyPlaybackRateDeferred(next ? 2.0 : 1.0);
-                  // 仅当原本处于暂停态时，点按 2X 需要显式起播（applyPlaybackRate
-                  // 已不再自动 play，避免「改速率 + play」两次原生调用叠加卡顿）。
                   if (next && !player.playing) {
                     player.play();
                     setIsPlaying(true);
@@ -971,13 +1117,11 @@ export default function CinemaScreen() {
                 onResponderTerminate={() => {
                   if (!player) return;
                   if (speedPressTimer.current) { clearTimeout(speedPressTimer.current); speedPressTimer.current = null; }
-                  // 手势被系统中断：仅回滚长按临时快进，不影响锁定状态
                   if (speedLongPressRef.current) {
                     speedLongPressRef.current = false;
                     if (!speedLockedRef.current) {
                       applyPlaybackRate(1.0);
                       setIndicatorText('');
-                      // 🐞 同 onResponderRelease：倍速回滚不改变播放位置，无需 FORCE_SYNC
                       showUI();
                     }
                   }
@@ -987,24 +1131,87 @@ export default function CinemaScreen() {
                 <Text style={[styles.speedBtnText, speedLocked && styles.speedBtnTextActive]}>2X</Text>
               </View>
 
-              {/* 📺 选集按钮（位于 2X 右侧，与播放按钮同样无气泡） */}
+              {/* 🧰 更多：仅保留「选集 / 弹幕开关 / 自动连播」三项 */}
               <TouchableOpacity
                 onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setShowEpisodeDrawer((v) => {
-                    const next = !v;
-                    // 打开选集 → 自动隐藏下方播放条；关闭 → 恢复
-                    if (next) hideUI(); else showUI();
-                    return next;
-                  });
+                  Haptics.selectionAsync();
+                  setShowMoreMenu((v) => !v);
+                  showUI();
                 }}
                 style={styles.dockIconBtn}
               >
-                <Ionicons name="list" size={IS_ANDROID ? 20 : 24} color="#FFF" />
+                <Ionicons name="ellipsis-horizontal" size={IS_ANDROID ? 20 : 24} color="#FFF" />
               </TouchableOpacity>
               
             </BlurView>
           </Animated.View>
+
+          {/* 🧰 更多菜单：从底栏上方弹出，点击遮罩关闭 */}
+          {showMoreMenu && (
+            <View style={styles.moreMenuOverlay}>
+              <TouchableOpacity
+                style={StyleSheet.absoluteFill}
+                activeOpacity={1}
+                onPress={() => setShowMoreMenu(false)}
+              />
+              <View style={[styles.moreMenu, { paddingBottom: Math.max(insets.bottom + 8, 24) }]}>
+                <BlurView intensity={80} tint="dark" style={styles.moreMenuCard}>
+                  {/* 📺 选集 */}
+                  <TouchableOpacity
+                    style={styles.moreMenuItem}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setShowMoreMenu(false);
+                      setShowEpisodeDrawer(true);
+                      hideUI();
+                    }}
+                  >
+                    <Ionicons name="list" size={22} color="#FFF" />
+                    <Text style={styles.moreMenuLabel}>选集</Text>
+                  </TouchableOpacity>
+
+                  {/* 💬 弹幕开关 */}
+                  <TouchableOpacity
+                    style={styles.moreMenuItem}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setDanmakuEnabled((v) => !v);
+                    }}
+                  >
+                    <Ionicons
+                      name={danmakuEnabled ? 'chatbubbles' : 'chatbubbles-outline'}
+                      size={22}
+                      color={danmakuEnabled ? '#FFF' : 'rgba(255,255,255,0.45)'}
+                    />
+                    <Text style={styles.moreMenuLabel}>
+                      {danmakuEnabled ? '弹幕已开启' : '弹幕已关闭'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* 📺 自动连播开关 */}
+                  <TouchableOpacity
+                    style={styles.moreMenuItem}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setAutoNextEnabled((v) => {
+                        autoNextEnabledRef.current = !v;
+                        return !v;
+                      });
+                    }}
+                  >
+                    <Ionicons
+                      name={autoNextEnabled ? 'infinite' : 'remove-circle-outline'}
+                      size={22}
+                      color={autoNextEnabled ? '#FFF' : 'rgba(255,255,255,0.45)'}
+                    />
+                    <Text style={styles.moreMenuLabel}>
+                      {autoNextEnabled ? '自动连播已开启' : '自动连播已关闭'}
+                    </Text>
+                  </TouchableOpacity>
+                </BlurView>
+              </View>
+            </View>
+          )}
 
           {/* 📺 选集悬浮窗（从右滑入，约 30% 屏宽，半透明） */}
           <EpisodeDrawer
@@ -1137,6 +1344,82 @@ const styles = StyleSheet.create({
   progressFill: { position: 'absolute', left: 0, height: '100%', backgroundColor: '#0A84FF', borderRadius: 2 },
   progressThumb: { position: 'absolute', width: 16, height: 16, backgroundColor: '#FFF', borderRadius: 8, marginLeft: -8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.6, elevation: 5 },
   
+  // 🎚️ 音量/亮度竖向反馈条：纯展示层，绝对定位在屏幕两侧中部
+  //    宽度固定 56，高度 180，内部 track 撑满剩余空间
+  gestureHudWrap: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -110,
+    width: 56,
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 28,
+    paddingVertical: 14,
+    zIndex: 30,
+  },
+  gestureHudLeft: { left: 24 },
+  gestureHudRight: { right: 24 },
+  gestureHudTrack: {
+    flex: 1,
+    width: 6,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  gestureHudFill: {
+    width: '100%',
+    backgroundColor: '#FFF',
+    borderRadius: 3,
+  },
+  gestureHudText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 8,
+    fontVariant: ['tabular-nums'],
+  },
+
+  // 🧰 更多菜单：底栏上方弹出的卡片，纯展示层
+  moreMenuOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 40,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+  },
+  moreMenu: {
+    paddingHorizontal: 16,
+    paddingRight: 24,
+    marginBottom: 76,
+  },
+  moreMenuCard: {
+    minWidth: 210,
+    borderRadius: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  moreMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  moreMenuLabel: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
   danmakuBtn: { marginLeft: 10, padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
   // 播放条右侧图标按钮：与最左侧播放按钮一致，无气泡背景
   dockIconBtn: { marginLeft: 10, padding: 4 },

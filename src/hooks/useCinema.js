@@ -108,10 +108,24 @@ export function CinemaProvider({ children }) {
   useEffect(() => { currentUrlRef.current = currentUrl; }, [currentUrl]);
   useEffect(() => { episodePageUrlRef.current = episodePageUrl; }, [episodePageUrl]);
 
+  // 🐞 修复「安卓：重新进入影院时进度条清空 / 从 0 重播」：
+  //    旧实现只要 partnerStatus 变成「已加入」就无条件广播 PLAY(currentTime)。
+  //    影院页重新挂载 → 房间号若发生变化会重建 Channel → presence 重新 sync →
+  //    partnerStatus 从「等待」变「已加入」→ 这里广播一次 PLAY。
+  //    若此时 player.currentTime 尚未就绪（原生侧刚 attach 新 VideoView，读回 0），
+  //    就会把 0 广播出去；对端/本端消费后 seek 到 0 → 表现为「进度条清空、从头播放」。
+  //    这里加两道保护：
+  //      ① 只在「确实有有效播放位置」时才广播（currentTime > 0 或 duration 未知）；
+  //      ② 用 ref 记录已广播过的房间状态，同一状态不重复广播。
+  const lastPartnerBroadcastRef = useRef(null);
   useEffect(() => {
-    if (partnerStatus.includes('已加入') && currentUrlRef.current && player) {
-      emitCommand(player.playing ? 'PLAY' : 'PAUSE', player.currentTime, currentUrlRef.current);
-    }
+    if (!partnerStatus.includes('已加入') || !currentUrlRef.current || !player) return;
+    if (lastPartnerBroadcastRef.current === partnerStatus) return;
+    lastPartnerBroadcastRef.current = partnerStatus;
+    const t = player.currentTime;
+    // 位置无效（NaN / 负数）时不广播，避免把 0 当成「从头开始」的指令发出去
+    if (typeof t !== 'number' || !isFinite(t) || t < 0) return;
+    emitCommand(player.playing ? 'PLAY' : 'PAUSE', t, currentUrlRef.current);
   }, [partnerStatus]);
 
   // 🔋 500ms 进度漂移检测轮询
@@ -304,6 +318,19 @@ export function CinemaProvider({ children }) {
   //    pageUrl：该 m3u8 对应的「剧集播放页」URL（如 /play/392563-36-700596.html）
   //    传入后影院可据此启动隐藏 WebView 抓取整部剧的选集列表
   const loadUrl = useCallback((url, pageUrl = null) => {
+    // 🐞 修复「安卓：最小化后点悬浮窗 / 点放映厅卡回到影院，进度条清空并从 0 重播」：
+    //    影院页重新挂载时若再次走到 loadUrl（例如从浏览器/放映厅卡重新投屏同一片源），
+    //    旧实现无条件 replaceAsync → 原生 ExoPlayer 重建 MediaItem → 位置归零。
+    //    这里加一道「同源短路」：目标 URL 与当前播放源一致、且播放器已加载该源时，
+    //    只做状态同步（取消最小化 + 恢复播放），绝不 replaceAsync。
+    const loadedUri = player?.currentSource?.uri ?? null;
+    const isSameSource = !!url && url === currentUrlRef.current && (!loadedUri || loadedUri === url);
+    if (isSameSource) {
+      if (pageUrl) setEpisodePageUrl(pageUrl);
+      setIsMinimized(false);
+      if (player && !player.playing) { player.play(); setIsPlaying(true); }
+      return;
+    }
     setCurrentUrl(url);
     if (pageUrl) {
       setEpisodePageUrl(pageUrl);
