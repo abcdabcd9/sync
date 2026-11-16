@@ -1,0 +1,662 @@
+================================================================================
+SYNC — SOURCE CONTEXT / 预检原始证据
+TASK-P0.1 — 建立 Sync 开发基线
+采集时间: 2026-11-16T14:22Z (Europe/Madrid 15:22)
+采集方式: 本地只读命令 + 源码阅读
+说明: 本文件为 02_PREFLIGHT_REPORT.md 的原始证据附录。
+      不含任何密钥、令牌、私人数据。
+================================================================================
+
+================================================================================
+[1] GIT 状态
+================================================================================
+
+$ git rev-parse --abbrev-ref HEAD
+main
+
+$ git rev-parse HEAD
+eec78801ff8fd0483e260c413d86756d19e3a911
+
+$ git status --porcelain=v1
+ M app.json
+ M eas.json
+ M src/services/supabase.js
+
+$ git log -5 --oneline --decorate
+eec7880 (HEAD -> main, origin/main, origin/HEAD) fix(cinema): 修复安卓重新进入影院时进度条清空并从 0 重播
+b9f4548 修复启动页及增加影院使用体验
+1e52285 fix(browser): 书签改用网页自带标题展示，修复启动页图标裁切与明暗颠倒
+cba5b9f fix(cinema): 修复 iOS 原生播放器请求 m3u8 返回 HTTP 403（防盗链）
+f1529a4 fix(cinema): 修复影院重播、返回浏览器失效与 iOS 选集抓取失败
+
+$ git remote -v
+origin  https://github.com/abcdabcd9/sync.git (fetch)
+origin  https://github.com/abcdabcd9/sync.git (push)
+
+$ git branch -a
+  backup-before-reset
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+
+$ git stash list
+(空)
+
+$ git tag --sort=-creatordate | head -20
+stage-2b-done
+stage-2-done
+stage-1-done
+stage-0-baseline
+
+--------------------------------------------------------------------------------
+[1.1] git diff --stat
+--------------------------------------------------------------------------------
+ app.json                 |  2 +-
+ eas.json                 |  9 ++++++---
+ src/services/supabase.js | 43 +++++++++++++++++++++++++++++++------------
+ 3 files changed, 38 insertions(+), 16 deletions(-)
+
+--------------------------------------------------------------------------------
+[1.2] git diff app.json
+--------------------------------------------------------------------------------
+@@ -2,7 +2,7 @@
+   "expo": {
+     "name": "Sync",
+     "slug": "my-app",
+-    "version": "3.0",
++    "version": "3.0.1",
+     "orientation": "portrait",
+     "userInterfaceStyle": "automatic",
+     "icon": "./assets/icon-white.png",
+
+--------------------------------------------------------------------------------
+[1.3] git diff eas.json
+--------------------------------------------------------------------------------
+@@ -7,15 +7,18 @@
+     "development": {
+       "developmentClient": true,
+       "distribution": "internal",
+-      "channel": "development"
++      "channel": "development",
++      "environment": "development"
+     },
+     "preview": {
+       "distribution": "internal",
+-      "channel": "preview"
++      "channel": "preview",
++      "environment": "preview"
+     },
+     "production": {
+       "autoIncrement": true,
+-      "channel": "production"
++      "channel": "production",
++      "environment": "production"
+     }
+   },
+   "submit": {
+
+--------------------------------------------------------------------------------
+[1.4] git diff src/services/supabase.js
+--------------------------------------------------------------------------------
+@@ -8,10 +8,25 @@ import { createClient } from '@supabase/supabase-js';
+ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+ const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+-if (!supabaseUrl || !supabaseAnonKey) {
+-  throw new Error('Missing Supabase URL or Anon Key. Please check your .env file.');
++// 🛡️ 启动期防御：缺少环境变量时不再在模块顶层 throw。
++//    顶层 throw 会让整个 JS bundle 加载失败 → App 启动即闪退（白屏），
++//    且线上 APK 无法看到任何错误信息，极难排查。
++//    改为：记录明确错误 + 用占位值创建 client，让 App 能正常启动，
++//    网络请求会失败但不会崩溃，便于定位问题（如 EAS 未配置 env）。
++const ENV_MISSING = !supabaseUrl || !supabaseAnonKey;
++if (ENV_MISSING) {
++  console.error(
++    '[Supabase] 缺少 EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY。' +
++      '本地请检查 .env；EAS 云端构建请执行 `eas env:create` 配置 production 环境变量。'
++  );
+ }
+ 
++// 占位值：仅用于让 createClient 不抛错，实际请求会失败（可被上层 catch 捕获）
++const FALLBACK_URL = 'https://placeholder.supabase.co';
++const FALLBACK_KEY = 'placeholder-anon-key';
++
++export const isSupabaseConfigured = !ENV_MISSING;
++
+ /**
+  * 🔒 M-2：Supabase Auth 会话改用 SecureStore（iOS Keychain / Android Keystore）加密存储
+  *
+@@ -93,14 +108,18 @@ const SecureStoreAdapter = {
+   },
+ };
+ 
+-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+-  auth: {
+-    // 🔒 M-2：仅 Auth 会话走加密存储，业务缓存仍用 AsyncStorage
+-    storage: SecureStoreAdapter,
+-    storageKey: AUTH_STORAGE_KEY,
+-    autoRefreshToken: true,
+-    persistSession: true,
+-    detectSessionInUrl: false,
+-  },
+-});
++export const supabase = createClient(
++  supabaseUrl || FALLBACK_URL,
++  supabaseAnonKey || FALLBACK_KEY,
++  {
++    auth: {
++      // 🔒 M-2：仅 Auth 会话走加密存储，业务缓存仍用 AsyncStorage
++      storage: SecureStoreAdapter,
++      storageKey: AUTH_STORAGE_KEY,
++      autoRefreshToken: true,
++      persistSession: true,
++      detectSessionInUrl: false,
++    },
++  }
++);
+ // --- END OF FILE src/services/supabase.js ---
+
+================================================================================
+[2] 项目结构 / 文件统计
+================================================================================
+
+$ find src/app -name '*.js' | wc -l          -> 42   (路由页面)
+$ find src/hooks -name '*.js' | wc -l        -> 27   (hook)
+$ find src/components -name '*.js' | wc -l   -> 34   (组件)
+$ find src/services -name '*.js' | wc -l     -> 3    (服务)
+$ find src/constants -name '*.js' | wc -l    -> 9    (常量)
+$ find src/scripts -name '*.js' | wc -l      -> 10   (WebView 注入脚本)
+$ find supabase/migrations -name '*.sql' | wc -l -> 19 (迁移)
+
+$ find src -name '*.js' | wc -l              -> 128  (JS 文件)
+$ find src -name '*.ts' -o -name '*.tsx' | wc -l -> 0 (TS 文件)
+$ find src -name '*.js' -exec cat {} + | wc -l -> 21999 (src 总行数)
+
+--------------------------------------------------------------------------------
+[2.1] 顶层目录
+--------------------------------------------------------------------------------
+my-app/
+├── src/                    # 全部业务源码
+│   ├── app/                # 42 路由页面
+│   ├── components/         # 34 组件（含 ui/）
+│   ├── hooks/              # 27 hook
+│   ├── services/           # supabase.js / pushService.js / mediaCache.js
+│   ├── constants/          # 9 常量
+│   ├── context/            # ThemeContext.js
+│   ├── scripts/            # 10 WebView 脚本
+│   ├── types/              # 仅 README（TS 迁移预留）
+│   └── utils/              # episodeUrl.js
+├── supabase/
+│   ├── functions/send-push # 唯一 Edge Function
+│   └── migrations/         # 19 SQL
+├── docs/                   # 文档
+├── assets/                 # 图标/启动图
+├── certs/                  # 证书说明
+├── .github/workflows/      # CI
+├── app.json / eas.json / tsconfig.json / eslint.config.js / package.json
+└── (无 ios/ android/ -> CNG)
+
+================================================================================
+[3] 环境版本
+================================================================================
+
+$ node -v   -> v24.21.0
+$ npm -v    -> 11.19.0
+$ bun -v    -> (未安装)
+
+CI 使用 Node 20 (见 .github/workflows/ci.yml)
+=> 本地 Node 24 与 CI Node 20 不一致
+
+================================================================================
+[4] package.json (完整)
+================================================================================
+
+{
+  "name": "sync",
+  "version": "1.0.0",
+  "description": "A personal mobile app built with Expo + React Native: health check-ins, chat, a movie room and a browser in one shell.",
+  "license": "AGPL-3.0-only",
+  "author": "abcdabcd9",
+  "repository": { "type": "git", "url": "git+https://github.com/abcdabcd9/sync.git" },
+  "homepage": "https://github.com/abcdabcd9/sync#readme",
+  "bugs": { "url": "https://github.com/abcdabcd9/sync/issues" },
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "lint": "expo lint"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "58.0.15",
+    "@expo/vector-icons": "15.1.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@shopify/flash-list": "2.3.2",
+    "@supabase/supabase-js": "2.118.0",
+    "base64-arraybuffer": "1.0.2",
+    "expo": "58.0.21",
+    "expo-asset": "58.0.19",
+    "expo-audio": "58.0.10",
+    "expo-background-fetch": "58.0.11",
+    "expo-blur": "58.0.5",
+    "expo-brightness": "58.0.2",
+    "expo-camera": "58.0.14",
+    "expo-clipboard": "58.0.4",
+    "expo-constants": "58.0.14",
+    "expo-crypto": "58.0.7",
+    "expo-dev-client": "58.0.17",
+    "expo-device": "58.0.5",
+    "expo-file-system": "58.0.13",
+    "expo-font": "58.0.11",
+    "expo-haptics": "58.0.7",
+    "expo-image": "58.0.18",
+    "expo-image-picker": "58.0.10",
+    "expo-keep-awake": "~58.0.4",
+    "expo-linear-gradient": "58.0.3",
+    "expo-linking": "58.0.15",
+    "expo-location": "58.0.20",
+    "expo-media-library": "58.0.13",
+    "expo-navigation-bar": "58.0.4",
+    "expo-notifications": "58.1.7",
+    "expo-router": "58.0.28",
+    "expo-screen-orientation": "58.0.3",
+    "expo-secure-store": "58.0.2",
+    "expo-splash-screen": "58.0.12",
+    "expo-status-bar": "58.0.4",
+    "expo-task-manager": "58.0.12",
+    "expo-updates": "58.0.19",
+    "expo-video": "58.0.13",
+    "expo-video-thumbnails": "58.0.2",
+    "lottie-react-native": "7.5.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "3.3.0",
+    "react-native-get-random-values": "1.11.0",
+    "react-native-reanimated": "4.7.1",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.30.0",
+    "react-native-svg": "15.16.0",
+    "react-native-url-polyfill": "4.0.0",
+    "react-native-web": "0.21.4",
+    "react-native-webview": "14.0.1",
+    "react-native-worklets": "0.13.0"
+  },
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "eslint-config-expo": "58.0.4",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "minimatch": "11.0.3",
+    "glob": "14.0.3"
+  },
+  "private": true
+}
+
+注意: scripts 中无 test / typecheck。
+
+================================================================================
+[5] tsconfig.json (完整)
+================================================================================
+
+{
+  "compilerOptions": {},
+  "extends": "expo/tsconfig.base",
+  "exclude": ["supabase/functions"]
+}
+
+注意: compilerOptions 为空，未开 strict。
+
+================================================================================
+[6] app.json (完整)
+================================================================================
+
+{
+  "expo": {
+    "name": "Sync",
+    "slug": "my-app",
+    "version": "3.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon-white.png",
+    "scheme": "mycoupleapp",
+    "plugins": [
+      "expo-router",
+      "expo-audio",
+      ["expo-video", { "supportsBackgroundPlayback": true, "supportsPictureInPicture": true }],
+      "expo-secure-store",
+      "expo-font",
+      "expo-asset",
+      "expo-image",
+      "expo-status-bar",
+      ["expo-location", {
+        "locationWhenInUsePermission": "Sync 需要访问你的位置，用于在聊天中向好友发送你的当前位置。",
+        "isAndroidBackgroundLocationEnabled": false,
+        "isAndroidForegroundServiceEnabled": false
+      }],
+      ["expo-notifications", {
+        "icon": "./assets/icon-white.png",
+        "color": "#FF2D55",
+        "defaultChannel": "default",
+        "enableBackgroundRemoteNotifications": false
+      }],
+      ["expo-splash-screen", {
+        "image": "./assets/splash-light.png",
+        "imageWidth": 200,
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff",
+        "dark": { "image": "./assets/splash-dark.png", "backgroundColor": "#0d0d11" }
+      }]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sync.app",
+      "infoPlist": { "UIBackgroundModes": ["audio", "remote-notification"] }
+    },
+    "android": {
+      "package": "com.sync.app",
+      "icon": "./assets/icon-white.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "monochromeImage": "./assets/adaptive-monochrome.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": { "favicon": "./assets/favicon.png" },
+    "extra": {
+      "router": {},
+      "eas": { "projectId": "7314ce1c-a3c0-4484-bb43-88dd98829353" }
+    },
+    "owner": "abcd_abcd9",
+    "runtimeVersion": "2.1",
+    "updates": {
+      "url": "https://u.expo.dev/7314ce1c-a3c0-4484-bb43-88dd98829353",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    }
+  }
+}
+
+================================================================================
+[7] eas.json (完整)
+================================================================================
+
+{
+  "cli": { "version": ">= 24.8.0", "appVersionSource": "remote" },
+  "build": {
+    "development": { "developmentClient": true, "distribution": "internal", "channel": "development", "environment": "development" },
+    "preview": { "distribution": "internal", "channel": "preview", "environment": "preview" },
+    "production": { "autoIncrement": true, "channel": "production", "environment": "production" }
+  },
+  "submit": { "production": {} }
+}
+
+================================================================================
+[8] eslint.config.js (完整)
+================================================================================
+
+// https://docs.expo.dev/guides/using-eslint/
+const { defineConfig } = require('eslint/config');
+const expoConfig = require("eslint-config-expo/flat");
+
+module.exports = defineConfig([
+  expoConfig,
+  { ignores: ["dist/*"] }
+]);
+
+================================================================================
+[9] CI — .github/workflows/ci.yml (完整)
+================================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Typecheck & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      # Lint 目前存在既有基线问题（React Compiler 规则：refs during render、
+      # setState in effect 等，约 114 个 error / 24 个 warning，分布在 13 个文件）。
+      # 这些是历史代码风格问题，不影响构建与运行，因此设为非阻断。
+      # 待基线清零后再改为阻断。
+      - name: Lint (non-blocking)
+        run: npx expo lint
+        continue-on-error: true
+
+================================================================================
+[10] 锁文件 / 测试体系 / docs/refactor 检查
+================================================================================
+
+$ ls package-lock.json bun.lock bun.lockb yarn.lock pnpm-lock.yaml
+-rw-r--r--  1 TCL  staff  442853  Nov 15 00:35 package-lock.json
+=> 仅 package-lock.json，确认使用 npm
+
+$ find . -path ./node_modules -prune -o \( -name "*.test.js" -o -name "*.test.jsx" \
+    -o -name "*.test.ts" -o -name "*.spec.js" -o -name "*.spec.ts" \
+    -o -name "jest.config*" -o -name "vitest.config*" \) -print
+=> (无输出) 确认无任何测试文件/配置
+
+$ ls -la docs/refactor
+=> NO docs/refactor  (目录不存在)
+
+$ ls -d node_modules
+=> node_modules  (已安装)
+
+================================================================================
+[11] 实测命令输出
+================================================================================
+
+--------------------------------------------------------------------------------
+[11.1] npx tsc --noEmit
+--------------------------------------------------------------------------------
+(无输出)
+TSC_EXIT=0
+=> 0 error，通过
+
+--------------------------------------------------------------------------------
+[11.2] npx expo lint  (尾部摘要)
+--------------------------------------------------------------------------------
+... (省略中间明细)
+✖ 144 problems (119 errors, 25 warnings)
+LINT_EXIT=0  (CI 中 continue-on-error)
+
+涉及文件 (13 个):
+  src/app/chat_room.js
+  src/app/cinema.js
+  src/app/invite_friend.js
+  src/components/ChatContextMenu.js
+  src/components/ChatInputBar.js
+  src/components/FloatingPlayer.js
+  src/components/MealDetailSheet.js
+  src/components/WaterProgress.js
+  src/components/cinema/EpisodeDrawer.js
+  src/hooks/chat/useMediaUpload.js
+  src/hooks/useCinema.js
+  src/hooks/useHealthData.js
+  src/services/mediaCache.js
+
+主要规则:
+  react-hooks/set-state-in-effect
+  react-hooks/immutability
+  react-hooks/exhaustive-deps
+  no-unused-vars
+
+对比: README / CI 注释记录基线为 136 项 (112 error / 24 warning)
+      本次实测 144 项 (119 error / 25 warning) => 上升 8 项
+
+--------------------------------------------------------------------------------
+[11.3] npx expo-doctor
+--------------------------------------------------------------------------------
+Running 20 checks on your project...
+19/20 checks passed. 1 checks failed. Possible issues detected:
+
+✖ Check that packages match versions required by installed Expo SDK
+
+⚠️ Minor version mismatches
+package                         expected  found
+react-native-safe-area-context  ~5.11.1   5.10.1
+
+🔧 Patch version mismatches
+package                         expected  found
+@expo/metro-runtime             ~58.0.17  58.0.15
+expo                            ~58.0.25  58.0.21
+expo-asset                      ~58.0.21  58.0.19
+expo-audio                      ~58.0.12  58.0.10
+expo-background-fetch           ~58.0.13  58.0.11
+expo-blur                       ~58.0.6   58.0.5
+expo-brightness                 ~58.0.3   58.0.2
+expo-constants                  ~58.0.16  58.0.14
+... (共 28 个包落后)
+
+28 packages out of date.
+Advice: Use 'npx expo install --check' to review and upgrade your dependencies.
+
+1 check failed, indicating possible issues with the project.
+
+================================================================================
+[12] 关键文档摘录
+================================================================================
+
+--------------------------------------------------------------------------------
+[12.1] docs/README.md — 文档索引（要点）
+--------------------------------------------------------------------------------
+- 运维手册: RESET_DATABASE.md / DB_SCHEMA_REFERENCE.md
+- 开发记录: DEV_LOG.md / TFG_DATA.md / ROADMAP_2027_SUMMER.md
+- 设计文档 specs/: CODEBASE_MAP.md（现状）、SYNC_APP_REFACTOR_EXECUTION_SPEC*.md（目标态）、
+  SYNC_APP_ARCHITECTURE_DIAGRAMS.md、SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md
+- PDF 不进 git（docs/**/*.pdf 已 gitignore）
+
+--------------------------------------------------------------------------------
+[12.2] docs/ROADMAP_2027_SUMMER.md — 关键约束
+--------------------------------------------------------------------------------
+- 生成日期 2026-11-02，适用版本 1a3aca4（2026-11-01 停工点）  <-- 已过期，当前 HEAD eec7880
+- 总工期 39–57 天
+- 三条铁律:
+    1. 不得修改 src/constants/colors.js 任何色值
+    2. 不得修改 src/constants/theme.js 的 SIZES / TYPOGRAPHY
+    3. 不得修改 src/context/ThemeContext.js 对外 API
+- 装依赖只用 npx expo install <package>
+- 每阶段结束必跑: npx expo lint（只降不升）/ npx tsc --noEmit（0 error）/ git diff src/constants/（空）
+- 六阶段: 0(TS契约) -> A(拆页面) -> B(strict) -> C(TanStack Query+MMKV) -> D(.js->.tsx) -> E(FCM)
+
+--------------------------------------------------------------------------------
+[12.3] docs/specs/CODEBASE_MAP.md — 现状要点
+--------------------------------------------------------------------------------
+- 技术栈: Expo 58.0.21 / RN 0.88.1 / React 19.3.0 / expo-router 58.0.28 / JavaScript / npm
+- 无 ios/ android/ -> CNG
+- 五层: 路由层 src/app -> 业务组件 src/components -> UI 原子 src/components/ui
+        -> 数据 Hook src/hooks -> 服务 src/services；横切 src/constants src/context src/scripts
+- 依赖方向单向: 1->2->3, 1->4->5；第 1~3 层不直接 import supabase
+- 规模: src/app 42 页面, src/hooks 27, src/components 32(含 ui 8), migrations 19
+
+--------------------------------------------------------------------------------
+[12.4] README.md — 诚实清单（未完成功能）
+--------------------------------------------------------------------------------
+1. 纯占位页: private/index.js, moments/index.js
+2. 设置项「能存不生效」: 听筒/消息预览/关怀/语言/自动下载/隐私/通知 等 9 项
+3. 聊天「点了没用」: 通话仅 Alert、黑名单不生效、星标无排序、免打扰不拦推送、好友权限纯本地、位置入口已删
+4. 放映厅无大厅（房间号本地 randomUUID）
+5. 多账号切换实为登出再登录
+6. 其他: 仅简体中文、关系网络仅预留、lint 136 项、无 E2EE、注销 RPC 已补齐
+- 提交前必跑: npx tsc --noEmit / npx expo lint
+
+--------------------------------------------------------------------------------
+[12.5] src/types/README.md — TS 迁移预留
+--------------------------------------------------------------------------------
+- 当前只放 README，不写 .ts 文件
+- 规划文件: user.ts / health.ts / social.ts / media.ts / cinema.ts / browser.ts
+- 迁移顺序: constants -> types -> services -> hooks -> components -> app -> tsconfig strict
+
+--------------------------------------------------------------------------------
+[12.6] src/constants/security.js — 安全披露（要点）
+--------------------------------------------------------------------------------
+- 数据分级与存储位置表（会话/健康/聊天媒体/推送令牌/录音临时文件）
+- 私密媒体私有桶 + 7 天签名 URL
+- 退出登录清会话；注销精准移除当前用户本地 key（非全盘 clear）
+- 已知边界: 未实现 E2EE；截图/录屏/系统备份不受控；相册媒体脱离沙盒
+
+--------------------------------------------------------------------------------
+[12.7] docs/DEV_LOG.md — 最近记录（尾部）
+--------------------------------------------------------------------------------
+- 2026-10-30 阶段 4 修复 10: 位置消息 useEffect 依赖 router 导致无限循环
+  修复: routerRef + consumedLocRef + setParams 包 try/catch
+  教训: Expo Router 的 router 对象永远不能进 useEffect 依赖数组
+  验收: tsc 0；全量 lint 139 problems（119 errors / 20 warnings）与基线持平
+- 模板: 做了啥 / 踩的坑 / 数字 / 下次接着干
+
+================================================================================
+[13] .env.example (完整，无真实值)
+================================================================================
+
+# Sync App — environment variable template
+# 1. cp .env.example .env
+# 2. 替换占位值
+# 3. 重启 dev server (npx expo start --clear)
+# .env 被 .gitignore 忽略，永不提交
+
+EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+
+# 可选：语音转文字
+EXPO_PUBLIC_GROQ_API_KEY=your-groq-api-key-here
+
+================================================================================
+[14] .gitignore 敏感文件覆盖（要点）
+================================================================================
+
+- node_modules/
+- .env / .env.* / .env*.local (保留 !.env.example)
+- *.jks *.p8 *.p12 *.key *.pem *.mobileprovision *.keystore credentials.json
+- .eas-credentials/ *.eas-secret*
+- supabase/.temp/ supabase/.branches/ supabase/.env supabase/functions/.env*
+- /ios /android (CNG 生成)
+- push.json sync.json *.apk
+- google-services.json GoogleService-Info.plist
+- security-audit.md / security-audit.pdf
+- docs/**/*.pdf
+
+================================================================================
+[15] 风险等级核验
+================================================================================
+
+维度          评估        说明
+------------  ----------  ------------------------------------------
+数据变更      无          只读，未触碰数据库
+代码变更      无          未修改业务源码（仅新增 docs/refactor 文档）
+依赖变更      无          未安装/升级
+发布影响      无          未提交/推送/部署
+可逆性        完全可逆    仅新增 2 个文档文件
+信息泄露      无          本文件不含密钥/令牌/私人数据
+
+结论: 风险等级 L1 确认。
+
+================================================================================
+END OF SOURCE CONTEXT
+================================================================================
