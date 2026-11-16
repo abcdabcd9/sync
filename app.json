@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sync",
     "slug": "my-app",
-    "version": "3.0",
+    "version": "3.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon-white.png",
