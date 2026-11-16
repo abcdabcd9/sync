@@ -1,6 +1,6 @@
 // --- START OF FILE src/app/_layout.js ---
 import React, { useEffect } from 'react';
-import { View } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { HealthProvider, useHealthData } from '../hooks/useHealthData';
 import { CinemaProvider } from '../hooks/useCinema';
@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import FloatingPlayer from '../components/FloatingPlayer';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import { isSupabaseConfigured, supabaseConfigErrors } from '../services/supabase';
 
 // 🔒 安全审计 #10：无需登录即可访问的公开路由白名单
 const PUBLIC_ROUTES = new Set(['auth']);
@@ -61,7 +62,33 @@ function RootNavigation() {
   );
 }
 
+/**
+ * 配置错误页（纯展示，不依赖任何 Provider / 导航 / 主题 / 认证上下文）
+ * 仅在 Supabase 配置校验失败时渲染，用于替代整棵业务 Provider 树。
+ */
+function ConfigErrorView() {
+  return (
+    <View style={styles.configErrorContainer}>
+      <Text style={styles.configErrorTitle}>应用配置异常</Text>
+      <Text style={styles.configErrorText}>
+        应用配置异常，暂时无法连接服务。请检查应用配置后重新启动。
+      </Text>
+      {supabaseConfigErrors.length > 0 ? (
+        <Text style={styles.configErrorCode}>
+          错误码：{supabaseConfigErrors.join(', ')}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 export default function RootLayout() {
+  // 🛡️ 启动期防御：配置校验失败时，在任何业务 Provider / hook 挂载之前直接拦截。
+  //    不创建 Supabase Client、不读写认证存储、不发网络请求、不进入登录页。
+  if (!isSupabaseConfigured) {
+    return <ConfigErrorView />;
+  }
+
   return (
     <ThemeProvider>
       <AuthProvider>
@@ -76,4 +103,31 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  configErrorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#000000',
+  },
+  configErrorTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  configErrorText: {
+    color: '#CCCCCC',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  configErrorCode: {
+    color: '#888888',
+    fontSize: 12,
+    marginTop: 16,
+  },
+});
 // --- END OF FILE src/app/_layout.js ---
