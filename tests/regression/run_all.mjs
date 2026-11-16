@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // ============================================================================
-// TASK-P0.1-HF01 最小可重复回归测试（无测试框架 / 纯 Node ESM）
+// 最小可重复回归测试（无测试框架 / 纯 Node ESM）
 //
 // 用法：
-//   node docs/refactor/tasks/TASK-P0.1-HF01/regression/run_all.mjs
+//   node tests/regression/run_all.mjs
 //
 // 覆盖：
 //   A. 配置解析契约（含 R1 hostname 首段为空、R3 Key 控制字符边界）
@@ -23,8 +23,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// 仓库根：regression -> TASK-P0.1-HF01 -> tasks -> refactor -> docs -> root
-const repoRoot = path.resolve(here, '../../../../..');
+// 仓库根：tests/regression -> tests -> root
+const repoRoot = path.resolve(here, '../..');
 const configPath = path.join(repoRoot, 'src/services/supabaseConfig.js');
 const supabasePath = path.join(repoRoot, 'src/services/supabase.js');
 const layoutPath = path.join(repoRoot, 'src/app/_layout.js');

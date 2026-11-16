@@ -1,5 +1,20 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
+# ============================================================
+# 内部工程文档隔离（TASK-DOC-01，2026-11-16 起）
+# 规范：完整 AI 协同文档、安全审查、漏洞分析、源码上下文、
+#       未修复风险、内部测试报告 —— 一律禁止上传公开 GitHub。
+# 详见 AGENTS.md「工程文档管理规范」。
+# ============================================================
+.internal/
+
+# 任务过程文档：默认不公开（需显式白名单才可提交）
+docs/refactor/tasks/
+
+# 安全审查与漏洞报告
+docs/**/SECURITY_REVIEW*.md
+docs/**/*_VULNERABILITY*.md
+
 # dependencies
 node_modules/
 

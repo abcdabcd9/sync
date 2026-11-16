@@ -122,7 +122,7 @@ npx supabase functions deploy send-push
 | 11 | `11_补齐7张表GRANT授权_grant_table_privileges.sql` | 补 7 张表的表级 GRANT，解决 `permission denied` |
 | 12 | `12_开启Realtime实时刷新_enable_realtime_publication.sql` | 把 `messages` / `health_records` 加入 Realtime publication |
 | 13 | `13_全部表加入Realtime_all_tables.sql` | 动态遍历 `public` schema，把全部业务表加入 Realtime publication |
-| 14 | `14_修复unbind_partner提权风险_harden_unbind_partner.sql` | 修复 `unbind_partner` 的 `SECURITY DEFINER` 提权风险，固定 `search_path` 并收紧执行权限 |
+| 14 | `14_修复unbind_partner提权风险_harden_unbind_partner.sql` | 加固 `unbind_partner` 函数：固定 `search_path` 并收紧执行权限 |
 | 15 | `15_收紧profiles敏感列读取_restrict_profiles_sensitive_columns.sql` | 收紧 `profiles` 敏感列（`expo_push_token` / `public_key`）读取，不再对全站登录用户开放 |
 | 16 | `16_Realtime白名单_restrict_realtime_publication.sql` | 把 Realtime publication 从「全表动态加入」收敛为显式白名单 |
 | 17 | `17_修复chat_media签名读取策略_fix_signed_url_select_policy.sql` | 修复 `createSignedUrl` 返回 `Object not found` 的存储读取策略问题 |
@@ -264,7 +264,7 @@ npx expo lint
 - **19 个 Supabase 迁移脚本**，从建表到 RLS 加固，按编号顺序可完整重放
 - **7 张核心表全部启用 RLS**：`profiles`、`messages`、`friends`、`friend_requests`、`health_records`、`moments`、`complaints`，没有一张表是裸奔的
 - 策略不是「全开」了事：好友申请只有接收方能审批（防自发自批）、健康记录写入带 `WITH CHECK (auth.uid() = user_id)`（防伪造）、动态按 `visibility` 分级可见
-- **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行 —— 这是 PostgreSQL 提权漏洞的经典入口，[`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) 就是专门修这个的
+- **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行，遵循 PostgreSQL 安全最佳实践（见 [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql)）
 - 聊天媒体桶私有化：`chat_media` 关闭 public 读，改用 4 条细粒度策略 + 签名 URL
 
 **服务端**

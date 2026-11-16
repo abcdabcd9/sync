@@ -21,19 +21,14 @@
 
 ## 三、设计文档（`specs/`）
 
-`specs/` 里混着两类东西，读之前先分清：
-
-- **`CODEBASE_MAP.md`** —— 照着**当前代码**写的现状说明。想知道「现在到底是怎么跑的」，看这份。
-- **其余文档** —— 重构前写的**目标架构**，不一定等于当前代码。读的时候注意区分「已实现」和「预留设计」。
+`specs/` 只放**照着当前代码写的现状说明**与**架构图**：
 
 | 文档 | 内容 |
 | --- | --- |
 | [`specs/CODEBASE_MAP.md`](specs/CODEBASE_MAP.md) · [EN](specs/CODEBASE_MAP.en.md) | **当前代码的架构说明**：技术栈、五层分层、完整路由树、业务模块、数据模型、数据层、实时同步、聊天子系统。描述现状，不是目标态 |
 | [`specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md) | 架构图：模块分层、数据流、页面关系 |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md) | 重构执行方案 第一部分 |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md) | 重构执行方案 第二部分 |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md) | 重构执行方案 第三部分 |
-| [`specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md`](specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md) | 关系网络（多搭子 / 小圈子）的接口预留设计。**当前未实现**，代码里只有开关常量，见该文档 §4 |
+
+> 重构执行方案、关系网络接口预留设计等**内部规划文档**不随仓库公开，由项目维护者本地保管。
 
 ## 四、关于 PDF
 
@@ -44,7 +39,8 @@
 ## 五、新增文档的约定
 
 1. 运维类手册放 `docs/` 根目录，文件名全大写 + 下划线（如 `RESET_DATABASE.md`）。
-2. 设计/方案类放 `docs/specs/`。
+2. 现状说明 / 架构图放 `docs/specs/`。
 3. 新增文档后回来更新本索引的表格。
 4. 不要在文档里写真实的密钥、密码、项目 ref 之外的敏感信息。
 5. 需要双语时，中文版命名为 `NAME.zh.md`，英文版命名为 `NAME.en.md`，并保留 `NAME.md` 作为入口（内容与 `.zh.md` 一致）。三个文件顶部都要有语言切换链接。
+6. **任务过程文档、安全审查、漏洞分析、源码上下文、内部测试报告一律不进本仓库**，规则见 [`../AGENTS.md`](../AGENTS.md) 的「工程文档管理规范」。

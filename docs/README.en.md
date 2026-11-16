@@ -21,19 +21,14 @@ This directory holds all documentation for the Sync project. Code lives in [`../
 
 ## 3. Design documents (`specs/`)
 
-`specs/` holds two different kinds of document. Know which one you're reading:
-
-- **`CODEBASE_MAP.md`** — written against the **current code**. If you want to know how the app actually runs today, read this one.
-- **Everything else** — design drafts written before the refactor, describing the **target architecture**. They don't necessarily match the current code, so distinguish "already implemented" from "reserved design".
+`specs/` holds only **descriptions of the current code** and **architecture diagrams**:
 
 | Document | Content |
 | --- | --- |
 | [`specs/CODEBASE_MAP.md`](specs/CODEBASE_MAP.md) · [中文](specs/CODEBASE_MAP.md) | **Architecture of the current code**: tech stack, five-layer split, full route tree, business modules, data model, data layer, realtime sync, chat subsystem. Describes what exists, not what's planned |
 | [`specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md) | Architecture diagrams: module layering, data flow, screen relationships |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md) | Refactor execution plan, part 1 |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md) | Refactor execution plan, part 2 |
-| [`specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md) | Refactor execution plan, part 3 |
-| [`specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md`](specs/SYNC_APP_RELATION_NETWORK_INTERFACE_RESERVATION.md) | Interface reservation design for the relation network (multiple partners / small circles). **Not implemented yet** — the code only has a feature flag constant. See §4 of that document |
+
+> Internal planning documents (refactor execution plan, relation-network interface reservation, etc.) are not published with this repository and are kept locally by the maintainer.
 
 ## 4. About the PDFs
 
@@ -44,7 +39,8 @@ If you need a PDF, re-export it from the Markdown source. Don't treat the PDF as
 ## 5. Conventions for new documents
 
 1. Operations manuals go in the `docs/` root, with all-caps filenames and underscores (e.g. `RESET_DATABASE.md`).
-2. Design / plan documents go in `docs/specs/`.
+2. Current-state descriptions and architecture diagrams go in `docs/specs/`.
 3. After adding a document, come back and update the tables in this index.
 4. Never write real keys, passwords, or sensitive information beyond the project ref into a document.
 5. For bilingual documents, name the Chinese version `NAME.zh.md` and the English version `NAME.en.md`, and keep `NAME.md` as the entry point (its content matches `.zh.md`). All three files must carry a language switcher at the top.
+6. **Task process documents, security reviews, vulnerability analyses, source context, and internal test reports never enter this repository.** See the "Engineering document management rules" section in [`../AGENTS.md`](../AGENTS.md).

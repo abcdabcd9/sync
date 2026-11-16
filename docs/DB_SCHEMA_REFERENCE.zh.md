@@ -21,7 +21,7 @@
 | `health_records` | `查看打卡记录` | SELECT | 同上，`USING (true)` |
 | `friend_requests` | `Enable all for friend_requests` | ALL | **任何登录用户能读写所有人的好友请求** |
 
-这 6 条策略必须删除，否则审计报告里第 2、4、6 条漏洞是**真实可利用**的，不是理论风险。
+这 6 条策略必须删除，否则会留下未授权访问风险，属于必须修复项而非理论风险。
 
 > **2026-10-31 复核：以上 6 条已全部删除。** 由 [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql) 执行，验证结果见第 10 节。
 
@@ -162,7 +162,7 @@
 
 ---
 
-### 9.2 `messages`（12 条，其中 4 条是灾难）
+### 9.2 `messages`（12 条，其中 4 条需删除）
 
 | 策略名 | 角色 | 命令 | USING | WITH CHECK | 评价 |
 | --- | --- | --- | --- | --- | --- |
@@ -183,7 +183,7 @@
 
 ---
 
-### 9.3 `health_records`（5 条，其中 2 条是灾难）
+### 9.3 `health_records`（5 条，其中 2 条需删除）
 
 | 策略名 | 角色 | 命令 | USING | WITH CHECK | 评价 |
 | --- | --- | --- | --- | --- | --- |
@@ -214,7 +214,7 @@
 
 ---
 
-### 9.5 `friend_requests`（5 条，其中 1 条是灾难）
+### 9.5 `friend_requests`（5 条，其中 1 条需删除）
 
 | 策略名 | 角色 | 命令 | USING | WITH CHECK | 评价 |
 | --- | --- | --- | --- | --- | --- |

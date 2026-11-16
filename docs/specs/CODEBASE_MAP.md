@@ -336,7 +336,7 @@ src/app/
 
 1. **客户端注册**：[`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js:27) 拿 Expo Push Token，写进 `profiles.expo_push_token`。有 `registeredUserIdRef` 去重，token 非空才写。
 2. **客户端触发**：[`src/services/pushService.js`](../../src/services/pushService.js:18) 调 Edge Function `send-push`。
-3. **服务端发送**：[`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) 校验 JWT、校验关系（必须是伴侣或好友）、白名单化 payload、调 Expo Push API。
+3. **服务端发送**：[`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) 校验调用方身份、校验双方关系、白名单化 payload、调 Expo Push API。
 
 payload 只允许 `type` / `targetId` / `targetName` 三个字段，`targetName` 由服务端查库填充，`DeviceNotRegistered` 错误会清掉失效 token。
 
@@ -517,16 +517,9 @@ erDiagram
 
 ### 7.5 RLS 策略
 
-所有 7 张表都启用了 RLS。策略设计遵循「只能看自己的数据」原则：
+所有 7 张表都启用了 RLS，策略设计遵循「只能看自己的数据」原则。各表的策略清单与逐条 `USING` / `WITH CHECK` 表达式属于内部安全资料，不在公开文档中展开。
 
-- `profiles`：所有人可读公开列（username / nickname / avatar_url / sync_id / motto），只有本人可写
-- `messages`：只能读自己发的或发给自己的，只能写自己发的
-- `health_records`：只能读自己的，伴侣可读（通过 `bound_partner_id` 关联）
-- `friends` / `friend_requests`：只能读涉及自己的行
-- `complaints`：只能插入，不能读
-- `moments`：好友可读，本人可写
-
-Realtime publication 采用白名单模式（migration 16），只把需要实时推送的表加入。这样 `postgres_changes` 推送的字段范围就和列级权限保持一致。
+Realtime publication 采用白名单模式（migration 16），只把需要实时推送的表加入，使 `postgres_changes` 推送的字段范围与列级权限保持一致。
 
 ---
 
@@ -857,9 +850,8 @@ documentDirectory/chat_media/
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | 线上数据库真实结构 + RLS 策略清单 |
+| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | 线上数据库真实结构 + RLS 策略概览 |
 | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) | 18 张 Mermaid 架构图 |
-| [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) | 重构执行规格（PART1/2/3） |
 | [`README.md`](../../README.md:1) | 项目说明 + 功能状态清单 |
 | [`src/types/README.md`](../../src/types/README.md:1) | TS 迁移契约 |
 | [`src/constants/security.js`](../../src/constants/security.js:61) | 设备侧安全策略常量 |

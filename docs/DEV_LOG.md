@@ -166,7 +166,7 @@ RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是
 
 用户反馈：语音能录，但发出去点不动播放，退出到主界面再进聊天详情页就消失了；图片和视频完全发不出去。
 
-### 根因（不是权限，不是 RLS，是上传 body 类型）
+### 根因（不是权限问题，是上传 body 类型）
 
 翻 `node_modules/@supabase/storage-js/dist/index.d.mts` 的 `upload()` 文档注释，里面写得很直白：
 
@@ -198,14 +198,9 @@ RN 传统写法 `formData.append('file', { uri, type, name })` **三者都不是
 
 ## 2026-10-30
 
-**密钥审计**，4 项扫描全过：
+**密钥审计**：仓库内未发现真实密钥，敏感配置文件均已由 `.gitignore` 排除，历史提交中未出现 `.env`。
 
-- `git ls-files` 扫文件名 → 0 命中
-- `git grep` 扫内容（service_role / sk- / PRIVATE KEY / AIza / eyJhbGciOi）→ 4 处命中，但全是注释和 `Deno.env.get()`，没真密钥
-- `git log --all --diff-filter=A` 扫历史 → 干净，从来没提交过 .env
-- `git status --ignored` → `.env`、`google-services.json`、`push.json`、`sync.json` 都是 `!!`，说明 ignore 生效了
-
-可以开源。客户端只有 `EXPO_PUBLIC_SUPABASE_ANON_KEY`（公开的，靠 RLS 保护），service_role 只在 Edge Function 里，不下发。
+客户端只使用公开的匿名 key，服务端密钥仅存在于 Edge Function 运行环境中，不下发到客户端。
 
 **基线**：
 

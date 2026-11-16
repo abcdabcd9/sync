@@ -21,7 +21,7 @@ The live RLS policies contained **6 "wide open" policies** (5 with `USING (true)
 | `health_records` | `查看打卡记录` | SELECT | Same as above, `USING (true)` |
 | `friend_requests` | `Enable all for friend_requests` | ALL | **Any logged-in user can read and write everyone's friend requests** |
 
-These 6 policies had to be dropped. Otherwise findings 2, 4 and 6 in the audit report are **actually exploitable**, not theoretical risk.
+These 6 policies had to be dropped. Otherwise they leave unauthorized-access risk and must be treated as required fixes, not theoretical risk.
 
 > **Verified 2026-10-31: all 6 have been dropped.** Done by [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql); see section 10 for the verification results.
 
@@ -162,7 +162,7 @@ Already defined: `unbind_partner`, `enforce_sync_id_change_limit`
 
 ---
 
-### 9.2 `messages` (12 policies, 4 of them are a disaster)
+### 9.2 `messages` (12 policies, 4 of them must be dropped)
 
 | Policy | Role | Command | USING | WITH CHECK | Verdict |
 | --- | --- | --- | --- | --- | --- |
@@ -183,7 +183,7 @@ Already defined: `unbind_partner`, `enforce_sync_id_change_limit`
 
 ---
 
-### 9.3 `health_records` (5 policies, 2 of them are a disaster)
+### 9.3 `health_records` (5 policies, 2 of them must be dropped)
 
 | Policy | Role | Command | USING | WITH CHECK | Verdict |
 | --- | --- | --- | --- | --- | --- |
@@ -214,7 +214,7 @@ Already defined: `unbind_partner`, `enforce_sync_id_change_limit`
 
 ---
 
-### 9.5 `friend_requests` (5 policies, 1 of them is a disaster)
+### 9.5 `friend_requests` (5 policies, 1 of them must be dropped)
 
 | Policy | Role | Command | USING | WITH CHECK | Verdict |
 | --- | --- | --- | --- | --- | --- |

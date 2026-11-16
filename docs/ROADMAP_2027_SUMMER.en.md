@@ -2,9 +2,9 @@
 
 [中文版](ROADMAP_2027_SUMMER.md) · English (this page)
 
-> **Purpose**: when work resumes in summer 2027, read only this file. No need to re-read the 5,457 lines in `docs/specs/`, and no need to re-read the HTML roadmap on the desktop.
+> **Purpose**: when work resumes in summer 2027, read only this file. No need to re-read the HTML roadmap on the desktop.
 > **Generated**: 2026-11-02
-> **Applies to**: `1a3aca4` (the 2026-11-01 pause point)
+> **Applies to**: the 2026-11-01 pause point
 > **Total effort**: 39–57 days (assuming 8 productive hours per day). Summer is roughly 70 days, leaving 13–31 days of buffer.
 
 ---
@@ -14,7 +14,7 @@
 ### 0.1 Run these three commands first to confirm the project isn't broken
 
 ```bash
-git log --oneline -3          # 1a3aca4 should be at the top
+git log --oneline -3          # confirm HEAD matches the pause point
 git status                    # should be clean
 npx tsc --noEmit              # must be 0 errors
 ```
@@ -29,7 +29,7 @@ If `tsc` reports errors, fix them before starting. **Never build on a broken fou
 3. Never change the public API of src/context/ThemeContext.js
 ```
 
-Source: [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:45) §0.2
+Source: refactor execution plan §0.2 (internal document, kept locally)
 
 ### 0.3 Install dependencies with this one command only
 
@@ -136,17 +136,17 @@ npx tsc --noEmit    # must be 0 errors (types/ is purely additive and does not a
 
 ### 3.1 What to read
 
-**Read only these two files — do not read the whole master spec:**
+**Per-phase details live in the refactor execution plan (internal document, kept locally):**
 
-| Phase | Section to read |
+| Phase | Section |
 |---|---|
-| Phase 1 foundation | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:64) §11 |
-| Phase 2 home | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) §12 |
-| Phase 3 space + settings | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) §13 |
-| Phase 4 chat | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:19) §14 |
-| Phase 5 cinema + browser | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:1) §15 |
+| Phase 1 foundation | Execution plan PART2 §11 |
+| Phase 2 home | Execution plan PART2 §12 |
+| Phase 3 space + settings | Execution plan PART2 §13 |
+| Phase 4 chat | Execution plan PART3 §14 |
+| Phase 5 cinema + browser | Execution plan PART3 §15 |
 
-**Visual / motion rules** (check against these in every phase): [`SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) §3, §4
+**Visual / motion rules** (check against these in every phase): Execution plan PART1 §3, §4
 
 ### 3.2 Key outputs of phase 1 (everything later depends on them)
 
@@ -476,9 +476,9 @@ You have met the summer goal only when all of these are true:
 
 | Purpose | File |
 |---|---|
-| Global constraints / visual rules / motion spec | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) |
-| Phases 1–3 details | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) |
-| Phases 4–7 details | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:1) |
+| Global constraints / visual rules / motion spec | Execution plan PART1 (internal document, kept locally) |
+| Phases 1–3 details | Execution plan PART2 (internal document, kept locally) |
+| Phases 4–7 details | Execution plan PART3 (internal document, kept locally) |
 | Database column reference | [`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1) |
 | Historical pitfall log | [`docs/DEV_LOG.md`](DEV_LOG.md:1) |
 | Architecture diagrams | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) |

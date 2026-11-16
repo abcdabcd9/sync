@@ -2,9 +2,9 @@
 
 [English](ROADMAP_2027_SUMMER.en.md) · 中文（当前页）
 
-> **用途**：2027 年暑假开工时，只看这一份文件。不用重读 `docs/specs/` 的 5,457 行，也不用重读桌面那份 HTML 路线图。
+> **用途**：2027 年暑假开工时，只看这一份文件。不用重读桌面那份 HTML 路线图。
 > **生成日期**：2026-11-02
-> **适用版本**：`1a3aca4`（2026-11-01 停工点）
+> **适用版本**：2026-11-01 停工点
 > **总工期**：39–57 天（按每天 8 小时满产估算），暑假约 70 天，留 13–31 天缓冲
 
 ---
@@ -14,7 +14,7 @@
 ### 0.1 先跑这三条命令，确认项目没坏
 
 ```bash
-git log --oneline -3          # 应该看到 1a3aca4 在最上面
+git log --oneline -3          # 确认当前提交与停工点一致
 git status                    # 应该是 clean
 npx tsc --noEmit              # 必须 0 error
 ```
@@ -29,7 +29,7 @@ npx tsc --noEmit              # 必须 0 error
 3. 不得修改 src/context/ThemeContext.js 的对外 API
 ```
 
-来源：[`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:45) §0.2
+来源：重构执行方案 §0.2（内部文档，本地保管）
 
 ### 0.3 装依赖只用这一条命令
 
@@ -136,17 +136,17 @@ npx tsc --noEmit    # 必须 0 error（types/ 是纯新增，不影响现有代�
 
 ### 3.1 读什么
 
-**只读这两份，不要读总纲全文：**
+**各阶段细则见重构执行方案（内部文档，本地保管）：**
 
-| 阶段 | 读哪一节 |
+| 阶段 | 对应章节 |
 |---|---|
-| 阶段 1 地基 | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:64) §11 |
-| 阶段 2 首页 | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) §12 |
-| 阶段 3 空间+设置 | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) §13 |
-| 阶段 4 聊天 | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:19) §14 |
-| 阶段 5 放映厅+浏览器 | [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:1) §15 |
+| 阶段 1 地基 | 执行方案 PART2 §11 |
+| 阶段 2 首页 | 执行方案 PART2 §12 |
+| 阶段 3 空间+设置 | 执行方案 PART2 §13 |
+| 阶段 4 聊天 | 执行方案 PART3 §14 |
+| 阶段 5 放映厅+浏览器 | 执行方案 PART3 §15 |
 
-**视觉 / 动效规范**（每个阶段都要对照）：[`SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) §3、§4
+**视觉 / 动效规范**（每个阶段都要对照）：执行方案 PART1 §3、§4
 
 ### 3.2 阶段 1 的关键产出（后续全靠它）
 
@@ -476,9 +476,9 @@ git add -A && git commit -m "阶段X: 今天做了什么"
 
 | 用途 | 文件 |
 |---|---|
-| 全局约束 / 视觉守则 / 动效规范 | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) |
-| 阶段 1–3 细则 | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md:1) |
-| 阶段 4–7 细则 | [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](specs/SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md:1) |
+| 全局约束 / 视觉守则 / 动效规范 | 重构执行方案 PART1（内部文档，本地保管） |
+| 阶段 1–3 细则 | 重构执行方案 PART2（内部文档，本地保管） |
+| 阶段 4–7 细则 | 重构执行方案 PART3（内部文档，本地保管） |
 | 数据库字段参考 | [`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1) |
 | 历史踩坑记录 | [`docs/DEV_LOG.md`](DEV_LOG.md:1) |
 | 架构图 | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) |

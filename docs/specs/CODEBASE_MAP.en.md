@@ -336,7 +336,7 @@ Three layers:
 
 1. **Client registration**: [`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js:27) gets the Expo Push Token and writes it to `profiles.expo_push_token`. Deduplicated via `registeredUserIdRef`; only writes when the token is non-empty.
 2. **Client trigger**: [`src/services/pushService.js`](../../src/services/pushService.js:18) calls the `send-push` Edge Function.
-3. **Server send**: [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) verifies the JWT, verifies the relationship (must be partner or friend), whitelists the payload, then calls the Expo Push API.
+3. **Server send**: [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) verifies the caller's identity, verifies the relationship between the two users, whitelists the payload, then calls the Expo Push API.
 
 The payload only allows `type` / `targetId` / `targetName`. `targetName` is filled in server-side from the database. A `DeviceNotRegistered` error clears the stale token.
 
@@ -517,16 +517,9 @@ erDiagram
 
 ### 7.5 RLS policies
 
-All 7 tables have RLS enabled. The policy design follows one principle: you can only see your own data.
+All 7 tables have RLS enabled, following one principle: you can only see your own data. The per-table policy inventory and the individual `USING` / `WITH CHECK` expressions are internal security material and are not expanded in public docs.
 
-- `profiles`: everyone can read the public columns (username / nickname / avatar_url / sync_id / motto); only the owner can write
-- `messages`: you can only read messages you sent or received, and only write your own
-- `health_records`: you can read your own; your partner can read yours (via the `bound_partner_id` relationship)
-- `friends` / `friend_requests`: you can only read rows that involve you
-- `complaints`: insert only, no reads
-- `moments`: friends can read, only the owner can write
-
-The Realtime publication uses a whitelist (migration 16): only tables that need live push are added. That keeps the field set delivered by `postgres_changes` in line with column-level permissions.
+The Realtime publication uses a whitelist (migration 16): only tables that need live push are added, keeping the field set delivered by `postgres_changes` in line with column-level permissions.
 
 ---
 
@@ -857,9 +850,8 @@ The design in [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSi
 
 | Document | Content |
 |---|---|
-| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | Real production schema + RLS policy inventory |
+| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | Real production schema + RLS policy overview |
 | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) | 18 Mermaid architecture diagrams |
-| [`docs/specs/SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC.md:1) | Refactor execution spec (PART1/2/3) |
 | [`README.md`](../../README.md:1) | Project overview + feature status list |
 | [`src/types/README.md`](../../src/types/README.md:1) | TS migration contract |
 | [`src/constants/security.js`](../../src/constants/security.js:61) | Device-side security policy constants |

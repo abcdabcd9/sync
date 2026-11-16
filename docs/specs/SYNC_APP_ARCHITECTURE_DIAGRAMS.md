@@ -1,9 +1,6 @@
 # Sync App 重构 —— 完整架构模型图册
 
-> **配套文档**：
-> - [`SYNC_APP_REFACTOR_EXECUTION_SPEC.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC.md)（第 1 部分：总纲）
-> - [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART2.md)（第 2 部分：阶段 1-3）
-> - [`SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md`](SYNC_APP_REFACTOR_EXECUTION_SPEC_PART3.md)（第 3 部分：阶段 4-7）
+> **配套文档**：重构执行方案 PART1/2/3（内部文档，本地保管，不随仓库公开）。
 >
 > **本文件**：全部架构模型图，共 **18 张**，分 6 组。
 > 所有图均为 Mermaid，可在 VS Code / GitHub / Typora 直接渲染。
