@@ -39,8 +39,10 @@ export function usePushNotifications() {
   useEffect(() => {
     // 1️⃣ Token 注册：每个用户只执行一次
     if (userId && registeredUserIdRef.current !== userId) {
-      registeredUserIdRef.current = userId;
-
+      // ⚠️ 注意：标记必须在「注册成功」之后才写入。
+      //    旧实现在发起注册前就置位，一旦本次注册失败（如 Android 缺 FCM 配置、
+      //    权限被拒、网络异常），同一用户在本进程内永远不会重试 —— 表现为
+      //    「重新登录后 Token 依然为空」。现在改为成功后置位，失败则允许下次重试。
       registerForPushNotificationsAsync()
         .then(async (token) => {
           // 🛡️ 严格非空校验：只有拿到「有效非空字符串」才写库。
@@ -58,7 +60,10 @@ export function usePushNotifications() {
             .eq('id', userId);
           if (error) {
             console.warn('⚠️ Push Token 写入失败:', error.message);
+            return;
           }
+          // ✅ 仅在「Token 已成功落库」后才标记该用户已完成注册
+          registeredUserIdRef.current = userId;
         })
         .catch((err) => {
           console.warn('⚠️ 获取 Push Token 失败:', err?.message ?? err);
@@ -130,9 +135,11 @@ async function registerForPushNotificationsAsync() {
   }
 
   try {
-    token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    const res = await Notifications.getExpoPushTokenAsync({ projectId });
+    token = res.data;
   } catch (e) {
     console.warn('⚠️ 获取 Expo Push Token 失败:', e?.message ?? e);
+    return null;
   }
 
   return token;

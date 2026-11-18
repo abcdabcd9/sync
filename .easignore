@@ -43,12 +43,22 @@ credentials.json
 .eas-credentials
 
 # ---- 🔴 平台推送配置文件 ----
+# google-services.json 是 Android 构建的必需输入（app.json 的
+# android.googleServicesFile 指向它），必须进入构建上下文，否则 Gradle 的
+# google-services 插件不会生效，APK 内将缺少 Firebase 初始化配置。
+# 该文件仅含公开的 Firebase API key / project_id / app_id，不含服务账号私钥，
+# 属于设计上可随客户端分发的配置。仍由 .gitignore 排除，不进入 Git 仓库。
 google-services.json
+!google-services.json
 GoogleService-Info.plist
 push.json
 sync.json
 
 # ---- 🔴 内部文档与审计报告（不进入构建产物）----
+# .internal/ 含安全审查报告、漏洞分析、RLS 策略清单、源码全量导出与备份包，
+# 属于仓库规范中「禁止公开 / 禁止外传」的资料，绝不能进入构建上下文。
+.internal
+.internal/
 security-audit.md
 security-audit.pdf
 plans/

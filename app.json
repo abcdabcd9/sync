@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Sync",
+    "name": "Sync test",
     "slug": "my-app",
     "version": "3.0.1",
     "orientation": "portrait",
@@ -55,7 +55,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sync.app",
+      "bundleIdentifier": "com.mycoupleapp.app",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -64,7 +64,8 @@
       }
     },
     "android": {
-      "package": "com.sync.app",
+      "package": "com.mycoupleapp.app",
+      "googleServicesFile": "./google-services.json",
       "icon": "./assets/icon-white.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
