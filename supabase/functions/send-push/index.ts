@@ -156,9 +156,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // ---- 3. 权限校验：sender 与 target 必须存在社交关系 ----
   // 同时取出 sender 的昵称，用于服务端覆盖推送标题（前端不再硬编码 'TA'）
+  //
+  // 🔒 T6/A07b：健康搭子授权改用权威模型 partner_authorizations。
+  //    旧实现读 profiles.bound_partner_id 指针 —— 该列已不再对 anon 开放（迁移 23），
+  //    且指针本身可被伪造 / 单向残留，不能作为授权依据。
+  //    现改为：查询 sender 与 target 之间是否存在 status='accepted' 的授权记录。
   const { data: relation, error: relationError } = await adminClient
     .from('profiles')
-    .select('id, bound_partner_id, nickname, username')
+    .select('id, nickname, username')
     .eq('id', senderId)
     .single();
 
@@ -169,27 +174,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // 🔑 推送标题以「发送者真实昵称」为准，客户端传入的 title 一律丢弃
   const senderProfile = relation as {
     id: string;
-    bound_partner_id: string | null;
     nickname: string | null;
     username: string | null;
   };
   const senderNickname = resolveSenderNickname(senderProfile.nickname, senderProfile.username);
 
-  let allowed = relation.bound_partner_id === targetUserId;
+  // 3.1 健康搭子：存在 accepted 授权关系（双向，无需区分 requester/addressee）
+  const { data: partnerAuth } = await adminClient
+    .from('partner_authorizations')
+    .select('id')
+    .eq('status', 'accepted')
+    .or(
+      `and(requester_id.eq.${senderId},addressee_id.eq.${targetUserId}),and(requester_id.eq.${targetUserId},addressee_id.eq.${senderId})`
+    )
+    .limit(1);
+
+  let allowed = Array.isArray(partnerAuth) && partnerAuth.length > 0;
 
   if (!allowed) {
-    // 反向绑定：对方把我设为搭子
-    const { data: reverse } = await adminClient
-      .from('profiles')
-      .select('id')
-      .eq('id', targetUserId)
-      .eq('bound_partner_id', senderId)
-      .maybeSingle();
-    allowed = Boolean(reverse);
-  }
-
-  if (!allowed) {
-    // 好友关系表（若存在）
+    // 3.2 好友关系表（若存在）
     const { data: friendship } = await adminClient
       .from('friends')
       .select('id')
