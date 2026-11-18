@@ -5,6 +5,23 @@ import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
 
 import { parseSupabaseConfig } from './supabaseConfig';
+import {
+  AUTH_STORAGE_ERROR,
+  createAuthStorageStatus,
+  createSecureStoreAdapter,
+} from './authStorage';
+
+// 重新导出错误码，保持既有 import 路径（`from '../services/supabase'`）兼容。
+export { AUTH_STORAGE_ERROR };
+
+/**
+ * 认证存储故障状态位（C02 / Gemini P1-1）
+ *
+ * `@supabase/auth-js` 的 `_recoverAndRefresh()` 会 catch 掉 `storage.getItem`
+ * 抛出的异常（只 console.error 后 return），导致 `getSession()` 正常 resolve
+ * 出 `session: null`。上层无法通过 try/catch 感知故障，因此改为主动查询本状态位。
+ */
+export const authStorageStatus = createAuthStorageStatus();
 
 // 从环境变量读取 Supabase 公开客户端配置。
 // 注意：EXPO_PUBLIC_* 会被 Expo 在打包时内联进客户端产物，属于"公开配置"，
@@ -52,67 +69,18 @@ export const supabaseConfigErrors = config.ok ? [] : config.errors;
 // 配置无效时 config.storageKey 不存在，此处不会执行到（见下方条件构造）。
 const AUTH_STORAGE_KEY = config.ok ? config.storageKey : null;
 
-// SecureStore 的 key 只允许 [A-Za-z0-9._-]，上面的 key 天然合规；
-// 但为防御未来 storageKey 变更引入非法字符，这里做一次归一化兜底。
-const toSecureKey = (key) => String(key).replace(/[^\w.-]/g, '_');
-
 /**
- * SecureStore 适配器
+ * 认证会话安全存储适配器（TASK-P0.2 Batch C）
  *
- * 相比直接透传，额外做了三件事：
- *   1. key 归一化，避免 SecureStore 抛 "Invalid key"
- *   2. 首次读取时把 AsyncStorage 里的旧明文会话迁移到 SecureStore 并删除明文
- *      —— 否则升级后所有已登录用户会被强制登出
- *   3. SecureStore 不可用（极少数设备 / 模拟器异常）时降级回 AsyncStorage，
- *      保证登录功能不中断，而不是直接崩溃
+ * 实现已抽到 ./authStorage，通过依赖注入接收 SecureStore / AsyncStorage，
+ * 使测试可以直接执行真实实现（C03），而不是复刻一份逻辑。
+ * 这里只负责注入生产环境的原生模块。
  */
-const SecureStoreAdapter = {
-  getItem: async (key) => {
-    const secureKey = toSecureKey(key);
-    try {
-      const value = await SecureStore.getItemAsync(secureKey);
-      if (value !== null) return value;
-
-      // 🔁 一次性迁移：旧版本把会话明文存在 AsyncStorage 中
-      const legacy = await AsyncStorage.getItem(key);
-      if (legacy !== null) {
-        await SecureStore.setItemAsync(secureKey, legacy);
-        // 迁移成功后立即抹除明文副本，避免双份留存
-        await AsyncStorage.removeItem(key);
-        return legacy;
-      }
-      return null;
-    } catch (e) {
-      console.warn('⚠️ SecureStore 读取失败，降级到 AsyncStorage:', e?.message ?? e);
-      return AsyncStorage.getItem(key);
-    }
-  },
-
-  setItem: async (key, value) => {
-    const secureKey = toSecureKey(key);
-    try {
-      await SecureStore.setItemAsync(secureKey, value);
-    } catch (e) {
-      console.warn('⚠️ SecureStore 写入失败，降级到 AsyncStorage:', e?.message ?? e);
-      await AsyncStorage.setItem(key, value);
-    }
-  },
-
-  removeItem: async (key) => {
-    const secureKey = toSecureKey(key);
-    try {
-      await SecureStore.deleteItemAsync(secureKey);
-    } catch (e) {
-      console.warn('⚠️ SecureStore 删除失败:', e?.message ?? e);
-    }
-    // 无论 SecureStore 是否成功，都清掉 AsyncStorage 中的残留（含迁移前的旧明文）
-    try {
-      await AsyncStorage.removeItem(key);
-    } catch {
-      // 忽略：AsyncStorage 无该 key 时不会抛错，此处仅防御性兜底
-    }
-  },
-};
+const SecureStoreAdapter = createSecureStoreAdapter({
+  secureStore: SecureStore,
+  asyncStorage: AsyncStorage,
+  status: authStorageStatus,
+});
 
 // 仅在配置校验通过时创建唯一客户端；配置无效时导出 null，
 // 由 RootLayout 在挂载业务 Provider 之前拦截。

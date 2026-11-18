@@ -20,7 +20,7 @@ function RootNavigation() {
   const { colors: palette } = useAppTheme();
 
   // 🔒 安全审计 #10：全局登录态守卫
-  const { user, isAuthLoading } = useAuth();
+  const { user, isAuthLoading, authError, retrySession } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
@@ -32,6 +32,9 @@ function RootNavigation() {
   useEffect(() => {
     // 会话恢复中或健康数据初始化中，暂不做任何跳转，避免误拦截
     if (isAuthLoading || !isInitialized) return;
+    // 🔒 Batch C：安全存储不可用时不得误判为「已登出」而跳登录页，
+    //    由下方 AuthStorageErrorView 接管展示与重试。
+    if (authError) return;
 
     if (!user && !isPublicRoute) {
       // 未登录访问私密页面（/chat_room、/account_info、/bind_partner 等）→ 强制拦截
@@ -40,9 +43,14 @@ function RootNavigation() {
       // 已登录仍停留在登录页 → 送回主界面，避免重复登录
       router.replace('/');
     }
-  }, [user, isAuthLoading, isInitialized, isPublicRoute, router]);
+  }, [user, isAuthLoading, isInitialized, isPublicRoute, router, authError]);
 
   if (!isInitialized) return <View style={{ flex: 1, backgroundColor: palette.background }} />;
+
+  // 🔒 Batch C：安全存储不可用 → 显式失败页（冻结会话使用，提供重试）
+  if (authError) {
+    return <AuthStorageErrorView code={authError.code} onRetry={retrySession} palette={palette} />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
@@ -66,6 +74,41 @@ function RootNavigation() {
  * 配置错误页（纯展示，不依赖任何 Provider / 导航 / 主题 / 认证上下文）
  * 仅在 Supabase 配置校验失败时渲染，用于替代整棵业务 Provider 树。
  */
+/**
+ * 安全存储不可用错误页（TASK-P0.2 Batch C）
+ *
+ * 触发条件：SecureStore 读写失败导致会话无法恢复/持久化。
+ * 行为：冻结会话使用（不进入业务页面、不误跳登录页），提供「重试」。
+ * 不提供「以明文继续」选项 —— 这是本次加固的核心约束。
+ */
+function AuthStorageErrorView({ code, onRetry, palette }) {
+  const [retrying, setRetrying] = React.useState(false);
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      await onRetry();
+    } finally {
+      setRetrying(false);
+    }
+  };
+  return (
+    <View style={[styles.configErrorContainer, { backgroundColor: palette?.background ?? '#000000' }]}>
+      <Text style={styles.configErrorTitle}>无法安全读取登录状态</Text>
+      <Text style={styles.configErrorText}>
+        设备的安全存储（钥匙串 / Keystore）暂时不可用，为避免以明文保存登录凭证，应用已暂停登录状态的使用。请重试；若持续失败，请重启设备后再试。
+      </Text>
+      {code ? <Text style={styles.configErrorCode}>错误码：{code}</Text> : null}
+      <Text
+        style={styles.retryButton}
+        onPress={retrying ? undefined : handleRetry}
+        accessibilityRole="button"
+      >
+        {retrying ? '正在重试…' : '重试'}
+      </Text>
+    </View>
+  );
+}
+
 function ConfigErrorView() {
   return (
     <View style={styles.configErrorContainer}>
@@ -128,6 +171,18 @@ const styles = StyleSheet.create({
     color: '#888888',
     fontSize: 12,
     marginTop: 16,
+  },
+  retryButton: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 24,
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#2F6FED',
+    textAlign: 'center',
   },
 });
 // --- END OF FILE src/app/_layout.js ---
