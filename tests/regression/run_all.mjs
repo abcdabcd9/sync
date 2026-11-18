@@ -27,6 +27,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 const configPath = path.join(repoRoot, 'src/services/supabaseConfig.js');
 const supabasePath = path.join(repoRoot, 'src/services/supabase.js');
+const authStoragePath = path.join(repoRoot, 'src/services/authStorage.js');
 const layoutPath = path.join(repoRoot, 'src/app/_layout.js');
 
 let pass = 0;
@@ -162,9 +163,12 @@ function buildSandbox() {
     'index.js': `export function createClient(url,key,options){globalThis.__ISO__=globalThis.__ISO__||{};globalThis.__ISO__.cc=globalThis.__ISO__.cc||[];globalThis.__ISO__.cc.push({url,key,options});return {__stub:true,url,key,options};}export default {createClient};`,
   });
   // 复制真实源码
+  // 注意：supabase.js 现在依赖 ./authStorage（C01/C02 抽取的适配器模块），
+  // 沙箱必须一并复制，否则子进程会 ERR_MODULE_NOT_FOUND。
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
   fs.copyFileSync(supabasePath, path.join(dir, 'src/services/supabase.js'));
   fs.copyFileSync(configPath, path.join(dir, 'src/services/supabaseConfig.js'));
+  fs.copyFileSync(authStoragePath, path.join(dir, 'src/services/authStorage.js'));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   // resolve hook：允许无扩展名相对导入
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
