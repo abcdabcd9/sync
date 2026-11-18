@@ -36,9 +36,9 @@ export function HealthProvider({ children }) {
   // ☁️ 所有 health_records 网络 IO 都收敛在 useHealthCloud 内部（不碰本地存储）
   const cloud = useHealthCloud(user, getDateStr);
   const {
-    partnerData, partnerId, setPartnerId, clearPartner,
+    partnerData, partnerId, authGeneration, setPartnerId, bindPartner, clearPartner,
     fetchMyRecord, fetchPartnerRecord, applyPartnerRecord,
-    subscribePartner, syncToCloud, flushNow,
+    subscribePartner, subscribeAuthorization, syncToCloud, flushNow,
   } = cloud;
 
   // 🧠 连续打卡状态机（纯业务规则，零网络 / 零磁盘）
@@ -149,45 +149,50 @@ export function HealthProvider({ children }) {
     // 2️⃣ 再拉云端，拿到后显式覆盖本地（编排层负责串联 storage ↔ cloud）
     if (user) {
       try {
-        const { data: profileRow } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
-        let pId = profileRow?.bound_partner_id || null;
+        // 🔒 唯一权威来源：服务端 partner_authorizations（经 get_active_partner_id() 读取）。
+        //    不再读 profiles.bound_partner_id 指针，也不再反向扫描「谁绑了我」——
+        //    旧指针路径既不安全（可被伪造）又会造成单向残留。
+        const { data: activePartnerId, error: partnerErr } = await supabase.rpc('get_active_partner_id');
+        if (partnerErr) {
+          // 🛡️ T6/A06：RPC 失败 ≠ 没有搭子。网络异常时绝不能据此清空本地搭子状态，
+          //    否则一次抖动就会让搭子卡片消失、聊天记录被清空。保持缓存，仅记录日志。
+          console.warn('⚠️ 读取有效搭子失败:', partnerErr?.message ?? partnerErr);
+        } else {
+          const pId = activePartnerId || null;
 
-        if (!pId) {
-          const { data: whoBoundMe } = await supabase.from('profiles').select('id').eq('bound_partner_id', user.id).limit(1);
-          if (whoBoundMe && whoBoundMe.length > 0) {
-            pId = whoBoundMe[0].id;
-            // 🍎 P2-11：回写绑定关系不再 fire-and-forget，显式捕获 error 并记录日志
-            const { error: bindError } = await supabase
-              .from('profiles')
-              .update({ bound_partner_id: pId })
-              .eq('id', user.id);
-            if (bindError) {
-              console.error('更新失败:', bindError);
-            }
+          if (pId) {
+            // 💞 权威确认存在有效搭子 → 绑定并作废旧代际的在途请求
+            bindPartner(pId);
+            // 同步回写 profile 缓存，保证下次冷启动/断网时搭子关系不丢失
+            setProfile(prev => {
+              if (!prev) return prev;
+              const next = { ...prev, bound_partner_id: pId };
+              writeProfileCache(next);
+              return next;
+            });
+          } else {
+            // 🧹 T6/A06：权威返回「无有效搭子」→ 必须清空，而不是保留陈旧 partnerId。
+            //    旧实现「null 不覆盖」会让已撤销的搭子一直挂在首页，且继续订阅对方健康数据。
+            //    传入旧 partnerId 以便一并清理其本地健康缓存镜像。
+            clearPartner(partnerId);
+            setProfile(prev => {
+              if (!prev || !prev.bound_partner_id) return prev;
+              const next = { ...prev, bound_partner_id: null };
+              writeProfileCache(next);
+              return next;
+            });
           }
-        }
 
-        // 💞 只有云端确实返回了搭子 ID 才覆盖；null 不覆盖，保留缓存恢复的 partnerId
-        if (pId) {
-          setPartnerId(pId);
-          // 同步回写 profile 缓存，保证下次冷启动/断网时搭子关系不丢失
-          setProfile(prev => {
-            if (!prev) return prev;
-            const next = { ...prev, bound_partner_id: pId };
-            writeProfileCache(next);
-            return next;
-          });
-        }
+          const myData = await fetchMyRecord(currentDayStr);
+          // 🛡️ 网络往返期间用户已操作过 → 丢弃云端旧数据，避免覆盖秒级点击
+          if (myData && !userInteractedRef.current) {
+            hydrateFromCloud({ waterAmount: myData.water_amount, mealsStatus: myData.meals_status });
+          }
 
-        const myData = await fetchMyRecord(currentDayStr);
-        // 🛡️ 网络往返期间用户已操作过 → 丢弃云端旧数据，避免覆盖秒级点击
-        if (myData && !userInteractedRef.current) {
-          hydrateFromCloud({ waterAmount: myData.water_amount, mealsStatus: myData.meals_status });
-        }
-
-        if (pId) {
-          const pData = await fetchPartnerRecord(pId, currentDayStr);
-          applyPartnerRecord(pData);
+          if (pId) {
+            const pData = await fetchPartnerRecord(pId, currentDayStr);
+            applyPartnerRecord(pData);
+          }
         }
       } catch (e) {
         // 🚨 离线降级：只记录日志，绝不重置 profile / user / partnerId，
@@ -216,6 +221,37 @@ export function HealthProvider({ children }) {
         const currentDayStr = getDateStr();
         if (lastActiveDate && lastActiveDate !== currentDayStr) {
           loadAllData();
+        } else if (user) {
+          // 🛡️ T6/A06：即使没跨天，切回前台也要复验搭子授权。
+          //    对方可能在我方后台期间解绑，若不复验，首页会继续展示已撤销的搭子卡片，
+          //    并继续订阅对方健康数据。这里只做轻量的权威复验，不重拉全部健康数据。
+          supabase
+            .rpc('get_active_partner_id')
+            .then(({ data, error }) => {
+              if (error) return; // 网络异常 → 保持现状，绝不清空
+              const pId = data || null;
+              if (pId) {
+                if (pId !== partnerId) bindPartner(pId);
+                // 🔧 T7-H22 兜底：切回前台时主动拉一次搭子快照。
+                //    实时订阅可能因后台挂起、网络切换、重绑同一人等原因漏事件，
+                //    这里用一次轻量查询补齐，保证「回到前台即是最新」，
+                //    不再依赖用户手动重启 App。
+                fetchPartnerRecord(pId, getDateStr())
+                  .then((rec) => {
+                    if (rec) applyPartnerRecord(rec);
+                  })
+                  .catch(() => {});
+              } else if (partnerId) {
+                clearPartner(partnerId);
+                setProfile(prev => {
+                  if (!prev || !prev.bound_partner_id) return prev;
+                  const next = { ...prev, bound_partner_id: null };
+                  writeProfileCache(next);
+                  return next;
+                });
+              }
+            })
+            .catch(() => {});
         }
       } else if (nextAppState === 'background' || nextAppState === 'inactive') {
         // 🚨 进入后台前，强制提交还在防抖队列里的数据，防止丢失
@@ -223,13 +259,43 @@ export function HealthProvider({ children }) {
       }
     });
     return () => subscription.remove();
-  }, [lastActiveDate, getDateStr, flushNow]);
+  }, [
+    lastActiveDate, getDateStr, flushNow, user, partnerId,
+    bindPartner, clearPartner, fetchPartnerRecord, applyPartnerRecord,
+  ]);
 
   // 🔄 伴侣数据实时订阅（网络 IO 由 useHealthCloud 负责）
+  //
+  // 🔧 T7-H22：依赖数组必须包含 authGeneration。
+  //    场景：B 与 C 解绑后再次绑定同一个人 → partnerId 的值前后完全相同，
+  //    React 认为依赖未变、不会重建 effect；而解绑时旧订阅已被 cleanup 移除，
+  //    结果就是「没有任何订阅存活」，对方打卡/饮水/饮食都不再实时推送，
+  //    只有重启 App（走 loadAllData 一次性快照）才能看到数据。
+  //    authGeneration 是 state，bindPartner / clearPartner 都会自增它，
+  //    因此重绑同一人时也会触发本 effect 重建订阅。
   useEffect(() => {
     if (!partnerId) return;
     return subscribePartner(partnerId, todayStr);
-  }, [partnerId, todayStr, subscribePartner]);
+  }, [partnerId, todayStr, authGeneration, subscribePartner]);
+
+  // 🔔 T6.1/FIX-05：授权撤销实时感知。
+  //    对方解绑时 partner_authorizations 的 status 由 accepted 变为 revoked，
+  //    迁移 27 已把该表加入 Realtime 白名单，这里订阅并立即失效本地状态：
+  //      · clearPartner 自增授权代际 → 在途 fetch / 实时回调全部作废
+  //      · 清空 profile 缓存里的 bound_partner_id 指针
+  //    这样「双方都在前台」时也能即时看到搭子卡片消失，无需等切后台再回来。
+  useEffect(() => {
+    if (!partnerId) return;
+    return subscribeAuthorization(partnerId, () => {
+      clearPartner(partnerId);
+      setProfile(prev => {
+        if (!prev || !prev.bound_partner_id) return prev;
+        const next = { ...prev, bound_partner_id: null };
+        writeProfileCache(next);
+        return next;
+      });
+    });
+  }, [partnerId, subscribeAuthorization, clearPartner]);
 
   // 🎯 饮水写入：本地 state 立即更新（零延迟，数字不跳动）+ 云端 500ms 防抖同步
   //
@@ -314,21 +380,11 @@ export function HealthProvider({ children }) {
       let targetId = partnerId;
       if (!targetId) {
         try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('bound_partner_id')
-            .eq('id', user.id)
-            .single();
-          targetId = profile?.bound_partner_id || null;
-          if (!targetId) {
-            const { data: whoBoundMe } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('bound_partner_id', user.id)
-              .limit(1);
-            targetId = whoBoundMe?.[0]?.id || null;
-          }
-          if (targetId) setPartnerId(targetId);
+          // 🔒 走服务端权威 RPC，不再读 bound_partner_id 指针
+          const { data: activePartnerId } = await supabase.rpc('get_active_partner_id');
+          targetId = activePartnerId || null;
+          // 🛡️ T6/A06：走 bindPartner 以自增授权代际，避免旧代际在途请求写回
+          if (targetId) bindPartner(targetId);
         } catch (e) {
           console.warn('⚠️ 打卡时解析搭子 ID 失败:', e?.message ?? e);
         }
@@ -355,7 +411,7 @@ export function HealthProvider({ children }) {
       }
     }
     setSelectedMeal(null);
-  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, setPartnerId, syncToCloud, setMeals]);
+  }, [selectedMeal, mealsStatus, waterAmount, user, partnerId, bindPartner, syncToCloud, setMeals]);
 
   const undoCheck = useCallback(() => {
     if (!selectedMeal || !mealsStatus[selectedMeal]) return;
@@ -378,17 +434,25 @@ export function HealthProvider({ children }) {
     if (!user) return;
     try {
       if (!nextPartnerId) {
-        // 解绑：清空 partnerId + partnerData，首页卡片立即消失
-        clearPartner();
+        // 解绑：清空 partnerId + partnerData + 本地健康缓存镜像，首页卡片立即消失
+        // 传入旧 partnerId 以便清理其缓存键
+        clearPartner(partnerId);
+        setProfile(prev => {
+          if (!prev || !prev.bound_partner_id) return prev;
+          const next = { ...prev, bound_partner_id: null };
+          writeProfileCache(next);
+          return next;
+        });
         return;
       }
-      setPartnerId(nextPartnerId);
+      // 绑定/换绑：作废旧代际的在途请求后再拉取新搭子数据
+      bindPartner(nextPartnerId);
       const pData = await fetchPartnerRecord(nextPartnerId, getDateStr());
       if (pData) applyPartnerRecord(pData);
     } catch (e) {
       console.warn('⚠️ 刷新伴侣关系失败:', e?.message ?? e);
     }
-  }, [user, clearPartner, setPartnerId, fetchPartnerRecord, applyPartnerRecord, getDateStr]);
+  }, [user, partnerId, clearPartner, bindPartner, fetchPartnerRecord, applyPartnerRecord, getDateStr]);
 
   const updateMaxWater = useCallback((val) => { setMaxWater(val); }, [setMaxWater]);
   const updateMotto = useCallback((text) => { setMotto(text); }, [setMotto]);

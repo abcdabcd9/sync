@@ -244,19 +244,21 @@ export default function AccountInfoScreen() {
       setProfile(nextProfile);
       writeProfileCache(nextProfile);
 
-      // 伴侣昵称：两跳查询
-      if (mine.bound_partner_id) {
+      // 伴侣昵称：先由服务端权威 RPC 解析「我的有效搭子」，再取昵称
+      // 🔒 不再依赖 profiles.bound_partner_id 指针（该指针已不授予任何读取权限）
+      const { data: activePartnerId } = await supabase.rpc('get_active_partner_id');
+      if (activePartnerId) {
         const { data: partner } = await supabase
           .from('profiles')
           .select('nickname, username')
-          .eq('id', mine.bound_partner_id)
+          .eq('id', activePartnerId)
           .single();
         const partnerName = partner?.nickname || partner?.username;
         if (partnerName) {
           setBoundPartnerName(partnerName);
           writeProfileCache({
             ...nextProfile,
-            bound_partner_id: mine.bound_partner_id,
+            bound_partner_id: activePartnerId,
             bound_partner_nickname: partnerName,
           });
         } else {

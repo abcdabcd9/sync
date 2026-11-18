@@ -5,7 +5,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAppTheme } from '../context/ThemeContext';
@@ -116,22 +115,14 @@ export default function BindPartnerScreen() {
       }
 
       try {
-        const { data: profile } = await supabase.from('profiles').select('bound_partner_id').eq('id', user.id).single();
-        let currentPartnerId = profile?.bound_partner_id || null;
-
-        if (!currentPartnerId) {
-          const { data: acceptedMsgs } = await supabase.from('messages')
-            .select('receiver_id')
-            .eq('user_id', user.id)
-            .eq('subtype', 'SYNC_PARTNER_ACCEPTED')
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (acceptedMsgs && acceptedMsgs.length > 0) {
-            currentPartnerId = acceptedMsgs[0].receiver_id;
-            await supabase.from('profiles').update({ bound_partner_id: currentPartnerId }).eq('id', user.id);
-          }
+        // 🔒 授权关系以服务端 partner_authorizations 为唯一权威来源。
+        //    get_active_partner_id() 是 SECURITY DEFINER RPC，只返回「我」的有效搭子，
+        //    客户端无法伪造、也无法通过 bound_partner_id 指针越权读取他人健康数据。
+        const { data: activePartnerId, error: partnerErr } = await supabase.rpc('get_active_partner_id');
+        if (partnerErr) {
+          console.warn('⚠️ 读取有效搭子失败:', partnerErr?.message ?? partnerErr);
         }
+        const currentPartnerId = activePartnerId || null;
 
         setBoundPartnerId(currentPartnerId);
 
@@ -191,26 +182,38 @@ export default function BindPartnerScreen() {
       { text: '取消', style: 'cancel' },
       { text: '发送邀请', onPress: async () => {
           setLoading(true);
-          
-          const msgId = Crypto.randomUUID();
-          const secretText = '';
-          const secretSubtype = 'SYNC_PARTNER_INVITE';
 
-          const newMsg = { id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype, isMe: true, timestamp: Date.now() };
-
-          // ☁️ 先写云端：失败则直接中断，绝不落本地，避免产生无法撤销的"幽灵消息"
-          const { error } = await supabase.from('messages').insert({
-            id: msgId, user_id: user.id, receiver_id: friendId, type: 'text', text: secretText, subtype: secretSubtype
+          // 🔒 单次 RPC 完成「授权记录 + 邀请卡片」的原子写入。
+          //    T6.1/FIX-01：卡片不再由客户端单独 INSERT。
+          //    旧实现是「RPC 建授权 → 客户端再 INSERT 卡片」两步：
+          //      · RPC 成功但卡片 INSERT 失败 → 留下「有授权、无卡片」的孤立 pending，
+          //        对方永远看不到邀请，却占用了「同一对最多一条 pending」的唯一索引；
+          //      · 客户端可自行决定卡片 subtype，卡片与授权事实可能不一致。
+          //    现在 request_partner 在同一事务内写授权与卡片（卡片 id = 授权 id），
+          //    任一失败整体回滚，客户端无需也不允许再写 SYNC_PARTNER_* 卡片。
+          const { data: authId, error: reqError } = await supabase.rpc('request_partner', {
+            target_user_id: friendId,
           });
-
-          if (error) {
-            console.error("发送搭子卡片失败:", error);
+          if (reqError || !authId) {
+            console.error('创建搭子邀请失败:', reqError);
             setLoading(false);
-            Alert.alert('发送失败', '请检查网络后重试');
+            Alert.alert('发送失败', reqError?.message || '请检查网络后重试');
             return;
           }
 
-          // ✅ 云端成功后才写本地缓存
+          // 卡片已由服务端写入，这里只构造本地缓存条目（id 与授权记录一致）。
+          const newMsg = {
+            id: authId,
+            user_id: user.id,
+            receiver_id: friendId,
+            type: 'text',
+            text: '',
+            subtype: 'SYNC_PARTNER_INVITE',
+            isMe: true,
+            timestamp: Date.now(),
+          };
+
+          // ✅ RPC 成功后才写本地缓存
           // 🔒 M-6：Key 必须与 useChatMessages 保持一致（含当前用户 ID）
           const cacheKey = `@chatMessages_${user.id}_${friendId}`;
           const cached = await AsyncStorage.getItem(cacheKey);
