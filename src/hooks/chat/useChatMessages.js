@@ -128,10 +128,16 @@ export function useChatMessages(targetId, user) {
               if (!localMatch?.localUri) {
                 autoDownloadMediaInBackground(remoteMsg);
               }
+              // 🚨 重发修复：云端 media_url 是权威值，必须覆盖本地乐观值。
+              //    旧实现只保留 localUri，导致重发成功后本地仍持有 file:// 的 mediaUrl，
+              //    渲染层继续把本地 URI 当远程地址 → 对端/重启后不可读。
               return {
                 ...remoteMsg,
                 localUri: localMatch?.localUri || null,
                 localThumbUri: localMatch?.localThumbUri || null,
+                // 保留本地失败态标记，避免云端行存在但媒体不可读时被误判为成功
+                ...(localMatch?.status === 'failed' ? { status: 'failed' } : {}),
+                ...(localMatch?.resendBlocked ? { resendBlocked: localMatch.resendBlocked } : {}),
               };
             });
 
@@ -255,14 +261,46 @@ export function useChatMessages(targetId, user) {
   const revokeMessage = useCallback(async (id) => {
     if (!user?.id) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setMessages(prev => prev.map(m => m.id === id
-      ? { ...m, type: 'action', text: '你撤回了一条消息', mediaUrl: null, thumbnailUrl: null }
-      : m));
-    await supabase
+
+    // 保存撤回前的本地快照，失败时用于权威回滚
+    let snapshot = null;
+    setMessages(prev => {
+      snapshot = prev.find(m => m.id === id) || null;
+      return prev.map(m => m.id === id
+        ? { ...m, type: 'action', text: '你撤回了一条消息', mediaUrl: null, thumbnailUrl: null }
+        : m);
+    });
+
+    // 撤回协议必须与迁移 21 的触发器一致：
+    //   type='action' + text='撤回了一条消息' + 清空媒体
+    // 触发器按 OLD 行角色校验「发送方 + 精确文案」，不匹配即拒绝。
+    const { error } = await supabase
       .from('messages')
       .update({ type: 'action', text: '撤回了一条消息', media_url: null, thumbnail_url: null })
       .eq('id', id)
       .eq('user_id', user.id);
+
+    if (error) {
+      // 撤回失败：回滚本地乐观更新，并给出最小错误反馈
+      if (__DEV__) console.warn('[revokeMessage] 撤回失败:', error.message);
+      if (snapshot) {
+        setMessages(prev => prev.map(m => (m.id === id ? snapshot : m)));
+      }
+      // 权威刷新：从云端重新拉取该消息的真实状态，避免本地与云端长期不一致
+      try {
+        const { data } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (data) {
+          const fresh = formatDbMsg(data, user.id);
+          setMessages(prev => prev.map(m => (m.id === id ? { ...m, ...fresh } : m)));
+        }
+      } catch (_) {}
+      return { ok: false, error };
+    }
+    return { ok: true };
   }, [user]);
 
   const deleteMessage = useCallback(async (id) => {

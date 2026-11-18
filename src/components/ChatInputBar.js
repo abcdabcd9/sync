@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Animated, Keyboard, Platform,
-  StyleSheet, PanResponder, Dimensions, ScrollView, AppState, Pressable, ActivityIndicator
+  StyleSheet, PanResponder, Dimensions, ScrollView, AppState, Pressable, ActivityIndicator,
+  Alert
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -10,9 +11,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioRecorderState } from 'expo-audio';
 import { File } from 'expo-file-system';
 import { useAppTheme } from '../context/ThemeContext';
+import { supabase } from '../services/supabase';
 
-const AI_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const AI_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+// 🔒 语音转写改由受鉴权的 Edge Function 代理：
+//    客户端不再持有 Groq API Key，也不再直连 api.groq.com。
+//    服务端负责身份校验、字节/格式/时长限制、配额与超时重试。
+const TRANSCRIBE_FN = 'transcribe-audio';
 
 /** 从本地 URI 推断扩展名（expo-audio 在 iOS 产出 .m4a，Android 可能是 .m4a / .3gp / .aac） */
 const inferAudioExt = (uri) => {
@@ -43,13 +47,23 @@ const inferAudioExt = (uri) => {
  *   修复：改用 `expo-file-system` 的 `File`（`class File implements Blob`，
  *   且原生实现了 `bytes()`），直接 append 即可被 expo/fetch 正确序列化。
  */
+/** 服务端稳定错误码 → 用户可读文案（不解析上游原文） */
+const TRANSCRIBE_ERROR_TEXT = {
+  UNAUTHORIZED: '登录状态已失效，请重新登录后再试。',
+  NOT_CONFIGURED: '语音识别服务暂未配置，请联系管理员。',
+  INVALID_INPUT: '录音内容不合法，请重新录制。',
+  PAYLOAD_TOO_LARGE: '录音文件过大，请缩短录音时长。',
+  UNSUPPORTED_FORMAT: '不支持的音频格式，请重新录制。',
+  QUOTA_EXCEEDED: '识别次数已达上限，请稍后再试。',
+  QUOTA_UNAVAILABLE: '识别服务暂时不可用，请稍后再试。',
+  UPSTREAM_TIMEOUT: '识别超时，请重试。',
+  UPSTREAM_ERROR: '识别失败，请重试。',
+  INTERNAL_ERROR: '服务内部错误，请稍后再试。',
+};
+
 const transcribeAudioToText = async (audioUri) => {
   try {
     if (!audioUri) return '未获取到录音文件，请重试。';
-
-    if (!AI_API_KEY) {
-      return '未配置语音识别密钥（EXPO_PUBLIC_GROQ_API_KEY），请检查 .env 后重启开发服务器。';
-    }
 
     // 只对「裸路径」补 file://；content:// / ph:// / 已是 file:// 的一律原样使用
     let safeUri = String(audioUri).trim();
@@ -69,35 +83,29 @@ const transcribeAudioToText = async (audioUri) => {
 
     const formData = new FormData();
     formData.append('file', audioFile, `voice.${ext}`);
-    formData.append('model', 'whisper-large-v3');
-    formData.append('language', 'zh');
-    formData.append('response_format', 'json');
 
-    const response = await fetch(AI_API_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${AI_API_KEY}` },
+    // 🔒 调用受鉴权的 Edge Function：supabase.functions.invoke 会自动附带
+    //    当前会话的 access_token，服务端据此校验身份并执行配额/限制。
+    const { data, error } = await supabase.functions.invoke(TRANSCRIBE_FN, {
       body: formData,
     });
 
-    if (!response.ok) {
-      // 把服务端真实原因透出，便于定位（401 = Key 失效，400 = 音频格式/参数问题）
-      let detail = '';
+    if (error) {
+      // FunctionsHttpError 携带服务端返回的稳定错误码
+      let code = '';
       try {
-        const errText = await response.text();
-        detail = errText ? ` ${String(errText).slice(0, 120)}` : '';
+        const ctx = error.context;
+        if (ctx && typeof ctx.json === 'function') {
+          const payload = await ctx.json();
+          code = payload?.error?.code || '';
+        }
       } catch (_) {}
-      console.warn('语音识别失败:', response.status, detail);
-      if (response.status === 401 || response.status === 403) {
-        return '语音识别密钥无效，请检查 API Key。';
-      }
-      if (response.status === 429) {
-        return '识别请求过于频繁，请稍后再试。';
-      }
-      return `识别失败（${response.status}）。${detail}`.trim();
+      console.warn('语音识别失败:', code || error.message);
+      return TRANSCRIBE_ERROR_TEXT[code] || '识别失败，请重试。';
     }
 
-    const data = await response.json();
-    return (data && data.text) ? data.text : '未能识别出文字，请手动输入...';
+    const text = data && typeof data.text === 'string' ? data.text : '';
+    return text || '未能识别出文字，请手动输入...';
   } catch (error) {
     // 真正的网络/文件读取异常：把 message 透出，不再一律「网络连接异常」
     console.warn('语音识别异常:', error?.message || error);
@@ -198,6 +206,33 @@ const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRec
   const recordStateRef = useRef('normal'); 
   const [transcribedText, setTranscribedText] = useState('');
   const [isTranscribing, setIsTranscribing] = useState(false);
+
+  // 🛡️ T6/B03：转写代际令牌。
+  //    每次开始新录音 / 取消 / 关闭编辑态都会自增；在途的转写结果若代际不匹配，
+  //    说明用户已开始新一轮操作，必须丢弃，避免过期结果覆盖当前输入。
+  const transcribeGenRef = useRef(0);
+  const bumpTranscribeGen = () => {
+    transcribeGenRef.current += 1;
+    return transcribeGenRef.current;
+  };
+
+  // 🛡️ T6/B03：客户端录音时长上限（与服务端 TRANSCRIBE_MAX_DURATION_SEC 对齐）。
+  //    到达上限自动停止录音并提示，避免录出必然被服务端拒绝的超长音频。
+  //
+  // 🔒 T6.1/FIX-03：必须比服务端上限**留出余量**。
+  //    服务端 maxDurationSec = 120 是「解码后的音频时长」硬上限；
+  //    而客户端计时的是「录音墙钟时间」，编码封装（m4a 容器头/尾部、
+  //    采样对齐补齐）会让落盘文件的真实时长略大于计时值。
+  //    若两者都取 120s，恰好录满 2 分钟时文件会以 120.x 秒被服务端 413 拒绝，
+  //    用户侧表现为「录满 2 分钟必然失败」。这里取 115s，留 5s 封装余量。
+  const MAX_RECORD_MS = 115 * 1000;
+  const recordTimerRef = useRef(null);
+  const clearRecordTimer = () => {
+    if (recordTimerRef.current) {
+      clearTimeout(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+  };
 
   const cancelPillRef = useRef(null);
   const toTextPillRef = useRef(null);
@@ -309,7 +344,19 @@ const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRec
           activePanelRef.current = 'none'; setActivePanel('none'); if(onPanelVisibilityChange) onPanelVisibilityChange(false);
           Keyboard.dismiss(); Animated.spring(bottomPaddingAnim, { toValue: restingPadding, damping: 26, stiffness: 260, mass: 1, overshootClamping: true, useNativeDriver: false }).start();
         }
-        setOverlayVisible(true); setIsRecording(true); updateRecordState('normal'); callbacksRef.current.onStartRecord(); 
+        setOverlayVisible(true); setIsRecording(true); updateRecordState('normal'); callbacksRef.current.onStartRecord();
+        // 🛡️ T6/B03：新一轮录音 → 作废所有在途转写结果
+        bumpTranscribeGen();
+        // 🛡️ T6/B03：录音时长上限，到点自动取消并提示
+        clearRecordTimer();
+        recordTimerRef.current = setTimeout(() => {
+          recordTimerRef.current = null;
+          setOverlayVisible(false);
+          setIsRecording(false);
+          updateRecordState('normal');
+          callbacksRef.current.onCancelRecord();
+          Alert.alert('录音时间过长', '单次语音最长约 2 分钟，请分段录制。');
+        }, MAX_RECORD_MS);
       },
       onPanResponderMove: (evt, gestureState) => {
         const { moveX, moveY, dy } = gestureState;
@@ -331,24 +378,33 @@ const ChatInputBar = forwardRef(({ palette, isChatLoaded, onSendText, onStartRec
       },
       onPanResponderRelease: () => {
         setIsRecording(false);
+        clearRecordTimer();
         const finalState = recordStateRef.current;
         if (finalState === 'cancelling') {
+          bumpTranscribeGen();
           setOverlayVisible(false); callbacksRef.current.onCancelRecord(); updateRecordState('normal');
         } else if (finalState === 'toText') {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          try { audioRecorder.stop(); } catch(e){} 
+          try { audioRecorder.stop(); } catch(e){}
           const audioUri = audioRecorder.uri;
           updateRecordState('editingText'); setIsTranscribing(true); setTranscribedText('');
+          // 🛡️ T6/B03：快照本轮转写代际，结果回来时比对，过期则丢弃
+          const gen = bumpTranscribeGen();
           if (audioUri) {
             transcribeAudioToText(audioUri).then((text) => {
+              if (gen !== transcribeGenRef.current) return; // 已开始新一轮操作 → 丢弃
               if (recordStateRef.current === 'editingText') { setTranscribedText(text); setIsTranscribing(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); }
+            }).catch(() => {
+              if (gen !== transcribeGenRef.current) return;
+              if (recordStateRef.current === 'editingText') { setTranscribedText('识别失败，请重试。'); setIsTranscribing(false); }
             });
           } else { setIsTranscribing(false); setTranscribedText('未获取到录音文件，请重试。'); }
-        } else { 
+        } else {
+          bumpTranscribeGen();
           setOverlayVisible(false); callbacksRef.current.onStopRecord(); updateRecordState('normal');
-        } 
+        }
       },
-      onPanResponderTerminate: () => { setIsRecording(false); setOverlayVisible(false); callbacksRef.current.onCancelRecord(); updateRecordState('normal'); }
+      onPanResponderTerminate: () => { clearRecordTimer(); bumpTranscribeGen(); setIsRecording(false); setOverlayVisible(false); callbacksRef.current.onCancelRecord(); updateRecordState('normal'); }
     })
   ).current;
 

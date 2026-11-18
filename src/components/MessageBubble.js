@@ -94,25 +94,28 @@ export default React.memo(function MessageBubble({
   const { url: signedThumbUrl } = useSignedMediaUrl(needsMedia ? item.thumbnailUrl : null);
   const { url: signedAudioUrl } = useSignedMediaUrl(rawAudioPath);
 
+  // 🚨 重发修复：本地沙盒文件只用于「本机预览」，绝不能掩盖云端可读性判断。
+  //    若 item.mediaUrl 仍是本地 URI（历史脏数据 / 尚未补传成功），
+  //    则 signedMediaUrl 必然为 null，此时不应把本地 URI 当作「已发送成功」的证据。
   const rawDisplayUri = sandboxUri || item.localUri || item.uri || null;
   const displayUri = (isLocalUri(rawDisplayUri) ? normalizeFileUri(rawDisplayUri) : null)
     || signedMediaUrl
-    || item.mediaUrl
+    || (isLocalUri(item.mediaUrl) ? null : item.mediaUrl)
     || null;
 
   const rawDisplayThumbUri = sandboxThumbUri || item.localThumbUri || sandboxUri || item.localUri || item.uri || null;
   const displayThumbUri = (isLocalUri(rawDisplayThumbUri) ? normalizeFileUri(rawDisplayThumbUri) : null)
-    || item.thumbnailUrl
+    || (isLocalUri(item.thumbnailUrl) ? null : item.thumbnailUrl)
     || signedThumbUrl
     || signedMediaUrl
-    || item.mediaUrl
+    || (isLocalUri(item.mediaUrl) ? null : item.mediaUrl)
     || null;
 
   const rawVideoPosterLocal = sandboxThumbUri || item.localThumbUri || null;
   const videoPosterUri = signedThumbUrl
     || getMemoryCachedSignedUrl(item.thumbnailUrl)
     || (isLocalUri(rawVideoPosterLocal) ? normalizeFileUri(rawVideoPosterLocal) : null)
-    || item.thumbnailUrl
+    || (isLocalUri(item.thumbnailUrl) ? null : item.thumbnailUrl)
     || null;
 
   const isFailed = item.status === 'failed' || item.status === 'error';
@@ -148,11 +151,14 @@ export default React.memo(function MessageBubble({
     const isLocalFile = isLocalUri(localSandboxPath);
     const localPlayUri = isLocalFile ? normalizeFileUri(localSandboxPath) : null;
 
+    // 🚨 重发修复：云端兜底链只接受「非本地 URI」的值。
+    //    若 mediaUrl 仍是 file://（尚未补传成功），把它当云端地址会让播放器
+    //    在对方设备上直接失败（静默无声）。
     const cloudPlayUri = signedAudioUrl
       || getMemoryCachedSignedUrl(rawAudioPath)
       || signedMediaUrl
       || buildPublicStorageUrl(rawAudioPath)
-      || item.mediaUrl
+      || (isLocalUri(item.mediaUrl) ? null : item.mediaUrl)
       || null;
 
     const audioUri = localPlayUri || cloudPlayUri;

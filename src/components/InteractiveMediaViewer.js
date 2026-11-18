@@ -492,10 +492,13 @@ const GalleryItem = React.memo(function GalleryItem({ item, isActive, isZoomed, 
   //    ② instantUrl（第 0 帧同步缓存，Modal 秒开）
   //    ③ buildPublicStorageUrl(item.mediaUrl)（公共存储 URL 兜底，避免彻底打不开）
   //    ④ item.mediaUrl（历史数据可能已是完整签名 URL）
+  // 🚨 重发修复：云端兜底链只接受「非本地 URI」的值。
+  //    item.mediaUrl 若仍是 file://（尚未补传成功），它不是云端对象，
+  //    交给视频播放器会直接黑屏 / 无法打开。
   const cloudMediaUri = signedMediaUrl
     || instantUrl
     || buildPublicStorageUrl(item.mediaUrl)
-    || item.mediaUrl
+    || (isLocalUri(item.mediaUrl) ? null : item.mediaUrl)
     || null;
 
   const primaryUri = isLocalFile ? localSandboxPath : cloudMediaUri;
@@ -547,6 +550,7 @@ const GalleryItem = React.memo(function GalleryItem({ item, isActive, isZoomed, 
     || instantUrl
     || signedThumbUrl
     || buildPublicStorageUrl(item.thumbnailUrl)
+    || (isLocalUri(item.thumbnailUrl) ? null : item.thumbnailUrl)
     || null;
 
   // 🚀 0.0 秒首帧：Modal 打开瞬间就把占位图挂上去（不等签名 URL 返回）。

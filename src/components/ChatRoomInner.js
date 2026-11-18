@@ -15,12 +15,12 @@ import { useAuth } from '../hooks/useAuth';
 import { useHealthData } from '../hooks/useHealthData';
 import { useAppTheme } from '../context/ThemeContext';
 import { useChatMessages } from '../hooks/chat/useChatMessages';
-import { useMediaUpload } from '../hooks/chat/useMediaUpload';
+import { useMediaUpload, uploadToSupabase } from '../hooks/chat/useMediaUpload';
 import { useAudioRecorder } from '../hooks/chat/useAudioRecorder';
 import { useChatPrefs } from '../hooks/chat/useChatPrefs';
 import { useChatFavorites } from '../hooks/chat/useChatFavorites';
 import { getSignedUrl, toStoragePath } from '../hooks/chat/useSignedMediaUrl';
-import { downloadToSandbox, isLocalUri, normalizeFileUri } from '../services/mediaCache';
+import { downloadToSandbox, isLocalUri, normalizeFileUri, resolveLocalMedia } from '../services/mediaCache';
 import { sendPushNotification } from '../services/pushService';
 import MessageBubble from './MessageBubble';
 import ChatInputBar from './ChatInputBar';
@@ -139,38 +139,104 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
     sendPushNotification(targetId, '', text, { type: 'chat', targetId: user.id });
   }, [user, targetId, saveAndSend, patchMessage]);
 
-  // ❗ 点击红色感叹号重发：重新发送并更新云端与本地状态
+  // ❗ 点击红色感叹号重发：幂等重发（先查后插，绝不覆盖云端已有消息）
+  // 说明：authenticated 角色对 messages 表只有部分列的 UPDATE 权限，
+  // 且 PostgreSQL 的 ON CONFLICT DO UPDATE 会校验冲突分支中所有引用列的权限，
+  // 因此这里禁止使用 upsert（会因 user_id/receiver_id/subtype 无 UPDATE 权限而报 42501）。
   const handleResendMessage = useCallback(async (msg) => {
     if (!msg || !user || !targetId) return;
     patchMessage(msg.id, { status: 'sending' });
     try {
-      let mediaUrl = msg.mediaUrl || null;
-      let thumbnailUrl = msg.thumbnailUrl || null;
+      // ===== 媒体消息：重发前必须先拿到「有效的远程对象路径」 =====
+      // 铁律：messages.media_url / thumbnail_url 只允许存 Storage 相对路径，
+      //       绝不允许把 file:// / content:// 等本地 URI 落库（对端永远读不到）。
+      const isMediaMsg = msg.type === 'image' || msg.type === 'video'
+        || msg.type === 'audio' || msg.subtype === 'SYNC_AUDIO';
 
-      const localPath = msg.localUri || msg.uri;
-      if (localPath && typeof localPath === 'string' && localPath.startsWith('file://') && (!mediaUrl || mediaUrl.startsWith('file://'))) {
+      // 只接受「非本地 URI」的已有值作为可复用远程路径
+      const reusableRemote = (v) => (typeof v === 'string' && v && !isLocalUri(v) ? v : null);
+
+      let mediaUrl = reusableRemote(msg.mediaUrl) || reusableRemote(msg.remotePath);
+      let thumbnailUrl = reusableRemote(msg.thumbnailUrl) || reusableRemote(msg.remoteThumbPath);
+
+      if (isMediaMsg && !mediaUrl) {
+        // 1) 定位本地文件：内存/磁盘沙盒优先，其次消息上记录的本地 URI
+        const mediaKind = msg.type === 'video' ? 'video' : (msg.type === 'audio' ? 'audio' : 'image');
+        let localPath = null;
         try {
-          const fileExt = localPath.split('.').pop()?.split('?')[0]?.toLowerCase() || 'bin';
-          const storagePath = `${user.id}/${msg.id}.${fileExt}`;
-          const mimeType = msg.type === 'audio' || msg.subtype === 'SYNC_AUDIO'
-            ? 'audio/m4a'
-            : (msg.type === 'video' ? 'video/mp4' : 'image/jpeg');
+          localPath = await resolveLocalMedia(msg.id, mediaKind);
+        } catch (_) {}
+        if (!localPath) {
+          const candidate = msg.localUri || msg.uri;
+          if (isLocalUri(candidate)) localPath = candidate;
+        }
 
-          const { error: uploadErr } = await supabase.storage.from('chat_media').upload(storagePath, {
-            uri: localPath,
-            type: mimeType,
-            name: `${msg.id}.${fileExt}`,
-          }, { upsert: true });
+        // 2) 本地文件已丢失（系统清理临时目录 / 用户清缓存）→ 明确告知，不伪造成功
+        if (!localPath) {
+          throw new Error('MEDIA_LOCAL_MISSING');
+        }
 
-          if (!uploadErr) {
-            mediaUrl = storagePath;
+        // 3) 用与正常发送完全一致的 ArrayBuffer 上传通道补传
+        const prefix = msg.type === 'video' ? 'vid' : (msg.type === 'audio' ? 'audio' : 'img');
+        const uploaded = await uploadToSupabase(localPath, prefix, user.id);
+        if (!uploaded?.path) {
+          throw new Error('MEDIA_UPLOAD_FAILED');
+        }
+        mediaUrl = uploaded.path;
+
+        // 4) 视频/图片缩略图：本地有则一并补传；失败不影响主媒体可读性
+        if (!thumbnailUrl && (msg.type === 'video' || msg.type === 'image')) {
+          let localThumb = null;
+          try {
+            localThumb = await resolveLocalMedia(msg.id, 'thumb');
+          } catch (_) {}
+          if (!localThumb && isLocalUri(msg.localThumbUri)) localThumb = msg.localThumbUri;
+          if (localThumb) {
+            const thumbUploaded = await uploadToSupabase(localThumb, 'thumb', user.id);
+            if (thumbUploaded?.path) thumbnailUrl = thumbUploaded.path;
           }
-        } catch (_upErr) {
-          console.warn('重发补传媒体文件失败，继续尝试使用现有信息重发');
         }
       }
 
-      const { error } = await supabase.from('messages').upsert({
+      // 1) 先查云端是否已存在该 UUID（应对「请求已到达但响应丢失」的场景）
+      const { data: existing, error: selectErr } = await supabase
+        .from('messages')
+        .select('id, user_id, receiver_id, type, text, media_url, thumbnail_url, duration')
+        .eq('id', msg.id)
+        .maybeSingle();
+
+      if (selectErr) throw selectErr;
+
+      if (existing) {
+        // 2) 已存在：严格校验归属与内容，绝不篡改云端已有消息
+        const sameOwner = existing.user_id === user.id && existing.receiver_id === targetId;
+        const sameType = (existing.type || 'text') === (msg.type || 'text');
+        const sameText = (existing.text || '') === (msg.text || '');
+        if (!sameOwner || !sameType || !sameText) {
+          throw new Error('云端已存在同 ID 但内容不一致的消息，已中止重发以避免覆盖');
+        }
+        // 云端已有行：以云端 media_url 为准。若云端存的是本地 URI（历史脏数据），
+        // 则用本次补传得到的有效远程路径覆盖本地展示，但绝不写回数据库。
+        const cloudMedia = reusableRemote(existing.media_url) || mediaUrl;
+        const cloudThumb = reusableRemote(existing.thumbnail_url) || thumbnailUrl;
+        // 媒体消息若云端行没有任何可读远程路径，视为「看似成功但不可读」，保持失败态
+        if (isMediaMsg && !cloudMedia) {
+          throw new Error('MEDIA_REMOTE_INVALID');
+        }
+        patchMessage(msg.id, {
+          status: 'sent',
+          mediaUrl: cloudMedia,
+          thumbnailUrl: cloudThumb,
+          remotePath: cloudMedia,
+          remoteThumbPath: cloudThumb,
+          resendBlocked: null,
+          duration: existing.duration ?? msg.duration,
+        });
+        return;
+      }
+
+      // 3) 不存在：执行纯 INSERT（仅插入，不触发任何 UPDATE 分支）
+      const { error: insertErr } = await supabase.from('messages').insert({
         id: msg.id,
         user_id: user.id,
         receiver_id: targetId,
@@ -179,30 +245,115 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         media_url: mediaUrl,
         thumbnail_url: thumbnailUrl,
         subtype: msg.subtype || null,
-        duration: msg.duration || 0, // ⚡ 核心修复：重发时必须带上语音时长！否则数据库会覆盖为 null 导致 0 秒
+        duration: msg.duration || 0, // ⚡ 重发必须带上语音时长，否则会显示 0 秒
       });
 
-      if (error) throw error;
+      if (insertErr) {
+        // 4) 唯一键冲突（23505）：说明并发/竞态下已被写入，重新读取并校验，不重复插入
+        if (insertErr.code === '23505') {
+          const { data: raced, error: raceErr } = await supabase
+            .from('messages')
+            .select('id, user_id, receiver_id, type, text, media_url, thumbnail_url, duration')
+            .eq('id', msg.id)
+            .maybeSingle();
+          if (raceErr) throw raceErr;
+          if (!raced) throw insertErr;
+          const sameOwner = raced.user_id === user.id && raced.receiver_id === targetId;
+          const sameType = (raced.type || 'text') === (msg.type || 'text');
+          const sameText = (raced.text || '') === (msg.text || '');
+          if (!sameOwner || !sameType || !sameText) {
+            throw new Error('并发写入的消息内容不一致，已中止重发以避免覆盖');
+          }
+          const racedMedia = reusableRemote(raced.media_url) || mediaUrl;
+          const racedThumb = reusableRemote(raced.thumbnail_url) || thumbnailUrl;
+          if (isMediaMsg && !racedMedia) {
+            throw new Error('MEDIA_REMOTE_INVALID');
+          }
+          patchMessage(msg.id, {
+            status: 'sent',
+            mediaUrl: racedMedia,
+            thumbnailUrl: racedThumb,
+            remotePath: racedMedia,
+            remoteThumbPath: racedThumb,
+            resendBlocked: null,
+            duration: raced.duration ?? msg.duration,
+          });
+          return;
+        }
+        throw insertErr;
+      }
 
-      patchMessage(msg.id, { status: 'sent', mediaUrl, thumbnailUrl, duration: msg.duration });
+      // 5) 仅在确认持久化成功后标记为已发送
+      patchMessage(msg.id, {
+        status: 'sent',
+        mediaUrl,
+        thumbnailUrl,
+        remotePath: mediaUrl,
+        remoteThumbPath: thumbnailUrl,
+        resendBlocked: null,
+        duration: msg.duration,
+      });
       if (msg.type === 'text' && msg.text) {
         sendPushNotification(targetId, '', msg.text, { type: 'chat', targetId: user.id });
       }
     } catch (e) {
-      console.warn('重发依然失败，保持失败状态', e?.message ?? e);
+      const code = e?.message || '';
+      console.warn('重发依然失败，保持失败状态', code);
+      // 本地媒体文件已被系统清理：明确告知无法重发，引导重新选择/录制
+      if (code === 'MEDIA_LOCAL_MISSING') {
+        patchMessage(msg.id, {
+          status: 'failed',
+          resendBlocked: 'local_missing',
+        });
+        Alert.alert(
+          '无法重发',
+          '原始媒体文件已从本机清理，无法再次上传。请重新选择或重新录制后发送。',
+        );
+        return;
+      }
+      if (code === 'MEDIA_UPLOAD_FAILED') {
+        patchMessage(msg.id, { status: 'failed', resendBlocked: null });
+        Alert.alert('重发失败', '媒体上传未成功，请检查网络后重试。');
+        return;
+      }
+      if (code === 'MEDIA_REMOTE_INVALID') {
+        patchMessage(msg.id, { status: 'failed', resendBlocked: 'remote_invalid' });
+        Alert.alert('无法重发', '云端媒体对象不可用，请重新选择或重新录制后发送。');
+        return;
+      }
       patchMessage(msg.id, { status: 'failed' });
     }
   }, [user, targetId, patchMessage]);
 
   const handleAcceptPartner = async (msg) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const { error: bindError } = await supabase.from('profiles').update({ bound_partner_id: targetId }).eq('id', user.id);
+    // 🔒 授权关系只能由服务端 RPC 建立（partner_authorizations 表对客户端只读）。
+    //    T6/A02：卡片消息 id 即授权记录 id（bind_partner 用 request_partner 返回值作为卡片 id），
+    //    因此这里直接把 msg.id 作为 auth_id 传入，卡片与授权事实一一对应。
+    const { error: bindError } = await supabase.rpc('accept_partner_invite', {
+      auth_id: msg.id,
+    });
     if (bindError) {
       console.error('绑定健康搭子失败:', bindError);
       Alert.alert('绑定失败', '请检查网络后重试');
       return;
     }
-    await supabase.from('messages').update({ type: 'system', text: '你们已成为健康搭子！', subtype: 'SYNC_PARTNER_ACCEPTED' }).eq('id', msg.id);
+
+    // T6/A08：accept 对「过期邀请」不抛错而是把状态落库为 expired 并返回。
+    //   这里回查授权状态，区分「成功」与「已过期」，避免把过期当成绑定成功。
+    const { data: authRow } = await supabase
+      .from('partner_authorizations')
+      .select('status')
+      .eq('id', msg.id)
+      .single();
+    if (authRow?.status !== 'accepted') {
+      Alert.alert('邀请已失效', '该邀请已过期或被取消，请让对方重新发起邀请。');
+      return;
+    }
+
+    // T6.1/FIX-01：卡片 subtype 已由 accept_partner_invite 在同一事务内改为
+    //   SYNC_PARTNER_ACCEPTED，客户端不再写任何 SYNC_PARTNER_* 字段。
+    //   这里只补一条普通系统提示消息（subtype 为 NULL，属正常业务写入）。
     await supabase.from('messages').insert({ id: Crypto.randomUUID(), user_id: user.id, receiver_id: targetId, type: 'system', text: '我已同意你的健康搭子邀请，互相监督吧！' });
     sendPushNotification(targetId, '', '已同意成为你的健康搭子！', { type: 'chat', targetId: user.id });
     await refreshPartner(targetId);
@@ -210,7 +361,19 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
 
   const handleRejectPartner = async (msg) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await supabase.from('messages').update({ type: 'system', text: '已拒绝健康搭子邀请', subtype: 'SYNC_PARTNER_REJECTED' }).eq('id', msg.id);
+    // 🔒 拒绝走服务端 RPC（状态机在服务端）。
+    //    T6.1/FIX-01：卡片 subtype 由 reject_partner_invite 在同一事务内改为
+    //    SYNC_PARTNER_REJECTED。旧实现在 RPC 返回后由客户端再 UPDATE messages，
+    //    会被迁移 21 的列权限/触发器拒绝（客户端不能改 subtype），
+    //    导致卡片永远停在「待处理」。现在客户端不再直写。
+    const { error: rejectError } = await supabase.rpc('reject_partner_invite', {
+      auth_id: msg.id,
+    });
+    if (rejectError) {
+      console.error('拒绝搭子邀请失败:', rejectError);
+      Alert.alert('操作失败', '请检查网络后重试');
+      return;
+    }
   };
 
   const handleNudge = useCallback(() => {
