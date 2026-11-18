@@ -1,6 +1,6 @@
 # Real database structure (exported from the live Supabase project)
 
-[中文版](DB_SCHEMA_REFERENCE.zh.md) · [English](DB_SCHEMA_REFERENCE.en.md)
+[中文版](../DB_SCHEMA_REFERENCE.zh.md) · [English](DB_SCHEMA_REFERENCE.en.md)
 
 > Project ref: `pjiyniqtrstcpnodsnqq` (Sync, aws-0-eu-west-1)
 > How it was exported: Supabase Dashboard → SQL Editor → `information_schema.columns`
@@ -23,7 +23,7 @@ The live RLS policies contained **6 "wide open" policies** (5 with `USING (true)
 
 These 6 policies had to be dropped. Otherwise they leave unauthorized-access risk and must be treated as required fixes, not theoretical risk.
 
-> **Verified 2026-10-31: all 6 have been dropped.** Done by [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql); see section 10 for the verification results.
+> **Verified 2026-10-31: all 6 have been dropped.** Done by [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql); see section 10 for the verification results.
 
 There were also **a lot of duplicate policies** (2–3 per table per command), left over from hand-writing SQL over and over. Duplicates don't cause bugs, but they make auditing extremely painful.
 
@@ -295,10 +295,10 @@ Code-side cross-check (`grep` across all of `src/`):
 Note: **"RLS is enabled" does not mean "the data is safe"**: RLS can be on and still be completely undermined by a PERMISSIVE "wide open" policy — which is as good as off. Section 9 documents exactly that state.
 
 > **Verified 2026-10-31: the undermined state has been fixed.** Every dangerous policy listed in section 9 was dropped by
-> [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql),
+> [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql),
 > and the two "wide open" policies on the Storage side were dropped by
-> [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) and
-> [`03_聊天媒体桶私有化_private_chat_media_bucket.sql`](../supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql).
+> [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) and
+> [`03_聊天媒体桶私有化_private_chat_media_bucket.sql`](../../supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql).
 > Live verification: the `public` schema only has `profiles_select_all` left (kept on purpose, for looking people up by sync_id),
 > and there are **0** "wide open" policies on `storage.objects`.
 
@@ -316,10 +316,10 @@ Note: **"RLS is enabled" does not mean "the data is safe"**: RLS can be on and s
 | P2 | Clean up duplicate policies (keep 1 per table per command) | Makes auditing possible | Done |
 | P3 | Create a public-fields view for `profiles`, hiding `expo_push_token` / `public_key` | Shrinks the sensitive-data surface | Not done (optional) |
 
-> P0 / P1 / P2 were handled by [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql)
-> and [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql).
+> P0 / P1 / P2 were handled by [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql)
+> and [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql).
 > Live verification is in section 10.
 >
 > P3 was **deliberately** skipped: `profiles_select_all` is kept so that "look people up by sync_id" keeps working
-> (see [`src/app/chat/search.js`](../src/app/chat/search.js)). Fully hiding the sensitive fields would mean
+> (see [`src/app/chat/search.js`](../../src/app/chat/search.js)). Fully hiding the sensitive fields would mean
 > creating a separate `profiles_public` view and rewiring every read path — that's a follow-up optimisation.

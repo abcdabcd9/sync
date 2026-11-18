@@ -1,6 +1,6 @@
 # 数据库真实结构（从线上 Supabase 导出）
 
-[English](DB_SCHEMA_REFERENCE.en.md) · [中文](DB_SCHEMA_REFERENCE.zh.md)
+[English](operations/DB_SCHEMA_REFERENCE.en.md) · [中文](DB_SCHEMA_REFERENCE.zh.md)
 
 > 项目 ref：`pjiyniqtrstcpnodsnqq`（Sync，aws-0-eu-west-1）
 > 导出方式：Supabase Dashboard → SQL Editor → `information_schema.columns`

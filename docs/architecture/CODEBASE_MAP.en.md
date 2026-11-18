@@ -2,7 +2,7 @@
 
 > This document does one thing: it lays out how the repo is put together right now. What it's built with, how it's layered, how routing works, how data moves.
 >
-> It doesn't grade anything and it doesn't keep a to-do list. For "which features are still shells", see the honest list in [`README.md`](../../README.md:176). For table structures, see [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1).
+> It doesn't grade anything and it doesn't keep a to-do list. For "which features are still shells", see the honest list in [`README.md`](../../README.md:176). For table structures, see [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1).
 >
 > **How this differs from the rest of `specs/`**: those were written before the refactor and describe the target state. This one is written against the current code. When the two disagree, trust this one.
 >
@@ -58,10 +58,10 @@ There is no `ios/` or `android/` directory. The project uses CNG (Continuous Nat
 | Capability | How it's used | Key file |
 |---|---|---|
 | Auth | Email + password, session stored in SecureStore | [`src/services/supabase.js`](../../src/services/supabase.js:48) |
-| Postgres | 7 business tables + RLS | [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:32) |
+| Postgres | 7 business tables + RLS | [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:32) |
 | Storage | Private `chat_media` bucket, accessed via signed URLs | [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSignedMediaUrl.js:177) |
 | Realtime | `postgres_changes` + `broadcast` + `presence` | [`src/hooks/chat/useChatMessages.js`](../../src/hooks/chat/useChatMessages.js:58) |
-| Edge Functions | Deno, exactly one: `send-push` | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) |
+| Edge Functions | Deno, two: `send-push` (push) and `transcribe-audio` (speech transcription) | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95), [`supabase/functions/transcribe-audio/index.ts`](../../supabase/functions/transcribe-audio/index.ts:618) |
 
 ### 2.3 Client capability modules
 
@@ -92,8 +92,9 @@ All Expo official modules. No third-party native libraries except WebView and a 
 my-app/
 ├── src/                    # all application source
 ├── supabase/               # backend assets
-│   ├── functions/send-push # the only Edge Function
-│   └── migrations/         # 19 SQL migrations
+│   ├── functions/send-push # push Edge Function
+│   ├── functions/transcribe-audio # speech transcription Edge Function
+│   └── migrations/         # 29 SQL migrations
 ├── docs/                   # documentation (bilingual + specs/ design docs)
 ├── assets/                 # icons, splash screens
 ├── certs/                  # certificate notes (actual certs are gitignored)
@@ -106,7 +107,7 @@ my-app/
 
 ### 3.2 The five layers under `src/`
 
-This is the organising convention for the whole project. Diagram 4 in [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:279) draws the same thing:
+This is the organising convention for the whole project. Diagram 4 in [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:279) draws the same thing:
 
 ```
 Layer 1  Routing        src/app/            one file = one screen
@@ -147,7 +148,7 @@ Dependencies point one way: 1 → 2 → 3, and 1 → 4 → 5. The rule is that l
 
 ### 4.1 Routing model
 
-Expo Router file-based routing, rooted at `src/app/`. Three visibility rules (diagram 2 in [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:160)):
+Expo Router file-based routing, rooted at `src/app/`. Three visibility rules (diagram 2 in [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:160)):
 
 - `(tabs)/` group → shows the bottom tab bar
 - Root-level files (`settings.js` `auth.js` `chat_room.js` etc.) → full-screen push, no tab bar
@@ -378,7 +379,7 @@ Three categories, each with its own medium:
 
 ### 7.1 Table inventory
 
-Business tables that actually exist in production (authoritative source: [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:32)):
+Business tables that actually exist in production (authoritative source: [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:32)):
 
 | Table | Columns | Purpose | RLS |
 |---|---|---|---|
@@ -821,6 +822,7 @@ The design in [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSi
 | [`src/services/pushService.js`](../../src/services/pushService.js:18) | Push trigger |
 | [`src/services/mediaCache.js`](../../src/services/mediaCache.js:97) | Sandbox media cache |
 | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) | Push Edge Function |
+| [`supabase/functions/transcribe-audio/index.ts`](../../supabase/functions/transcribe-audio/index.ts:618) | Speech transcription Edge Function (Groq Whisper proxy) |
 
 ### 11.4 Database migrations
 
@@ -850,8 +852,8 @@ The design in [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSi
 
 | Document | Content |
 |---|---|
-| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | Real production schema + RLS policy overview |
-| [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) | 18 Mermaid architecture diagrams |
+| [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1) | Real production schema + RLS policy overview |
+| [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:1) | 18 Mermaid architecture diagrams |
 | [`README.md`](../../README.md:1) | Project overview + feature status list |
 | [`src/types/README.md`](../../src/types/README.md:1) | TS migration contract |
 | [`src/constants/security.js`](../../src/constants/security.js:61) | Device-side security policy constants |

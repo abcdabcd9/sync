@@ -2,7 +2,7 @@
 
 > 这份文档只做一件事：把当前仓库的代码结构摊开给你看。用了什么、怎么分层、路由怎么走、数据怎么流。
 >
-> 它不评价好坏，也不列待办。想了解「哪些功能还没做完」，看根目录 [`README.md`](../../README.md:176) 的诚实清单；想了解数据库表结构，看 [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1)。
+> 它不评价好坏，也不列待办。想了解「哪些功能还没做完」，看根目录 [`README.md`](../../README.md:176) 的诚实清单；想了解数据库表结构，看 [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1)。
 >
 > **和 `specs/` 里其他文档的区别**：那些是重构前写的目标态，这份是照着当前代码写的现状。两者对不上时，以这份为准。
 >
@@ -58,10 +58,10 @@ Sync 是一个双人向的移动应用，核心场景是「两个人一起过日
 | 能力 | 用法 | 关键文件 |
 |---|---|---|
 | Auth | 邮箱密码登录，session 存 SecureStore | [`src/services/supabase.js`](../../src/services/supabase.js:48) |
-| Postgres | 7 张业务表 + RLS | [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:32) |
+| Postgres | 7 张业务表 + RLS | [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:32) |
 | Storage | 私有桶 `chat_media`，签名 URL 访问 | [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSignedMediaUrl.js:177) |
 | Realtime | `postgres_changes` + `broadcast` + `presence` | [`src/hooks/chat/useChatMessages.js`](../../src/hooks/chat/useChatMessages.js:58) |
-| Edge Functions | Deno，只有一个 `send-push` | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) |
+| Edge Functions | Deno，两个：`send-push`（推送）、`transcribe-audio`（语音转写） | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95)、[`supabase/functions/transcribe-audio/index.ts`](../../supabase/functions/transcribe-audio/index.ts:618) |
 
 ### 2.3 客户端能力模块
 
@@ -92,8 +92,9 @@ Sync 是一个双人向的移动应用，核心场景是「两个人一起过日
 my-app/
 ├── src/                    # 全部业务源码
 ├── supabase/               # 后端资产
-│   ├── functions/send-push # 唯一的 Edge Function
-│   └── migrations/         # 19 个 SQL 迁移
+│   ├── functions/send-push # 推送 Edge Function
+│   ├── functions/transcribe-audio # 语音转写 Edge Function
+│   └── migrations/         # 29 个 SQL 迁移
 ├── docs/                   # 文档（中英双语 + specs/ 设计文档）
 ├── assets/                 # 图标、启动图
 ├── certs/                  # 证书说明（实际证书被 gitignore）
@@ -106,7 +107,7 @@ my-app/
 
 ### 3.2 `src/` 的五层
 
-这是整个项目的组织约定，[`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:279) 的图 4 画的就是这个：
+这是整个项目的组织约定，[`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:279) 的图 4 画的就是这个：
 
 ```
 第 1 层  路由层        src/app/           每个文件是一个屏幕
@@ -147,7 +148,7 @@ my-app/
 
 ### 4.1 路由模型
 
-Expo Router 的文件式路由，根目录是 `src/app/`。三层可见性规则（[`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:160) 图 2）：
+Expo Router 的文件式路由，根目录是 `src/app/`。三层可见性规则（[`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:160) 图 2）：
 
 - `(tabs)/` 分组 → 显示底部 Tab 栏
 - 根级文件（`settings.js` `auth.js` `chat_room.js` 等）→ 全屏推入，无 Tab 栏
@@ -378,7 +379,7 @@ payload 只允许 `type` / `targetId` / `targetName` 三个字段，`targetName`
 
 ### 7.1 表清单
 
-线上实际存在的业务表（以 [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:32) 为准）：
+线上实际存在的业务表（以 [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:32) 为准）：
 
 | 表 | 列数 | 用途 | RLS |
 |---|---|---|---|
@@ -821,6 +822,7 @@ documentDirectory/chat_media/
 | [`src/services/pushService.js`](../../src/services/pushService.js:18) | 推送触发 |
 | [`src/services/mediaCache.js`](../../src/services/mediaCache.js:97) | 媒体文件沙箱缓存 |
 | [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts:95) | 推送 Edge Function |
+| [`supabase/functions/transcribe-audio/index.ts`](../../supabase/functions/transcribe-audio/index.ts:618) | 语音转写 Edge Function（Groq Whisper 代理） |
 
 ### 11.4 数据库迁移
 
@@ -850,8 +852,8 @@ documentDirectory/chat_media/
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/DB_SCHEMA_REFERENCE.md`](../DB_SCHEMA_REFERENCE.md:1) | 线上数据库真实结构 + RLS 策略概览 |
-| [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) | 18 张 Mermaid 架构图 |
+| [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1) | 线上数据库真实结构 + RLS 策略概览 |
+| [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](ARCHITECTURE_DIAGRAMS.md:1) | 18 张 Mermaid 架构图 |
 | [`README.md`](../../README.md:1) | 项目说明 + 功能状态清单 |
 | [`src/types/README.md`](../../src/types/README.md:1) | TS 迁移契约 |
 | [`src/constants/security.js`](../../src/constants/security.js:61) | 设备侧安全策略常量 |

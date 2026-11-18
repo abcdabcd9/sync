@@ -79,7 +79,7 @@ git diff src/constants/       # 必须为空
 
 **核心逻辑：先定文件位置，再定文件内容。**
 
-- 阶段 A 会把 [`src/app/(tabs)/chat.js`](../src/app/%28tabs%29/chat.js:1) 拆成 `/chat/index` + `/chat/contacts` + `/chat/search` 三个文件
+- 阶段 A 会把 [`src/app/(tabs)/chat.js`](../../src/app/%28tabs%29/chat.js#L1) 拆成 `/chat/index` + `/chat/contacts` + `/chat/search` 三个文件
 - 阶段 A 还会拆放映厅和浏览器
 - **如果先做 TS 迁移，这些拆分会让迁移工作全部重做**
 
@@ -114,11 +114,11 @@ git diff src/constants/       # 必须为空
 
 写类型时对照这些真实文件，不要凭空编：
 
-- 用户 / 配对：[`src/hooks/useAuth.js`](../src/hooks/useAuth.js:1)、[`src/app/bind_partner.js`](../src/app/bind_partner.js:1)
-- 健康数据：[`src/hooks/health/useHealthStorage.js`](../src/hooks/health/useHealthStorage.js:22)（`KEYS` 常量）、[`src/hooks/useHealthData.js`](../src/hooks/useHealthData.js:1)
-- 社交：[`src/app/chat/moments.js`](../src/app/chat/moments.js:1)
-- 媒体 / 同步：[`src/hooks/useCinema.js`](../src/hooks/useCinema.js:1)、[`src/hooks/useSyncRoom.js`](../src/hooks/useSyncRoom.js:1)
-- 数据库字段：[`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1)
+- 用户 / 配对：[`src/hooks/useAuth.js`](../../src/hooks/useAuth.js#L1)、[`src/app/bind_partner.js`](../../src/app/bind_partner.js#L1)
+- 健康数据：[`src/hooks/health/useHealthStorage.js`](../../src/hooks/health/useHealthStorage.js#L22)（`KEYS` 常量）、[`src/hooks/useHealthData.js`](../../src/hooks/useHealthData.js#L1)
+- 社交：[`src/app/chat/moments.js`](../../src/app/chat/moments.js#L1)
+- 媒体 / 同步：[`src/hooks/useCinema.js`](../../src/hooks/useCinema.js#L1)、[`src/hooks/useSyncRoom.js`](../../src/hooks/useSyncRoom.js#L1)
+- 数据库字段：[`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1)
 
 ### 2.4 验收
 
@@ -189,7 +189,7 @@ npx expo install @shopify/flash-list
 
 ### 4.1 目标
 
-把 [`tsconfig.json`](../tsconfig.json:1) 从空配置改成严格模式，然后修掉所有报错。
+把 [`tsconfig.json`](../../tsconfig.json#L1) 从空配置改成严格模式，然后修掉所有报错。
 
 ### 4.2 当前状态
 
@@ -253,11 +253,11 @@ npx expo install @shopify/flash-list
 
 | 页面 | 文件 |
 |---|---|
-| 首页 | [`src/app/(tabs)/index.js`](../src/app/%28tabs%29/index.js:1) |
-| 聊天列表 | [`src/app/(tabs)/chat.js`](../src/app/%28tabs%29/chat.js:1) |
-| 聊天室 | [`src/components/ChatRoomInner.js`](../src/components/ChatRoomInner.js:84) |
-| 放映厅 | [`src/app/cinema.js`](../src/app/cinema.js:34) |
-| 浏览器 | [`src/app/browser/index.js`](../src/app/browser/index.js:35) |
+| 首页 | [`src/app/(tabs)/index.js`](../../src/app/%28tabs%29/index.js#L1) |
+| 聊天列表 | [`src/app/(tabs)/chat.js`](../../src/app/%28tabs%29/chat.js#L1) |
+| 聊天室 | [`src/components/ChatRoomInner.js`](../../src/components/ChatRoomInner.js#L84) |
+| 放映厅 | [`src/app/cinema.js`](../../src/app/cinema.js#L34) |
+| 浏览器 | [`src/app/browser/index.js`](../../src/app/browser/index.js#L35) |
 
 **TanStack Query 和手写 `useEffect` 可以共存**，不需要一次全换。剩下的页面 2028 年再改。
 
@@ -274,7 +274,7 @@ npx expo run:ios      # 必须用 development build，不能用 Expo Go
 
 ### 5.4 验收
 
-- [ ] TanStack Query 已装，`QueryClientProvider` 已挂到 [`src/app/_layout.js`](../src/app/_layout.js:63)
+- [ ] TanStack Query 已装，`QueryClientProvider` 已挂到 [`src/app/_layout.js`](../../src/app/_layout.js#L63)
 - [ ] 至少 5 个核心页面改用 `useQuery` / `useMutation`
 - [ ] 缓存失效逻辑正确（发消息后列表自动刷新）
 - [ ] `tsc --noEmit` 通过
@@ -328,7 +328,7 @@ npx expo run:ios      # 必须用 development build，不能用 Expo Go
 
 ### 7.1 先判断要不要做
 
-**当前用的是 Expo Push**（[`src/hooks/usePushNotifications.js`](../src/hooks/usePushNotifications.js:133) 的 `getExpoPushTokenAsync`）。
+**当前用的是 Expo Push**（[`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js#L133) 的 `getExpoPushTokenAsync`）。
 
 Expo Push 的局限：**App 被系统杀死后，通知可能延迟或丢失。**
 
@@ -345,8 +345,8 @@ npx expo run:ios      # 必须 development build
 
 | 文件 | 改动 |
 |---|---|
-| [`src/hooks/usePushNotifications.js`](../src/hooks/usePushNotifications.js:1) | `getExpoPushTokenAsync` → `messaging().getToken()` |
-| [`supabase/functions/send-push/index.ts`](../supabase/functions/send-push/index.ts:95) | Expo Push API → FCM HTTP v1 API |
+| [`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js#L1) | `getExpoPushTokenAsync` → `messaging().getToken()` |
+| [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts#L95) | Expo Push API → FCM HTTP v1 API |
 | `app.json` | 加 `google-services.json` / `GoogleService-Info.plist` 配置 |
 
 ### 7.3 验收
@@ -413,7 +413,7 @@ git add -A && git commit -m "阶段X: 今天做了什么"
 
 **立刻跳过，做下一项。** 不要在一个问题上耗一整天。
 
-在 `docs/DEV_LOG.md` 里记一行：
+在 `docs/development/DEV_LOG.md` 里记一行：
 
 ```markdown
 ## 2027-07-XX
@@ -457,7 +457,7 @@ git add -A && git commit -m "阶段X: 今天做了什么"
 - [ ] `types/` 目录 5 个文件完整
 - [ ] 所有改动已 commit + push
 
-**没做完的项，写进 `docs/DEV_LOG.md`，2028 年继续。**
+**没做完的项，写进 `docs/development/DEV_LOG.md`，2028 年继续。**
 
 ---
 
@@ -479,13 +479,13 @@ git add -A && git commit -m "阶段X: 今天做了什么"
 | 全局约束 / 视觉守则 / 动效规范 | 重构执行方案 PART1（内部文档，本地保管） |
 | 阶段 1–3 细则 | 重构执行方案 PART2（内部文档，本地保管） |
 | 阶段 4–7 细则 | 重构执行方案 PART3（内部文档，本地保管） |
-| 数据库字段参考 | [`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1) |
-| 历史踩坑记录 | [`docs/DEV_LOG.md`](DEV_LOG.md:1) |
-| 架构图 | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) |
+| 数据库字段参考 | [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1) |
+| 历史踩坑记录 | [`docs/development/DEV_LOG.md`](DEV_LOG.md:1) |
+| 架构图 | [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](../architecture/ARCHITECTURE_DIAGRAMS.md:1) |
 
 ## 附录 B：已知的坑（2026-11-01 之前踩过的）
 
-来源：[`docs/DEV_LOG.md`](DEV_LOG.md:1)
+来源：[`docs/development/DEV_LOG.md`](DEV_LOG.md:1)
 
 | 坑 | 根因 | 已修复 |
 |---|---|---|
@@ -496,7 +496,7 @@ git add -A && git commit -m "阶段X: 今天做了什么"
 | 横屏照片被裁切 | 图片尺寸计算 | 是 |
 | 位置卡片不即时出现 / 重新定位闪烁 | 状态更新时机 | 是 |
 
-**这些坑不要再踩一遍。** 遇到类似症状，先翻 [`docs/DEV_LOG.md`](DEV_LOG.md:1)。
+**这些坑不要再踩一遍。** 遇到类似症状，先翻 [`docs/development/DEV_LOG.md`](DEV_LOG.md:1)。
 
 ## 附录 C：当前技术债清单（2026-11-01 快照）
 

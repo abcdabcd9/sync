@@ -1,6 +1,6 @@
 # 数据库真实结构（从线上 Supabase 导出）
 
-[English](DB_SCHEMA_REFERENCE.en.md) · [中文](DB_SCHEMA_REFERENCE.zh.md)
+[English](DB_SCHEMA_REFERENCE.en.md) · [中文](../DB_SCHEMA_REFERENCE.zh.md)
 
 > 项目 ref：`pjiyniqtrstcpnodsnqq`（Sync，aws-0-eu-west-1）
 > 导出方式：Supabase Dashboard → SQL Editor → `information_schema.columns`
@@ -23,7 +23,7 @@
 
 这 6 条策略必须删除，否则会留下未授权访问风险，属于必须修复项而非理论风险。
 
-> **2026-10-31 复核：以上 6 条已全部删除。** 由 [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql) 执行，验证结果见第 10 节。
+> **2026-10-31 复核：以上 6 条已全部删除。** 由 [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql) 执行，验证结果见第 10 节。
 
 另外还有 **大量重复策略**（同一张表同一命令有 2–3 条），是历史上反复手写 SQL 留下的。重复策略不会导致错误，但会让审计变得极其困难。
 
@@ -295,10 +295,10 @@ ORDER BY c.relname;
 注意：**「RLS 已启用」≠「数据安全」**：RLS 开着但被 PERMISSIVE 的「全开」策略架空，等于没开。第 9 节记录的就是这种状态。
 
 > **2026-10-31 复核：架空问题已修复。** 第 9 节列出的危险策略已由
-> [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql) 全部删除，
+> [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql) 全部删除，
 > Storage 侧的两条「全开」策略由
-> [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) 与
-> [`03_聊天媒体桶私有化_private_chat_media_bucket.sql`](../supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql) 删除。
+> [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) 与
+> [`03_聊天媒体桶私有化_private_chat_media_bucket.sql`](../../supabase/migrations/03_聊天媒体桶私有化_private_chat_media_bucket.sql) 删除。
 > 线上验证结果：`public` schema 仅剩 `profiles_select_all`（有意保留，用于按 sync_id 搜人），
 > `storage.objects` 上「全开」策略 **0 条**。
 
@@ -316,10 +316,10 @@ ORDER BY c.relname;
 | P2 | 清理重复策略（每表每命令保留 1 条） | 便于审计 | 已完成 |
 | P3 | `profiles` 建公开字段 view，隐藏 `expo_push_token` / `public_key` | 减少敏感信息暴露面 | 未做（可选） |
 
-> P0 / P1 / P2 由 [`08_删除7条全开RLS策略_core_rls_policies.sql`](../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql)
-> 与 [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) 完成，
+> P0 / P1 / P2 由 [`08_删除7条全开RLS策略_core_rls_policies.sql`](../../supabase/migrations/08_删除7条全开RLS策略_core_rls_policies.sql)
+> 与 [`02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql`](../../supabase/migrations/02_媒体改存相对路径并收紧RLS_media_path_and_rls.sql) 完成，
 > 线上验证见第 10 节。
 >
 > P3 未做是**有意为之**：`profiles_select_all` 保留是为了让「按 sync_id 搜人」功能可用
-> （见 [`src/app/chat/search.js`](../src/app/chat/search.js)）。要彻底隐藏敏感字段，
+> （见 [`src/app/chat/search.js`](../../src/app/chat/search.js)）。要彻底隐藏敏感字段，
 > 需要额外建一个 `profiles_public` view 并改造所有读取路径，属于后续优化项。

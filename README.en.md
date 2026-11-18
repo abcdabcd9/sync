@@ -27,8 +27,8 @@ Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@
 >
 > - **The code is complete and runnable**: `npx tsc --noEmit` passes and CI is green. What's paused is "adding features", not "keeping it working".
 > - **Issues and PRs are still read**, but responses may be slow. Thanks for understanding.
-> - **Resume date**: summer 2027, with the goal of finishing phases 1–5 of [`docs/specs/`](docs/specs/) (foundation / home / space / chat / cinema + browser).
-> - **Detailed plan**: [`docs/ROADMAP_2027_SUMMER.md`](docs/ROADMAP_2027_SUMMER.md) — it lists the six phases, their durations, the risk points, and the fallback plans.
+> - **Resume date**: summer 2027, with the goal of finishing phases 1–5 of [`docs/development/ROADMAP_2027_SUMMER.md`](docs/development/ROADMAP_2027_SUMMER.md) (foundation / home / space / chat / cinema + browser).
+> - **Detailed plan**: [`docs/development/ROADMAP_2027_SUMMER.md`](docs/development/ROADMAP_2027_SUMMER.md) — it lists the six phases, their durations, the risk points, and the fallback plans.
 >
 > If you want to pick this up and continue, that roadmap is the best place to start.
 
@@ -104,9 +104,11 @@ npx supabase functions deploy send-push
 
 > Without those two files the app still runs, but it can't obtain a push token and notifications are skipped silently. For EAS cloud builds they're injected as EAS Secrets (see the comments in `.gitignore`).
 >
-> For local development, drop `google-services.json` and `GoogleService-Info.plist` into the project root (both are ignored by `.gitignore`). `app.json` no longer references these files, so their absence won't break config resolution.
+> For local development, drop `google-services.json` and `GoogleService-Info.plist` into the project root (both are ignored by `.gitignore`). Note: the current `app.json` Android config references `./google-services.json` via `android.googleServicesFile`, so Android builds require that file to exist; the iOS side does not reference `GoogleService-Info.plist` in `app.json`.
+>
+> The current `app.json` is a **development/test** configuration (package name `com.mycoupleapp.app`). Stable and development builds use different package names, so **do not use the development Firebase config for production builds**. To change native config, edit `app.json` or a config plugin — never edit the `ios/` or `android/` directories by hand.
 
-There are 19 migration scripts, numbered `01_` through `19_`. **Execute them in numeric order**:
+There are 29 migration scripts (`00000000000000_bootstrap_base_schema.sql` for the base schema plus incremental migrations `01_` through `28_`). **Execute them in numeric order**:
 
 | No. | File | Purpose |
 | --- | --- | --- |
@@ -129,10 +131,19 @@ There are 19 migration scripts, numbered `01_` through `19_`. **Execute them in 
 | 17 | `17_修复chat_media签名读取策略_fix_signed_url_select_policy.sql` | Fixes the storage read policy behind `createSignedUrl` returning `Object not found` |
 | 18 | `18_会话删除与清空RPC_delete_conversation_rpc.sql` | Adds the `delete_conversation` RPC so "delete this chat / clear chat history" actually reaches the cloud |
 | 19 | `19_会话软删除_仅删我方视角_soft_delete_conversation.sql` | Turns conversation deletion into a **one-sided soft delete**: `messages.deleted_by UUID[]` + GIN index, marking only your own side as deleted while the other party is unaffected |
+| 20 | `20_独立健康授权模型_partner_authorizations.sql` | Adds the `partner_authorizations` table; health data moves to an independent authorization model |
+| 21 | `21_消息完整性最小列权限_message_integrity.sql` | Tightens column-level privileges on `messages` to preserve message integrity |
+| 22 | `22_修复health_records更新触发器缺列_fix_touch_updated_at.sql` | Fixes the missing column in the `health_records` update trigger |
+| 23 | `23_收回匿名角色多余表权限_revoke_anon_table_grants.sql` | Revokes superfluous table grants from the `anon` role |
+| 24 | `24_语音转写配额表与原子预占RPC_transcribe_quota.sql` | Adds the transcription quota table and an atomic reservation RPC |
+| 25 | `25_收紧profiles写权限_restrict_profiles_update_columns.sql` | Restricts `profiles` write privileges down to column level |
+| 26 | `26_配额清理改为低频非阻塞_transcribe_quota_cleanup.sql` | Makes quota cleanup low-frequency and non-blocking |
+| 27 | `27_授权表加入Realtime白名单_partner_authorizations_realtime.sql` | Adds `partner_authorizations` to the Realtime allowlist |
+| 28 | `28_修正会话软删除deleted_by触发器语义_fix_deleted_by_receiver.sql` | Fixes the `deleted_by` trigger semantics for one-sided soft delete (receiver side) |
 
 > All scripts are idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`), so re-running them is safe.
 >
-> ⚠️ **Migrations 18 and 19 are replacements, not additions.** 18 implemented a physical two-sided `DELETE` (you delete it, the other party loses it too); 19 changes that to a one-sided soft delete. **A fresh database just runs 01 → 19.** On a database with existing data, running 19 overwrites the function body defined in 18 — no rollback needed.
+> ⚠️ **Migrations 18 and 19 are replacements, not additions.** 18 implemented a physical two-sided `DELETE` (you delete it, the other party loses it too); 19 changes that to a one-sided soft delete. **A fresh database just runs 01 → 28.** On a database with existing data, running 19 overwrites the function body defined in 18 — no rollback needed.
 
 Note: **`chat_media` is a Storage bucket, not a table.** The table-creation script can't create it. You need to manually create a bucket named `chat_media` in Dashboard → Storage (private is recommended; policies are in `03_聊天媒体桶私有化_private_chat_media_bucket.sql`).
 
@@ -231,8 +242,8 @@ Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list
 ### 6. Other
 
 - Simplified Chinese only for now; no i18n
-- The relation network (multiple partners, small circles) is a reserved design — the code has a feature flag constant but no implementation. The design doc is in [`docs/specs/`](docs/specs/)
-- The project uses React 19, so `npx expo lint` reports 136 problems (112 errors / 24 warnings), almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
+- The relation network (multiple partners, small circles) is a reserved design — the code has a feature flag constant but no implementation. See the architecture notes in [`docs/architecture/CODEBASE_MAP.md`](docs/architecture/CODEBASE_MAP.md)
+- The project uses React 19, so `npx expo lint` reports 144 problems (119 errors / 25 warnings), almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
 - No end-to-end encryption (honestly disclosed in `src/constants/security.js`)
 - Account deletion depends on the `delete_my_account` RPC, which is provided by `09_补齐缺失RPC函数_missing_rpcs.sql`, so the deletion flow works
 
@@ -243,7 +254,7 @@ Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list
 Issues and pull requests are welcome. Two things to read before you touch anything:
 
 - [`AGENTS.md`](AGENTS.md): hard rules around Expo versions (don't write Expo APIs from memory — check the docs for the matching version first), the command list, and routing conventions
-- [`docs/README.en.md`](docs/README.en.md): the documentation index. Read [`docs/DB_SCHEMA_REFERENCE.en.md`](docs/DB_SCHEMA_REFERENCE.en.md) before changing the database
+- [`docs/README.en.md`](docs/README.en.md): the documentation index. Read [`docs/operations/DB_SCHEMA_REFERENCE.en.md`](docs/operations/DB_SCHEMA_REFERENCE.en.md) before changing the database
 
 If you're looking for a place to start, every item in the "What doesn't work yet" section above is a known gap — pick any of them. Before submitting, run:
 
@@ -252,7 +263,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` currently reports 136 problems (112 errors / 24 warnings). They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
+`npx expo lint` currently reports 144 problems (119 errors / 25 warnings, measured 2026-11-18). They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
 
 ---
 
@@ -262,7 +273,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 
 **Database layer**
 
-- **19 Supabase migration scripts**, replayable in order from table creation through RLS hardening
+- **29 Supabase migration scripts** (bootstrap + `01_`–`28_`), replayable in order from table creation through RLS hardening
 - **All 7 core tables have RLS enabled**: `profiles`, `messages`, `friends`, `friend_requests`, `health_records`, `moments`, `complaints` — not a single one is left open
 - Policies aren't just "allow everything": only the receiver can approve a friend request (no self-approval), health record writes carry `WITH CHECK (auth.uid() = user_id)` (no forging), and moments are filtered by `visibility`
 - **Every `SECURITY DEFINER` function pins `search_path`** and is restricted to `authenticated` only — this is the classic PostgreSQL privilege-escalation vector, and [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) exists specifically to fix it
@@ -298,7 +309,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 - GitHub: [@abcdabcd9](https://github.com/abcdabcd9)
 - Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-I built this end to end on my own — database schema, the 19 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
+I built this end to end on my own — database schema, the 29 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
 
 ---
 

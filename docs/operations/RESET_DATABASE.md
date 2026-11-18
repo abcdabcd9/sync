@@ -1,6 +1,6 @@
 # 数据库彻底重置（清空所有测试数据）
 
-[English](RESET_DATABASE.en.md) · [中文](RESET_DATABASE.zh.md)
+[English](RESET_DATABASE.en.md) · [中文](../RESET_DATABASE.zh.md)
 
 > 用途：把 Supabase 项目恢复到「零数据」状态，但**保留表结构、RLS 策略、触发器、RPC**。
 > 执行位置：Supabase Dashboard → SQL Editor

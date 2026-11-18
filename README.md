@@ -27,8 +27,8 @@
 >
 > - **代码是完整的、能跑的**，`npx tsc --noEmit` 通过，CI 是绿的。暂停的是「继续加功能」，不是「维护可用性」。
 > - **Issue 和 PR 仍然会看**，但响应可能慢，请见谅。
-> - **恢复时间**：2027 年暑假，计划完成 [`docs/specs/`](docs/specs/) 里的阶段 1–5（地基 / 首页 / 空间 / 聊天 / 放映厅+浏览器）。
-> - **详细计划**：[`docs/ROADMAP_2027_SUMMER.md`](docs/ROADMAP_2027_SUMMER.md) —— 里面有六个阶段的顺序、工期、风险点和降级方案。
+> - **恢复时间**：2027 年暑假，计划完成 [`docs/development/ROADMAP_2027_SUMMER.md`](docs/development/ROADMAP_2027_SUMMER.md) 里的阶段 1–5（地基 / 首页 / 空间 / 聊天 / 放映厅+浏览器）。
+> - **详细计划**：[`docs/development/ROADMAP_2027_SUMMER.md`](docs/development/ROADMAP_2027_SUMMER.md) —— 里面有六个阶段的顺序、工期、风险点和降级方案。
 >
 > 如果你现在想接手继续做，上面那份路线图就是最好的起点。
 
@@ -104,9 +104,11 @@ npx supabase functions deploy send-push
 
 > 没有这两个文件，App 能跑，但拿不到推送 Token，推送会静默跳过。EAS 云端构建时通过 EAS Secret 注入（见 `.gitignore` 里的注释）。
 >
-> 本地开发时把 `google-services.json` 与 `GoogleService-Info.plist` 放到项目根目录（已在 `.gitignore` 中忽略）。`app.json` 不再引用这两个文件，因此缺少它们也不会导致配置解析失败。
+> 本地开发时把 `google-services.json` 与 `GoogleService-Info.plist` 放到项目根目录（已在 `.gitignore` 中忽略）。注意：当前 `app.json` 的 Android 配置通过 `android.googleServicesFile` 引用了 `./google-services.json`，因此 Android 构建需要该文件存在；iOS 侧未在 `app.json` 中引用 `GoogleService-Info.plist`。
+>
+> 当前 `app.json` 是**开发/测试版**配置（包名 `com.mycoupleapp.app`）。正式版与开发版使用不同的包名，**不要把开发版的 Firebase 配置用于生产构建**。如需调整原生配置，请修改 `app.json` 或 config plugin，不要手动改动 `ios/`、`android/` 目录。
 
-迁移脚本共 19 个，文件名以 `01_` ~ `19_` 编号，**按编号顺序执行**：
+迁移脚本共 29 个（`00000000000000_bootstrap_base_schema.sql` 建基础结构 + `01_` ~ `28_` 增量迁移），**按编号顺序执行**：
 
 | 编号 | 文件 | 作用 |
 | --- | --- | --- |
@@ -129,10 +131,19 @@ npx supabase functions deploy send-push
 | 17 | `17_修复chat_media签名读取策略_fix_signed_url_select_policy.sql` | 修复 `createSignedUrl` 返回 `Object not found` 的存储读取策略问题 |
 | 18 | `18_会话删除与清空RPC_delete_conversation_rpc.sql` | 新增 `delete_conversation` RPC，让「删除该聊天 / 清空聊天记录」真正落到云端 |
 | 19 | `19_会话软删除_仅删我方视角_soft_delete_conversation.sql` | 把会话删除改为**单边软删除**：`messages.deleted_by UUID[]` + GIN 索引，只标记我方已删，对方不受影响 |
+| 20 | `20_独立健康授权模型_partner_authorizations.sql` | 新增 `partner_authorizations` 表，健康数据改为独立授权模型 |
+| 21 | `21_消息完整性最小列权限_message_integrity.sql` | 收紧 `messages` 列级权限，保证消息完整性 |
+| 22 | `22_修复health_records更新触发器缺列_fix_touch_updated_at.sql` | 修复 `health_records` 更新触发器缺列问题 |
+| 23 | `23_收回匿名角色多余表权限_revoke_anon_table_grants.sql` | 收回 `anon` 角色多余的表权限 |
+| 24 | `24_语音转写配额表与原子预占RPC_transcribe_quota.sql` | 新增语音转写配额表与原子预占 RPC |
+| 25 | `25_收紧profiles写权限_restrict_profiles_update_columns.sql` | 收紧 `profiles` 写权限到列级 |
+| 26 | `26_配额清理改为低频非阻塞_transcribe_quota_cleanup.sql` | 配额清理改为低频非阻塞执行 |
+| 27 | `27_授权表加入Realtime白名单_partner_authorizations_realtime.sql` | 把 `partner_authorizations` 加入 Realtime 白名单 |
+| 28 | `28_修正会话软删除deleted_by触发器语义_fix_deleted_by_receiver.sql` | 修正会话软删除 `deleted_by` 触发器语义（接收方视角） |
 
 > 全部脚本都是幂等的（`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`），重复跑不会出问题。
 >
-> ⚠️ **迁移 18 与 19 是替代关系，不是叠加关系。** 18 实现的是物理双向 `DELETE`（我删了对方也没了），19 把它改成单边软删除。**新库直接跑 01 → 19 即可**；已有数据的库跑完 19 后，18 定义的旧函数体会被 19 覆盖，无需回滚。
+> ⚠️ **迁移 18 与 19 是替代关系，不是叠加关系。** 18 实现的是物理双向 `DELETE`（我删了对方也没了），19 把它改成单边软删除。**新库直接跑 01 → 28 即可**；已有数据的库跑完 19 后，18 定义的旧函数体会被 19 覆盖，无需回滚。
 
 注意：**`chat_media` 是 Storage 桶，不是表。** 建表脚本建不出来，需要在 Dashboard → Storage 里手动建一个名为 `chat_media` 的桶（建议设为 private，策略见 `03_聊天媒体桶私有化_private_chat_media_bucket.sql`）。
 
@@ -231,8 +242,8 @@ supabase/
 ### 6. 其他
 
 - 目前只有简体中文，多语言没做
-- 关系网络（多搭子、小圈子）是预留设计，代码里有开关常量但没实现，设计文档在 [`docs/specs/`](docs/specs/) 里
-- 项目用 React 19，`npx expo lint` 会报 136 个问题（112 error / 24 warning），基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
+- 关系网络（多搭子、小圈子）是预留设计，代码里有开关常量但没实现，架构说明见 [`docs/architecture/CODEBASE_MAP.md`](docs/architecture/CODEBASE_MAP.md)
+- 项目用 React 19，`npx expo lint` 会报 144 个问题（119 error / 25 warning），基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
 - 端到端加密没做（`src/constants/security.js` 里有诚实披露）
 - 注销账号依赖的 `delete_my_account` RPC，已在 `09_补齐缺失RPC函数_missing_rpcs.sql` 中补齐，注销流程可用
 
@@ -243,7 +254,7 @@ supabase/
 提 Issue 或 PR 都欢迎。动手之前先看两件事：
 
 - [`AGENTS.md`](AGENTS.md)：Expo 版本相关的硬性约定（不要凭记忆写 Expo API，先查对应版本的文档）、命令清单、路由规范
-- [`docs/README.md`](docs/README.md)：文档索引，改数据库前先读 [`docs/DB_SCHEMA_REFERENCE.md`](docs/DB_SCHEMA_REFERENCE.md)
+- [`docs/README.md`](docs/README.md)：文档索引，改数据库前先读 [`docs/operations/DB_SCHEMA_REFERENCE.md`](docs/operations/DB_SCHEMA_REFERENCE.md)
 
 想找切入点的话，上面「还不能用的功能」那一节列的都是已知缺口，随便挑一个都行。提交前请跑一遍：
 
@@ -252,7 +263,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` 目前有 136 个问题（112 error / 24 warning），是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
+`npx expo lint` 目前有 144 个问题（119 error / 25 warning，统计于 2026-11-18），是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
 
 ---
 
@@ -262,7 +273,7 @@ npx expo lint
 
 **数据库层**
 
-- **19 个 Supabase 迁移脚本**，从建表到 RLS 加固，按编号顺序可完整重放
+- **29 个 Supabase 迁移脚本**（bootstrap + `01_`~`28_`），从建表到 RLS 加固，按编号顺序可完整重放
 - **7 张核心表全部启用 RLS**：`profiles`、`messages`、`friends`、`friend_requests`、`health_records`、`moments`、`complaints`，没有一张表是裸奔的
 - 策略不是「全开」了事：好友申请只有接收方能审批（防自发自批）、健康记录写入带 `WITH CHECK (auth.uid() = user_id)`（防伪造）、动态按 `visibility` 分级可见
 - **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行，遵循 PostgreSQL 安全最佳实践（见 [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql)）
@@ -298,7 +309,7 @@ npx expo lint
 - GitHub：[@abcdabcd9](https://github.com/abcdabcd9)
 - 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 19 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
+这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 29 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
 
 ---
 

@@ -79,7 +79,7 @@ Phase E (FCM, needs a real device)
 
 **Core logic: decide where files live first, then decide what goes inside them.**
 
-- Phase A splits [`src/app/(tabs)/chat.js`](../src/app/%28tabs%29/chat.js:1) into `/chat/index` + `/chat/contacts` + `/chat/search`
+- Phase A splits [`src/app/(tabs)/chat.js`](../../src/app/%28tabs%29/chat.js#L1) into `/chat/index` + `/chat/contacts` + `/chat/search`
 - Phase A also splits the cinema and browser pages
 - **If you do the TS migration first, all of those splits force you to redo the migration**
 
@@ -114,11 +114,11 @@ Create a `types/` directory at the project root. Write interface definitions onl
 
 Write the types against these real files — do not invent them:
 
-- User / pairing: [`src/hooks/useAuth.js`](../src/hooks/useAuth.js:1), [`src/app/bind_partner.js`](../src/app/bind_partner.js:1)
-- Health data: [`src/hooks/health/useHealthStorage.js`](../src/hooks/health/useHealthStorage.js:22) (the `KEYS` constant), [`src/hooks/useHealthData.js`](../src/hooks/useHealthData.js:1)
-- Social: [`src/app/chat/moments.js`](../src/app/chat/moments.js:1)
-- Media / sync: [`src/hooks/useCinema.js`](../src/hooks/useCinema.js:1), [`src/hooks/useSyncRoom.js`](../src/hooks/useSyncRoom.js:1)
-- Database columns: [`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1)
+- User / pairing: [`src/hooks/useAuth.js`](../../src/hooks/useAuth.js#L1), [`src/app/bind_partner.js`](../../src/app/bind_partner.js#L1)
+- Health data: [`src/hooks/health/useHealthStorage.js`](../../src/hooks/health/useHealthStorage.js#L22) (the `KEYS` constant), [`src/hooks/useHealthData.js`](../../src/hooks/useHealthData.js#L1)
+- Social: [`src/app/chat/moments.js`](../../src/app/chat/moments.js#L1)
+- Media / sync: [`src/hooks/useCinema.js`](../../src/hooks/useCinema.js#L1), [`src/hooks/useSyncRoom.js`](../../src/hooks/useSyncRoom.js#L1)
+- Database columns: [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1)
 
 ### 2.4 Acceptance
 
@@ -189,7 +189,7 @@ npx expo install @shopify/flash-list
 
 ### 4.1 Goal
 
-Turn [`tsconfig.json`](../tsconfig.json:1) from an empty config into strict mode, then fix every error.
+Turn [`tsconfig.json`](../../tsconfig.json#L1) from an empty config into strict mode, then fix every error.
 
 ### 4.2 Current state
 
@@ -253,11 +253,11 @@ Turn [`tsconfig.json`](../tsconfig.json:1) from an empty config into strict mode
 
 | Page | File |
 |---|---|
-| Home | [`src/app/(tabs)/index.js`](../src/app/%28tabs%29/index.js:1) |
-| Chat list | [`src/app/(tabs)/chat.js`](../src/app/%28tabs%29/chat.js:1) |
-| Chat room | [`src/components/ChatRoomInner.js`](../src/components/ChatRoomInner.js:84) |
-| Cinema | [`src/app/cinema.js`](../src/app/cinema.js:34) |
-| Browser | [`src/app/browser/index.js`](../src/app/browser/index.js:35) |
+| Home | [`src/app/(tabs)/index.js`](../../src/app/%28tabs%29/index.js#L1) |
+| Chat list | [`src/app/(tabs)/chat.js`](../../src/app/%28tabs%29/chat.js#L1) |
+| Chat room | [`src/components/ChatRoomInner.js`](../../src/components/ChatRoomInner.js#L84) |
+| Cinema | [`src/app/cinema.js`](../../src/app/cinema.js#L34) |
+| Browser | [`src/app/browser/index.js`](../../src/app/browser/index.js#L35) |
 
 **TanStack Query and hand-written `useEffect` can coexist** — you do not have to convert everything at once. Convert the rest in 2028.
 
@@ -274,7 +274,7 @@ If you don't want to deal with development builds, **MMKV can be skipped entirel
 
 ### 5.4 Acceptance
 
-- [ ] TanStack Query installed, `QueryClientProvider` mounted in [`src/app/_layout.js`](../src/app/_layout.js:63)
+- [ ] TanStack Query installed, `QueryClientProvider` mounted in [`src/app/_layout.js`](../../src/app/_layout.js#L63)
 - [ ] At least 5 core pages use `useQuery` / `useMutation`
 - [ ] Cache invalidation works correctly (list refreshes automatically after sending a message)
 - [ ] `tsc --noEmit` passes
@@ -328,7 +328,7 @@ If you don't want to deal with development builds, **MMKV can be skipped entirel
 
 ### 7.1 Decide whether to do it at all
 
-**The project currently uses Expo Push** ([`src/hooks/usePushNotifications.js`](../src/hooks/usePushNotifications.js:133), `getExpoPushTokenAsync`).
+**The project currently uses Expo Push** ([`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js#L133), `getExpoPushTokenAsync`).
 
 Expo Push's limitation: **when the app is killed by the OS, notifications may be delayed or dropped.**
 
@@ -345,8 +345,8 @@ Files to change:
 
 | File | Change |
 |---|---|
-| [`src/hooks/usePushNotifications.js`](../src/hooks/usePushNotifications.js:1) | `getExpoPushTokenAsync` → `messaging().getToken()` |
-| [`supabase/functions/send-push/index.ts`](../supabase/functions/send-push/index.ts:95) | Expo Push API → FCM HTTP v1 API |
+| [`src/hooks/usePushNotifications.js`](../../src/hooks/usePushNotifications.js#L1) | `getExpoPushTokenAsync` → `messaging().getToken()` |
+| [`supabase/functions/send-push/index.ts`](../../supabase/functions/send-push/index.ts#L95) | Expo Push API → FCM HTTP v1 API |
 | `app.json` | Add `google-services.json` / `GoogleService-Info.plist` config |
 
 ### 7.3 Acceptance
@@ -413,7 +413,7 @@ PhaseD: migrate 9 files in src/constants/ to TS
 
 **Skip it immediately and move to the next item.** Do not burn a whole day on one problem.
 
-Write one line in `docs/DEV_LOG.md`:
+Write one line in `docs/development/DEV_LOG.md`:
 
 ```markdown
 ## 2027-07-XX
@@ -457,7 +457,7 @@ You have met the summer goal only when all of these are true:
 - [ ] All 5 files in `types/` complete
 - [ ] All changes committed + pushed
 
-**Anything unfinished goes into `docs/DEV_LOG.md` and continues in 2028.**
+**Anything unfinished goes into `docs/development/DEV_LOG.md` and continues in 2028.**
 
 ---
 
@@ -479,13 +479,13 @@ You have met the summer goal only when all of these are true:
 | Global constraints / visual rules / motion spec | Execution plan PART1 (internal document, kept locally) |
 | Phases 1–3 details | Execution plan PART2 (internal document, kept locally) |
 | Phases 4–7 details | Execution plan PART3 (internal document, kept locally) |
-| Database column reference | [`docs/DB_SCHEMA_REFERENCE.md`](DB_SCHEMA_REFERENCE.md:1) |
-| Historical pitfall log | [`docs/DEV_LOG.md`](DEV_LOG.md:1) |
-| Architecture diagrams | [`docs/specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md`](specs/SYNC_APP_ARCHITECTURE_DIAGRAMS.md:1) |
+| Database column reference | [`docs/operations/DB_SCHEMA_REFERENCE.md`](../operations/DB_SCHEMA_REFERENCE.md:1) |
+| Historical pitfall log | [`docs/development/DEV_LOG.md`](DEV_LOG.md:1) |
+| Architecture diagrams | [`docs/architecture/ARCHITECTURE_DIAGRAMS.md`](../architecture/ARCHITECTURE_DIAGRAMS.md:1) |
 
 ## Appendix B: Known pitfalls (hit before 2026-11-01)
 
-Source: [`docs/DEV_LOG.md`](DEV_LOG.md:1)
+Source: [`docs/development/DEV_LOG.md`](DEV_LOG.md:1)
 
 | Pitfall | Root cause | Fixed |
 |---|---|---|
@@ -496,7 +496,7 @@ Source: [`docs/DEV_LOG.md`](DEV_LOG.md:1)
 | Landscape photos get cropped | Image dimension calculation | Yes |
 | Location card doesn't appear immediately / flickers on re-locate | State update timing | Yes |
 
-**Do not step on these again.** If you see similar symptoms, check [`docs/DEV_LOG.md`](DEV_LOG.md:1) first.
+**Do not step on these again.** If you see similar symptoms, check [`docs/development/DEV_LOG.md`](DEV_LOG.md:1) first.
 
 ## Appendix C: Current tech debt (2026-11-01 snapshot)
 
