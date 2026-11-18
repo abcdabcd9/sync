@@ -9,6 +9,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useBrowserSession } from '../../context/BrowserSessionContext';
 import { useCinema } from '../../hooks/useCinema';
+import { useAuth } from '../../hooks/useAuth';
 
 // 🧩 领域 Hook（阶段 2~5 抽离）
 import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
@@ -35,6 +36,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 // 浏览器主页：WebView 主体 + 嗅探投屏；历史/书签已拆为独立页
 export default function BrowserScreen() {
   const { isDark, colors: palette } = useAppTheme();
+  const { user, authEpoch } = useAuth();
   const params = useLocalSearchParams();
   const { loadUrl, emitCommand } = useCinema();
   const { pendingUrl, pendingSeq, consumePendingUrl, lastUrl, rememberUrl } = useBrowserSession();
@@ -71,10 +73,11 @@ export default function BrowserScreen() {
   }, [menuAnim]);
 
   // 🕘 历史记录 + 🏷️ 书签收藏（阶段 2）
+  //    🆔 B1-C：传入当前 userId，实现按账号隔离
   const {
     historyList, addHistory,
     bookmarksList, toggleBookmark, isBookmarked,
-  } = useBrowserHistory();
+  } = useBrowserHistory(user?.id ?? null, authEpoch);
 
   // 🎬 视频嗅探核心（阶段 3）
   //    🔇 静默嗅探：未命中时零反馈；命中时由 onMediaFound 自动弹出选择播放源窗口

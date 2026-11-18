@@ -39,6 +39,17 @@ const USER_SCOPED_KEY_PREFIXES = [
   'sync_chat_prefs_v1_',     // 会话级偏好：置顶/隐藏/免打扰/星标/拉黑/背景（useChatPrefs）
 ];
 
+// 🆔 TASK-P0.3 / B1-F：V2 用户作用域 key 前缀（user.id 位于末尾）
+//    ⚠️ 必须精确匹配「当前用户」的命名空间，绝不能按前缀一刀切删除，
+//       否则会把其他账号的 V2 健康/浏览器/资料缓存一并清掉。
+const USER_SCOPED_V2_KEY_PREFIXES = [
+  '@sync_health_v2_',            // 健康本地数据（useHealthStorage）
+  '@sync_browser_history_v2_',   // 浏览历史（useBrowserHistory）
+  '@sync_browser_bookmarks_v2_', // 书签（useBrowserHistory）
+  '@sync_browser_bookmarks_seed_v2_', // 书签种子版本（useBrowserHistory）
+  '@user_profile_cache_v2_',     // 个人资料缓存（useProfileCache）
+];
+
 // 🧹 M-6：聊天消息缓存的「用户维度」前缀（user.id 位于中间，后接对方 ID）
 //    改造后 Key 形如 @chatMessages_<userId>_<targetId>，
 //    因此不能再用 startsWith 匹配，需用 includes 判断 user.id 是否在 Key 中。
@@ -48,17 +59,39 @@ const USER_SCOPED_CHAT_CACHE_PREFIXES = [
 ];
 
 // 🚫 绝对不能删除的「全局 / 设备级」key（多账号共享或与账号无关）
+//
+// 🆔 B1-F 说明：
+//   · 旧全局健康 key（@water / @meals / ...）与旧全局浏览器 key
+//     （@browser_history / @browser_bookmarks）属于「无主历史数据」，
+//     按 P2 / P3 决策原地保留、绝不删除，因此继续列入全局白名单。
+//   · 新 V2 用户作用域 key 不在此列，由 USER_SCOPED_V2_KEY_PREFIXES 精确匹配。
 const GLOBAL_KEY_PREFIXES = [
   '@app_known_accounts', // 本机多账号档案
   '@app_theme_mode',     // 全局主题
   '@app_settings',       // 全局偏好设置
   '@sync_device_id',     // 放映室设备 ID
-  '@water', '@meals', '@maxWater', '@motto', '@mealGuides', // 健康数据
+  '@water', '@meals', '@maxWater', '@motto', '@mealGuides', // 健康数据（旧全局，保留）
   '@streak', '@lastCheckIn', '@lastActive',
-  '@browser_bookmarks', '@browser_history', // 浏览器书签/历史
+  '@browser_bookmarks', '@browser_history', // 浏览器书签/历史（旧全局，保留）
 ];
 
 const isGlobalKey = (key) => GLOBAL_KEY_PREFIXES.some((p) => key.startsWith(p));
+
+/**
+ * 🆔 B1-F：判断 key 是否属于「当前用户」的 V2 命名空间。
+ * 形如 `@sync_health_v2_<userId>_water` / `@sync_browser_history_v2_<userId>`。
+ * 必须同时满足：命中 V2 前缀 + 以 `_${userId}` 或 `_${userId}_` 结尾/分隔，
+ * 确保不会误删其他账号的 V2 key。
+ */
+const isCurrentUserV2Key = (key, userId) => {
+  if (!userId) return false;
+  return USER_SCOPED_V2_KEY_PREFIXES.some((prefix) => {
+    if (!key.startsWith(prefix)) return false;
+    const rest = key.slice(prefix.length);
+    // 健康 key：`${userId}_water`；浏览器/资料 key：`${userId}`
+    return rest === userId || rest.startsWith(`${userId}_`);
+  });
+};
 
 // 🧹 M-6：判断是否为「当前用户」的聊天缓存
 //    Key 格式：@chatMessages_<userId>_<targetId> / @deletedMsgIds_<userId>_<targetId>
@@ -95,6 +128,14 @@ const clearCurrentUserLocalState = async (userId) => {
     allKeys.forEach((key) => {
       if (!key.includes(userId)) return;
       if (isGlobalKey(key)) return; // 全局 key 绝不删除
+      // 🆔 B1-F：V2 用户作用域 key 必须精确匹配当前用户命名空间，
+      //    防止「恰好包含该 id 字符串」的其他账号 key 被误删。
+      if (
+        USER_SCOPED_V2_KEY_PREFIXES.some((p) => key.startsWith(p)) &&
+        !isCurrentUserV2Key(key, userId)
+      ) {
+        return;
+      }
       // 聊天缓存需额外确认前缀，避免误删「恰好包含该 id 字符串」的其他 key
       if (
         USER_SCOPED_CHAT_CACHE_PREFIXES.some((p) => key.startsWith(p)) &&

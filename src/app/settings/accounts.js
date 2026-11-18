@@ -76,7 +76,16 @@ export default function AccountsSettingsScreen() {
           onPress: async () => {
             setSwitchingId(account.id);
             try {
-              await signOut();
+              // 🛡️ B1-A：signOut 失败时返回 { error }，绝不跳转登录页 / 不得切到 B
+              const { error } = await signOut();
+              if (error) {
+                haptic.error();
+                Alert.alert(
+                  '切换失败',
+                  `未能安全退出当前账号（${error.code || 'UNKNOWN'}），已取消切换。\n请检查网络或设备安全存储后重试。`
+                );
+                return;
+              }
               haptic.success();
               // 🔒 L-4：不再携带明文邮箱参数，用户自行输入
               router.replace('/auth');
@@ -123,7 +132,15 @@ export default function AccountsSettingsScreen() {
           text: '去登录',
           onPress: async () => {
             try {
-              await signOut();
+              // 🛡️ B1-A：登出失败不得跳转登录页
+              const { error } = await signOut();
+              if (error) {
+                Alert.alert(
+                  '操作失败',
+                  `未能安全退出当前账号（${error.code || 'UNKNOWN'}）。\n请检查网络或设备安全存储后重试。`
+                );
+                return;
+              }
               router.replace('/auth');
             } catch (e) {
               console.warn('⚠️ 前往登录失败:', e?.message ?? e);

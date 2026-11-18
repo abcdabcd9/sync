@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import { useHealthData } from '../hooks/useHealthData';
-import { PROFILE_CACHE_KEY } from '../hooks/profile/useProfileCache';
+import { buildProfileCacheKey } from '../hooks/profile/useProfileCache';
 import { supabase } from '../services/supabase';
 import { sendPushNotification } from '../services/pushService';
 
@@ -66,9 +66,11 @@ export default function BindPartnerScreen() {
         hasLocalData = true;
       }
 
-      // 1️⃣-b 全局伴侣 ID 兜底：再读 @user_profile_cache 中的 bound_partner_id（零网络）
+      // 1️⃣-b 全局伴侣 ID 兜底：再读当前账号的 V2 profile 缓存中的 bound_partner_id（零网络）
+      //      🆔 B1-D：key 已改为 @user_profile_cache_v2_${user.id}，不再读取旧全局 key
       try {
-        const profileRaw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+        const profileCacheKey = buildProfileCacheKey(user.id);
+        const profileRaw = profileCacheKey ? await AsyncStorage.getItem(profileCacheKey) : null;
         if (profileRaw) {
           const cachedProfile = JSON.parse(profileRaw);
           // 缓存归属校验：只认当前登录用户自己的资料，避免换号后串数据

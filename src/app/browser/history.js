@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useBrowserSession } from '../../context/BrowserSessionContext';
+import { useAuth } from '../../hooks/useAuth';
 import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
 import EmptyState from '../../components/ui/EmptyState';
 import { haptic } from '../../constants/haptics';
@@ -16,7 +17,10 @@ import { ellipsisMiddle, formatHistoryTime, isSafeUrl } from '../../constants/br
 // 浏览历史独立页：点击回浏览器加载 / 单条删除 / 一键清空
 export default function BrowserHistory() {
   const { colors } = useAppTheme();
-  const { historyList, deleteHistory, clearHistory } = useBrowserHistory();
+  const { user, authEpoch } = useAuth();
+  // 🆔 B1-C：按账号隔离读取历史
+  // 🛡️ 14-03：传入 authEpoch，使旧会话（A→B→A）的迟到回调失效。
+  const { historyList, deleteHistory, clearHistory } = useBrowserHistory(user?.id ?? null, authEpoch);
   const { setPendingUrl } = useBrowserSession();
 
   // 🔗 点击历史：把 URL 交给已有浏览器实例，然后回退（不再新建第二个浏览器）

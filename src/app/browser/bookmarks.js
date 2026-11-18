@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useBrowserSession } from '../../context/BrowserSessionContext';
+import { useAuth } from '../../hooks/useAuth';
 import { useBrowserHistory } from '../../hooks/browser/useBrowserHistory';
 import EmptyState from '../../components/ui/EmptyState';
 import { haptic } from '../../constants/haptics';
@@ -21,7 +22,10 @@ import { ellipsisMiddle, isSafeUrl } from '../../constants/browser';
 //    · 无标题时：主行留空，只显示缩小版网址，整体垂直居中、左对齐
 export default function BrowserBookmarks() {
   const { colors } = useAppTheme();
-  const { bookmarksList, removeBookmark } = useBrowserHistory();
+  const { user, authEpoch } = useAuth();
+  // 🆔 B1-C：按账号隔离读取书签
+  // 🛡️ 14-03：传入 authEpoch，使旧会话（A→B→A）的迟到回调失效。
+  const { bookmarksList, removeBookmark } = useBrowserHistory(user?.id ?? null, authEpoch);
   const { setPendingUrl } = useBrowserSession();
 
   // 🔗 点击书签：把 URL 交给已有浏览器实例，然后回退（不再新建第二个浏览器）

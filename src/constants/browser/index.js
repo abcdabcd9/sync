@@ -57,8 +57,25 @@ export const buildMediaItem = (url) => ({
 });
 
 // 合并去重（新项在前，保持稳定顺序）
-export const HISTORY_KEY = '@browser_history';
+//
+// 🆔 TASK-P0.3 / B1-C：浏览器历史/书签改为「按账号隔离」的 V2 命名空间。
+//    · 旧全局 key（@browser_history / @browser_bookmarks）原样保留、绝不读写、绝不迁移，
+//      属于「无主历史数据」，按 P3 决策原地隔离。
+//    · 新 key 形如 @sync_browser_history_v2_${userId} / @sync_browser_bookmarks_v2_${userId}。
+export const HISTORY_KEY = '@browser_history'; // ⚠️ 旧全局 key（仅保留常量，不再用于读写）
 export const HISTORY_LIMIT = 100;
+
+/** V2 用户作用域 key 前缀 */
+export const BROWSER_HISTORY_KEY_PREFIX = '@sync_browser_history_v2_';
+export const BROWSER_BOOKMARKS_KEY_PREFIX = '@sync_browser_bookmarks_v2_';
+
+/** 构造某用户的浏览历史 key；无有效 userId 返回 null */
+export const buildBrowserHistoryKey = (userId) =>
+  (userId && typeof userId === 'string' ? `${BROWSER_HISTORY_KEY_PREFIX}${userId}` : null);
+
+/** 构造某用户的书签 key；无有效 userId 返回 null */
+export const buildBrowserBookmarksKey = (userId) =>
+  (userId && typeof userId === 'string' ? `${BROWSER_BOOKMARKS_KEY_PREFIX}${userId}` : null);
 
 // 🕒 历史记录时间格式化：10-29 14:30
 export const pad2 = (n) => (n < 10 ? `0${n}` : `${n}`);

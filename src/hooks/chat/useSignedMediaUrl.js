@@ -34,10 +34,81 @@ const REFRESH_AHEAD_MS = 60 * 60 * 24 * 1000;
 /** LRU 缓存上限 */
 const MAX_CACHE_ENTRIES = 500;
 
-/** path -> { url, expiresAt } */
+/**
+ * 🆔 TASK-P0.3 / B1-E：身份代际防护
+ *
+ * 问题：模块级缓存跨账号共享，仅以 storagePath 为键。A 登出后 B 登录，
+ *      若 B 恰好请求同一路径（或 A 的旧 Promise 迟到返回），就会把 A 的
+ *      签名 URL 交给 B，或把 A 的结果写进 B 的缓存。
+ *
+ * 方案：
+ *   1. 缓存键 = `${ownerId}::${storagePath}`，不同 owner 天然隔离
+ *   2. 每次身份变化（owner 变化）自增 epoch，旧 epoch 发起的请求结果一律丢弃
+ *   3. inflight 删除前校验「当前映射仍是本 Promise」，防止 A 的旧 Promise
+ *      误删 B 的同路径 inflight 条目
+ */
+let currentOwnerId = null;
+let currentEpoch = 0;
+
+/**
+ * 🛡️ CR-07：身份变化订阅者集合。
+ *
+ * 问题：`setSignedUrlOwner()` 是模块级函数，修改模块变量不会触发 React 重渲染。
+ *   `useSignedMediaUrl` 在渲染期读取 `getSignedUrlIdentity()`，若身份变化时
+ *   组件没有因其他原因重渲染，就会一直使用旧的 renderOwnerId/renderEpoch，
+ *   导致旧账号的签名 URL 继续显示（X-04 的修复在「不重渲染」场景下失效）。
+ *
+ * 方案：维护一个订阅者集合，`setSignedUrlOwner` 在身份真正变化时通知所有
+ *   已挂载的 Hook 实例，让它们通过 setState 触发一次重渲染，从而重新读取
+ *   最新身份快照并丢弃旧 state。
+ */
+const identitySubscribers = new Set();
+
+/** 缓存键：owner + 路径 */
+const buildCacheKey = (ownerId, objectPath) => `${ownerId ?? 'anon'}::${objectPath}`;
+
+/**
+ * 登记当前身份（由 AuthProvider 或调用方在身份变化时调用）。
+ * owner 变化时自增 epoch 并清空缓存/inflight，确保旧内容不可被新账号消费。
+ *
+ * 🆔 X-05：`forceBump` 用于「同一 ownerId 但会话已更换」（A→登出→A 重新登录、
+ *   或 token 重新签发）。此时 ownerId 不变，但旧会话的在途 Promise 结果必须失效，
+ *   否则旧 token 下的签名 URL 会污染新会话。传 true 时强制自增 epoch 并清空缓存。
+ *
+ * 🛡️ CR-07：身份真正变化时，同步通知所有已挂载的 Hook 重渲染。
+ * @param {string|null} ownerId
+ * @param {boolean} [forceBump=false]
+ * @returns {number} 新的 epoch
+ */
+export function setSignedUrlOwner(ownerId, forceBump = false) {
+  const next = ownerId ?? null;
+  if (next !== currentOwnerId || forceBump) {
+    currentOwnerId = next;
+    currentEpoch += 1;
+    cache.clear();
+    inflight.clear();
+    // 🛡️ CR-07：通知所有订阅者重渲染（逐个 try，避免单个异常中断其余通知）。
+    for (const notify of identitySubscribers) {
+      try { notify(); } catch (_) {}
+    }
+  }
+  return currentEpoch;
+}
+
+/** 读取当前身份快照（供请求发起时捕获） */
+export function getSignedUrlIdentity() {
+  return { ownerId: currentOwnerId, epoch: currentEpoch };
+}
+
+/** 判断某次请求发起时的身份是否仍然有效 */
+function isIdentityStillValid(ownerId, epoch) {
+  return currentOwnerId === ownerId && currentEpoch === epoch;
+}
+
+/** cacheKey -> { url, expiresAt } */
 const cache = new Map();
 
-/** path -> Promise<string|null>（并发去重） */
+/** cacheKey -> Promise<string|null>（并发去重） */
 const inflight = new Map();
 
 /**
@@ -140,9 +211,9 @@ function isLocalUri(value) {
 }
 
 /** LRU 写入：命中则刷新顺序，超限则淘汰最旧 */
-function cacheSet(path, url, ttlSeconds) {
-  if (cache.has(path)) cache.delete(path);
-  cache.set(path, {
+function cacheSet(cacheKey, url, ttlSeconds) {
+  if (cache.has(cacheKey)) cache.delete(cacheKey);
+  cache.set(cacheKey, {
     url,
     expiresAt: Date.now() + Math.max(0, ttlSeconds * 1000 - REFRESH_AHEAD_MS),
   });
@@ -154,21 +225,21 @@ function cacheSet(path, url, ttlSeconds) {
 }
 
 /** 读取缓存（命中则刷新 LRU 顺序），过期返回 null */
-function cacheGet(path) {
-  const entry = cache.get(path);
+function cacheGet(cacheKey) {
+  const entry = cache.get(cacheKey);
   if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
-    cache.delete(path);
+    cache.delete(cacheKey);
     return null;
   }
   // 刷新 LRU 顺序
-  cache.delete(path);
-  cache.set(path, entry);
+  cache.delete(cacheKey);
+  cache.set(cacheKey, entry);
   return entry.url;
 }
 
 /**
- * 为对象路径生成签名 URL（带缓存 + 并发去重）。
+ * 为对象路径生成签名 URL（带缓存 + 并发去重 + 身份代际防护）。
  *
  * @param {string} path 桶内对象路径
  * @param {number} [ttlSeconds] 有效期（秒）
@@ -188,11 +259,22 @@ export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
   const objectPath = toStoragePath(path);
   if (!objectPath) return null;
 
-  const cached = cacheGet(objectPath);
+  // 📸 捕获发起时的身份快照
+  const { ownerId: startOwnerId, epoch: startEpoch } = getSignedUrlIdentity();
+
+  // 🛡️ T6-B/X-09b：未登录边界 fail-closed。
+  //    无已认证 owner 时不得以 anon 身份请求签名，也不得读写 anon 缓存
+  //    （否则可能命中历史 anon 缓存残留，或向 Supabase 发起无 JWT 的签名请求）。
+  //    直接返回 null，由调用方回退到本地地址 / 占位图。
+  if (!startOwnerId) return null;
+
+  const cacheKey = buildCacheKey(startOwnerId, objectPath);
+
+  const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
-  // 并发去重：同一路径只发一次请求
-  if (inflight.has(objectPath)) return inflight.get(objectPath);
+  // 并发去重：同一 owner + 同一路径只发一次请求
+  if (inflight.has(cacheKey)) return inflight.get(cacheKey);
 
   const task = (async () => {
     try {
@@ -203,26 +285,33 @@ export async function getSignedUrl(path, ttlSeconds = SIGNED_URL_TTL) {
         .createSignedUrl(objectPath, ttlSeconds);
       if (error) throw error;
       const url = data?.signedUrl || null;
-      if (url) cacheSet(objectPath, url, ttlSeconds);
+      // 🛡️ 代际校验：身份已变化 → 绝不写入新账号缓存，也不返回给调用方
+      if (!isIdentityStillValid(startOwnerId, startEpoch)) return null;
+      if (url) cacheSet(cacheKey, url, ttlSeconds);
       return url;
     } catch (e) {
       // 🚨 离线降级：网络失败 / 超时时绝不返回「空」覆盖调用方已有状态。
       //    优先回退到缓存里可能仍存在的旧签名 URL（即使已过期，也比黑屏好），
       //    让调用方继续渲染旧缓存 / 本地地址，而不是把图片清空。
       console.warn('网络请求签名失败(可能处于离线)，继续保留旧缓存/本地地址', e);
-      // ⚠️ 必须用 objectPath 读缓存：cacheSet 写入的键是归一化后的 objectPath，
-      //    若这里用原始 path 会永远读不到，导致「刚上传成功却立刻显示失败」。
-      return cacheGet(objectPath) ?? null;
+      // 🛡️ 代际校验：身份已变化 → 不返回旧账号的缓存内容
+      if (!isIdentityStillValid(startOwnerId, startEpoch)) return null;
+      return cacheGet(cacheKey) ?? null;
     } finally {
-      inflight.delete(objectPath);
+      // 🛡️ 只删除「仍属于本 Promise」的 inflight 条目，
+      //    防止 A 的旧 Promise 误删 B 的同路径 inflight
+      if (inflight.get(cacheKey) === task) inflight.delete(cacheKey);
     }
   })();
 
-  inflight.set(objectPath, task);
+  inflight.set(cacheKey, task);
   return task;
 }
 
-/** 清空缓存（登出 / 切换账号时调用，避免跨账号串号） */
+/**
+ * 清空缓存（登出 / 切换账号时调用，避免跨账号串号）。
+ * ⚠️ 仅清理客户端内存缓存，不代表已签发的 URL 被吊销（7 天 TTL 仍有效）。
+ */
 export function clearSignedUrlCache() {
   cache.clear();
   inflight.clear();
@@ -257,9 +346,10 @@ export const getMemoryCachedSignedUrl = (path) => {
   if (/^(ph|assets-library|blob):/i.test(trimmed)) return null;
 
   // 相对对象路径：同步读 LRU 缓存（cacheGet 内部会处理过期与 LRU 顺序刷新）
+  // 🆔 B1-E：按当前 owner 构造缓存键，绝不跨账号命中
   const objectPath = toStoragePath(trimmed);
   if (!objectPath) return null;
-  return cacheGet(objectPath);
+  return cacheGet(buildCacheKey(currentOwnerId, objectPath));
 };
 
 /**
@@ -275,12 +365,34 @@ export function useSignedMediaUrl(value, ttlSeconds = SIGNED_URL_TTL) {
   // 🖼️ 本地 URI（刚发出去、尚未回填对象路径的乐观消息）：直接交给 Image / Audio 读取
   const isLocal = isLocalUri(value);
 
-  // 初始值：历史完整 URL / 本地 URI 直接透传；相对路径先查缓存
-  const [url, setUrl] = useState(() => {
-    if (isAbsolute) return value.trim();
-    if (isLocal) return value.trim();
-    if (!path) return null;
-    return cacheGet(path);
+  // 📸 渲染期捕获当前身份快照（owner + epoch）。身份变化时 epoch 自增，
+  //    使旧 state 自动失效。
+  const { ownerId: renderOwnerId, epoch: renderEpoch } = getSignedUrlIdentity();
+
+  // 🛡️ CR-07：订阅身份变化，强制重渲染。
+  //    setSignedUrlOwner() 是模块级函数，修改模块变量不会触发 React 更新；
+  //    若组件未因其他原因重渲染，renderOwnerId/renderEpoch 会停留在旧值，
+  //    旧账号的签名 URL 继续显示。这里用 setState 订阅，身份变化时触发一次
+  //    重渲染，从而重新读取最新身份快照并丢弃旧 state。
+  const [, forceIdentityRender] = useState(0);
+  useEffect(() => {
+    const notify = () => forceIdentityRender((n) => n + 1);
+    identitySubscribers.add(notify);
+    return () => { identitySubscribers.delete(notify); };
+  }, []);
+
+  // 🛡️ X-04：url state 必须与「它所属的身份」绑定。
+  //    旧实现只存 url，A→B 切换后组件不卸载时 url 仍持有 A 的签名 URL，
+  //    且 effect 依赖不含 owner/epoch 不会重跑，导致 B 看到 A 的图片。
+  //    这里把 { url, ownerId, epoch } 一起存，读取时校验归属。
+  const [state, setState] = useState(() => {
+    if (isAbsolute || isLocal) return { url: value.trim(), ownerId: renderOwnerId, epoch: renderEpoch };
+    if (!path) return { url: null, ownerId: renderOwnerId, epoch: renderEpoch };
+    return {
+      url: cacheGet(buildCacheKey(renderOwnerId, path)),
+      ownerId: renderOwnerId,
+      epoch: renderEpoch,
+    };
   });
 
   useEffect(() => {
@@ -289,27 +401,38 @@ export function useSignedMediaUrl(value, ttlSeconds = SIGNED_URL_TTL) {
     if (!path) return undefined;
 
     // 缓存命中：无需 setState（初始值已从缓存读取，且缓存不会在渲染间变化）
-    if (cacheGet(path)) return undefined;
+    if (cacheGet(buildCacheKey(currentOwnerId, path))) return undefined;
 
     let cancelled = false;
+    // 📸 捕获本次请求发起时的身份快照
+    const { ownerId: startOwnerId, epoch: startEpoch } = getSignedUrlIdentity();
 
     // 🚨 离线降级：请求失败时 getSignedUrl 会回退到缓存（可能为 null），
-    //    这里只在拿到有效 URL 时才 setUrl，绝不 setUrl(null) 清空已有图片。
+    //    这里只在拿到有效 URL 时才 setState，绝不 setState(null) 清空已有图片。
     getSignedUrl(path, ttlSeconds)
       .then((signed) => {
-        if (!cancelled && signed) setUrl(signed);
+        // 🛡️ 代际校验：身份已变化 → 绝不把旧账号 URL 交给新账号组件
+        if (!isIdentityStillValid(startOwnerId, startEpoch)) return;
+        if (!cancelled && signed) {
+          setState({ url: signed, ownerId: startOwnerId, epoch: startEpoch });
+        }
       })
       .catch((error) => {
         console.warn('网络请求签名失败(可能处于离线)，继续保留旧缓存/本地地址', error);
       });
 
     return () => { cancelled = true; };
-  }, [isAbsolute, isLocal, path, ttlSeconds]);
+    // 🛡️ X-04：owner/epoch 纳入依赖，身份切换时重新发起签名并丢弃旧 state
+  }, [isAbsolute, isLocal, path, ttlSeconds, renderOwnerId, renderEpoch]);
 
   // 派生值：绝对 URL / 本地 URI / 缓存命中 / 异步签名结果，统一在此收敛
-  const resolved = (isAbsolute || isLocal)
-    ? value.trim()
-    : (url ?? (path ? cacheGet(path) : null));
+  if (isAbsolute || isLocal) {
+    return { url: value.trim(), loading: false };
+  }
+  // 🛡️ X-04：仅当 state 属于当前身份时才采用，否则回落到当前 owner 的缓存
+  const stateValid = state.ownerId === renderOwnerId && state.epoch === renderEpoch;
+  const resolved = (stateValid ? state.url : null)
+    ?? (path ? cacheGet(buildCacheKey(renderOwnerId, path)) : null);
 
   return { url: resolved, loading: !resolved };
 }

@@ -17,7 +17,8 @@ export default function HealthDetailScreen() {
   const { colors: palette } = useAppTheme();
   const { width } = useWindowDimensions();
   const {
-    selectedMeal, mealsStatus, waterAmount, maxWater,
+    selectedMeal, currentSessionOwnerKey, selectedMealSelectionId,
+    mealsStatus, waterAmount, maxWater,
     openMeal, closeMeal, confirmCheck, undoCheck, setWaterDirect, updateMaxWater,
   } = useHealthData();
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -100,6 +101,13 @@ export default function HealthDetailScreen() {
 
       <MealDetailSheet
         meal={selectedMeal}
+        // 🛡️ FINAL-03 / FINAL-04：传入「当前认证身份」而非「选中态所属身份」。
+        //    currentSessionOwnerKey 来自 Provider 的 currentOwnerKey，关闭后不会变 null，
+        //    因此合法关闭的退出动画不会被误判为身份失效；
+        //    切号 / 登出时它会立即变化，旧弹窗当帧隐藏。
+        sessionOwnerKey={currentSessionOwnerKey}
+        // 🛡️ 选择实例 id：同账号连续打开同一餐次时用于区分不同实例。
+        selectionId={selectedMealSelectionId}
         checked={selectedMeal ? mealsStatus?.[selectedMeal] : false}
         onClose={closeMeal}
         onConfirm={confirmCheck}

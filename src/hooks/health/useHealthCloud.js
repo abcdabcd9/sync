@@ -27,7 +27,21 @@ export function useHealthCloud(user, getDateStr) {
   const [partnerId, setPartnerId] = useState(null);
 
   const timerRef = useRef(null);
-  const pendingRef = useRef(null);
+  // 🛡️ T6-B 第二轮复审 14-01（BLOCKER）：pending 改为「按 ownerId + recordDate 隔离」的多槽容器。
+  //
+  //    旧实现只有单一 pendingRef 槽位，syncToCloud 无条件覆盖：
+  //      · A 账号某日写入失败（upsert 返回 error）→ 载荷留在 pendingRef；
+  //      · 切到 B 账号，B 产生自己的健康数据 → syncToCloud 覆盖同一槽位 → A 的失败载荷被抹掉；
+  //      · 切回 A 后 flushNow 已无 A 的原始载荷 → A 的未同步数据永久丢失；
+  //      · 同账号跨日期的新记录也会覆盖旧日期的失败载荷。
+  //
+  //    修复：用 Map 以 `${ownerId}::${recordDate}` 为键隔离每个待同步载荷。
+  //      · 不同账号 / 不同日期互不覆盖，各自保留、各自重试。
+  //      · 提交成功只删除「该键对应的那一项」，不影响其他待同步项。
+  //      · 提交失败 / 跨账号一律保留，等待下次重试。
+  //    注意：这是内存级最小修复，不实现 B4 的完整持久化队列（超出本轮授权范围）。
+  const pendingMapRef = useRef(new Map());
+  const pendingKeyOf = useCallback((ownerId, recordDate) => `${ownerId}::${recordDate}`, []);
 
   // 🛡️ T6/A06：授权代际令牌。
   //    每次「搭子关系发生变化」（绑定 / 解绑 / 权威空结果）都会自增。
@@ -60,44 +74,121 @@ export function useHealthCloud(user, getDateStr) {
     partnerIdRef.current = partnerId;
   }, [partnerId]);
 
+  // 🛡️ T6-B/X-08（复审返工 CR-01）+ 第二轮复审 14-01：
+  //    pending 载荷必须绑定「入队时的 owner + recordDate」，且「未确认成功前绝不丢弃」。
+  //
+  //    修复原则（同时满足「防串号」与「不静默丢数据」）：
+  //      · 载荷携带 ownerId + recordDate 快照，commit 只写「载荷 owner」而非「当前 user」。
+  //      · 载荷 owner 与当前 user 不一致 → 不写云端、不丢弃，原样保留在 pendingMapRef，
+  //        待切回原账号后由 flushNow / 防抖重试（可恢复、可重试）。
+  //      · upsert 返回 error 或抛异常 → 保留该槽位，等待下次重试。
+  //      · 仅当 upsert 确认无 error 时，才删除「该键对应的那一项」（成功确认后才移除）。
+  //      · 并发提交用 inflightRef 去重，避免重复 upsert。
+  const inflightRef = useRef(false);
+
+  // 🛡️ T6-B 第二轮复审 14-01（BLOCKER）补充：当前登录用户的 ref 镜像。
+  //
+  //    commit / tryFlushPending 若直接闭包捕获 user，则「账号切换瞬间仍在队列里的
+  //    旧闭包」（例如账号切换 effect 在旧渲染帧注册、于新渲染帧才执行）会以**旧 user**
+  //    作为「当前用户」判定，从而把旧账号的槽位当作「当前账号」提交。
+  //    虽然载荷 ownerId 仍指向旧账号（不会串写到新账号），但这会让「切回原账号才重试」
+  //    的语义被提前触发，且与「当前登录用户」这一事实源脱节。
+  //    修复：commit / tryFlushPending 一律读取 userRef.current（执行时的实时值），
+  //    保证「当前用户」永远以最新登录态为准，不受闭包陈旧影响。
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  /**
+   * 提交单个 pending 载荷。
+   * @returns {Promise<boolean>} true = 已确认成功（可移除该槽位）；false = 未成功（必须保留）
+   */
   const commit = useCallback(async (payload) => {
-    if (!payload || !user) return;
+    if (!payload) return false;
+    // 以执行时的实时登录用户为准（避免陈旧闭包把旧账号当作当前账号）。
+    const currentUser = userRef.current;
+    // 无当前用户（已登出）→ 不写、不丢弃，保留待下次登录重试。
+    if (!currentUser) return false;
+    // 载荷 owner 与当前登录用户不一致 → 属于其他账号的未同步数据。
+    // 绝不写入当前账号（防串号），也绝不丢弃（保留在 pendingMapRef 供切回后重试）。
+    if (payload.ownerId && payload.ownerId !== currentUser.id) {
+      return false;
+    }
+    if (inflightRef.current) return false;
+    inflightRef.current = true;
     try {
-      await supabase.from('health_records').upsert(
+      const { error } = await supabase.from('health_records').upsert(
         {
-          user_id: user.id,
+          user_id: payload.ownerId || currentUser.id,
           record_date: payload.recordDate,
           water_amount: payload.water,
           meals_status: payload.meals,
         },
         { onConflict: 'user_id, record_date' }
       );
+      if (error) {
+        console.warn('⚠️ health_records 云端写入失败(保留待重试)', error?.message || error);
+        return false;
+      }
+      return true;
     } catch (e) {
-      console.warn('⚠️ health_records 云端写入失败(离线状态)', e?.message || e);
+      console.warn('⚠️ health_records 云端写入异常(保留待重试)', e?.message || e);
+      return false;
+    } finally {
+      inflightRef.current = false;
     }
-  }, [user]);
+  }, []);
+
+  /**
+   * 尝试提交 pendingMapRef 中「属于当前登录用户」的全部载荷。
+   * 仅当 commit 确认成功时才删除该键；失败/跨账号一律保留。
+   * 其他账号的槽位不在此处提交（避免串号），留待切回原账号后重试。
+   */
+  const tryFlushPending = useCallback(async () => {
+    const map = pendingMapRef.current;
+    if (!map || map.size === 0) return;
+    // 以执行时的实时登录用户为准（避免陈旧闭包把旧账号当作当前账号）。
+    const currentUserId = userRef.current?.id ?? null;
+    // 快照键列表，避免迭代过程中 Map 被修改。
+    const keys = Array.from(map.keys());
+    for (const key of keys) {
+      const payload = map.get(key);
+      if (!payload) continue;
+      // 只提交属于当前登录用户的载荷；其他账号的保留待切回后重试。
+      if (!currentUserId || payload.ownerId !== currentUserId) continue;
+      const ok = await commit(payload);
+      // 只有「仍是同一份载荷」且「确认成功」时才移除，避免提交期间被新载荷替换。
+      if (ok && map.get(key) === payload) {
+        map.delete(key);
+      }
+    }
+  }, [commit]);
 
   const flushNow = useCallback(async () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    const payload = pendingRef.current;
-    pendingRef.current = null;
-    if (payload) await commit(payload);
-  }, [commit]);
+    await tryFlushPending();
+  }, [tryFlushPending]);
 
   const syncToCloud = useCallback((newWater, newMeals) => {
     if (!user) return;
-    pendingRef.current = { recordDate: getDateStr(), water: newWater, meals: newMeals };
+    // 载荷绑定入队时的 owner + recordDate，按 owner+date 隔离到独立槽位。
+    // 不同账号 / 不同日期互不覆盖，各自保留、各自重试。
+    const recordDate = getDateStr();
+    const key = pendingKeyOf(user.id, recordDate);
+    pendingMapRef.current.set(key, {
+      recordDate,
+      water: newWater,
+      meals: newMeals,
+      ownerId: user.id,
+    });
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      const payload = pendingRef.current;
-      pendingRef.current = null;
-      if (payload) commit(payload);
+      tryFlushPending();
     }, DEBOUNCE_MS);
-  }, [user, getDateStr, commit]);
+  }, [user, getDateStr, pendingKeyOf, tryFlushPending]);
 
   const fetchMyRecord = useCallback(async (date) => {
     if (!user) return null;
@@ -379,21 +470,34 @@ export function useHealthCloud(user, getDateStr) {
     if (lastUserIdRef.current === nextUserId) return;
     lastUserIdRef.current = nextUserId;
 
+    // 🛡️ T6-B/X-08（复审返工 CR-01）+ 第二轮复审 14-01：账号切换时取消旧账号的防抖定时器，
+    //    但**绝不丢弃** pendingMapRef 中的未同步载荷。
+    //
+    //    修复：只取消定时器，pendingMapRef 原样保留（按 owner+date 隔离的多槽）。
+    //    tryFlushPending 只提交「属于当前登录用户」的槽位；其他账号的槽位保留，
+    //    待用户切回原账号后，flushNow / 下一次 syncToCloud 会重试提交。
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // 尝试提交当前账号的槽位（其他账号的槽位保留待切回后重试）。
+    tryFlushPending();
+
     // 作废所有在途请求与实时回调
     bumpAuthGeneration();
     setPartnerId(null);
     setPartnerData({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
-  }, [user?.id, bumpAuthGeneration]);
+  }, [user?.id, bumpAuthGeneration, tryFlushPending]);
 
   useEffect(() => () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    const payload = pendingRef.current;
-    pendingRef.current = null;
-    if (payload) commit(payload);
-  }, [commit]);
+    // 卸载时尽力提交；失败则保留在内存 pendingMapRef（进程结束即丢失，
+    // 但这是卸载语义，非账号切换静默丢弃）。不在此处强制清空。
+    tryFlushPending();
+  }, [tryFlushPending]);
 
   return useMemo(() => ({
     partnerData,

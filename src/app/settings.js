@@ -41,22 +41,45 @@ const SettingRow = ({ title, value, icon, iconBg, onPress, isDestructive, hideAr
 export default function SettingsScreen() {
   const { colors: palette, themeMode } = useAppTheme();
   const router = useRouter();
-  const { signOut } = useAuth();
+  const { signOut, isIdentityTransitioning } = useAuth();
 
   const isGoingBack = useRef(false);
 
   const handleBack = () => {
     if (isGoingBack.current) return;
     isGoingBack.current = true;
-    Keyboard.dismiss(); 
+    Keyboard.dismiss();
     if (router.canGoBack()) router.back(); else router.replace('/profile');
     setTimeout(() => { isGoingBack.current = false; }, 500);
   };
 
+  // 🛡️ TASK-P0.3 / B1-A 登出失败安全：
+  //    · 只有 signOut 明确返回 { error: null } 才跳转登录页；
+  //    · 失败时停留在当前页，展示失败原因与重试入口，绝不假装已登出。
   const handleSignOut = () => {
     Alert.alert('退出登录', '确定要断开云端连接吗？', [
       { text: '取消', style: 'cancel' },
-      { text: '退出', style: 'destructive', onPress: async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); await signOut(); router.replace('/auth'); }}
+      {
+        text: '退出',
+        style: 'destructive',
+        onPress: async () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          const { error } = await signOut();
+          if (error) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert(
+              '退出登录失败',
+              `未能安全断开云端连接（${error.code || 'UNKNOWN'}）。\n请检查网络或设备安全存储后重试。`,
+              [
+                { text: '稍后再试', style: 'cancel' },
+                { text: '重试', onPress: () => handleSignOut() },
+              ]
+            );
+            return;
+          }
+          router.replace('/auth');
+        },
+      },
     ]);
   };
 
@@ -113,7 +136,14 @@ export default function SettingsScreen() {
           {/* 4. 底部操作栏（注销账号已下沉到「账号安全」页） */}
           <View style={[styles.group, { marginTop: 36, marginBottom: 40 }]}>
             <SettingRow title="切换账号" onPress={() => router.push('/settings/accounts')} isFirst palette={palette} />
-            <SettingRow title="退出登录" hideArrow isDestructive onPress={handleSignOut} isLast palette={palette} />
+            <SettingRow
+              title={isIdentityTransitioning ? '正在退出…' : '退出登录'}
+              hideArrow
+              isDestructive
+              onPress={isIdentityTransitioning ? undefined : handleSignOut}
+              isLast
+              palette={palette}
+            />
           </View>
 
         </ScrollView>
