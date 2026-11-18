@@ -74,8 +74,9 @@ cp .env.example .env
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-key   # 可选，不填的话语音转文字用不了
 ```
+
+语音转文字不再需要客户端密钥：它由受鉴权的 `transcribe-audio` Edge Function 代理，Groq Key 只存在服务端 secret 中（见下方「服务端」一节）。
 
 跑起来：
 
@@ -270,8 +271,9 @@ npx expo lint
 **服务端**
 
 - **Edge Function 推送服务**（[`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)）：校验调用者身份 → 查接收方 Expo Push Token → 批量推送 → 清理失效 token
+- **Edge Function 语音转写服务**（[`supabase/functions/transcribe-audio/index.ts`](supabase/functions/transcribe-audio/index.ts)）：校验调用者 JWT → 校验音频字节/格式 → 原子预占配额 → 调用 Groq Whisper → 返回纯文本
 - Edge Function 内的凭据全部走 `Deno.env.get()`，仓库里没有任何硬编码密钥
-  > 注意：语音转文字用的 `EXPO_PUBLIC_GROQ_API_KEY` 是**客户端**变量，会被打进 App 包，属于公开可见的密钥。生产环境建议改由 Edge Function 代理转发，不要把 Groq Key 直接放在客户端。
+  > 语音转文字已改为**服务端代理**：客户端不再持有 Groq Key。部署时执行 `npx supabase secrets set GROQ_API_KEY=<key>` 与 `npx supabase functions deploy transcribe-audio`。切勿再添加 `EXPO_PUBLIC_GROQ_API_KEY`——`EXPO_PUBLIC_*` 会被打进 App 包，属于公开可见的密钥。
 - 走 Expo Push Service 而非直连 FCM，所以自建者不需要准备 Firebase 证书
 
 **客户端**

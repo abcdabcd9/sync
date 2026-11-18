@@ -40,8 +40,9 @@ Fill in `.env`:
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-key   # optional
 ```
+
+Voice-to-text uses the `transcribe-audio` Edge Function; set its key server-side with `npx supabase secrets set GROQ_API_KEY=<key>`. Do not add `EXPO_PUBLIC_GROQ_API_KEY` — `EXPO_PUBLIC_*` is bundled into the app binary.
 
 Then run the migrations in `supabase/migrations/` in numeric order (`01` → `13`) inside the Supabase SQL Editor. Create the `chat_media` Storage bucket manually — it is a bucket, not a table.
 
@@ -153,8 +154,9 @@ cp .env.example .env
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-key   # 可选
 ```
+
+语音转文字走 `transcribe-audio` Edge Function，密钥在服务端配置：`npx supabase secrets set GROQ_API_KEY=<key>`。不要再添加 `EXPO_PUBLIC_GROQ_API_KEY`——`EXPO_PUBLIC_*` 会被打进 App 包。
 
 然后在 Supabase SQL Editor 里按编号顺序（`01` → `13`）执行 `supabase/migrations/` 下的迁移脚本。`chat_media` 是 Storage 桶，不是表，需要手动创建。
 

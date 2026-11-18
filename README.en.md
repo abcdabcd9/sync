@@ -74,8 +74,9 @@ Then edit `.env` and fill in your Supabase config:
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-EXPO_PUBLIC_GROQ_API_KEY=your-groq-key   # optional; voice-to-text is unavailable without it
 ```
+
+Voice-to-text no longer needs a client-side key: it is proxied by the authenticated `transcribe-audio` Edge Function, and the Groq key lives only in server secrets (see "Server side" below).
 
 Run it:
 
@@ -270,8 +271,9 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 **Server side**
 
 - **Edge Function push service** ([`supabase/functions/send-push/index.ts`](supabase/functions/send-push/index.ts)): verifies the caller → looks up the recipient's Expo Push Token → sends the push → prunes dead tokens
+- **Edge Function speech-to-text service** ([`supabase/functions/transcribe-audio/index.ts`](supabase/functions/transcribe-audio/index.ts)): verifies the caller's JWT → validates audio size/format → atomically reserves quota → calls Groq Whisper → returns plain text
 - Credentials inside the Edge Function all go through `Deno.env.get()`; there are no hardcoded secrets in the repo
-  > Note: the `EXPO_PUBLIC_GROQ_API_KEY` used for speech-to-text is a **client-side** variable — it gets bundled into the app binary and is publicly extractable. For production, proxy the request through an Edge Function instead of shipping the Groq key in the client.
+  > Speech-to-text is now **server-proxied**: the client no longer holds the Groq key. On deploy, run `npx supabase secrets set GROQ_API_KEY=<key>` and `npx supabase functions deploy transcribe-audio`. Never add `EXPO_PUBLIC_GROQ_API_KEY` again — `EXPO_PUBLIC_*` gets bundled into the app binary and is publicly extractable.
 - Uses Expo Push Service rather than talking to FCM directly, so self-hosters don't need Firebase certificates
 
 **Client**
