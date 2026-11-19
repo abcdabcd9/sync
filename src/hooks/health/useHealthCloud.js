@@ -22,7 +22,7 @@ import {
 const EMPTY_MEALS = { '早餐': false, '午餐': false, '晚餐': false };
 const DEBOUNCE_MS = 1500;
 
-export function useHealthCloud(user, getDateStr) {
+export function useHealthCloud(user, getDateStr, authEpoch = 0) {
   const [partnerData, setPartnerData] = useState({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
   const [partnerId, setPartnerId] = useState(null);
 
@@ -74,6 +74,23 @@ export function useHealthCloud(user, getDateStr) {
     partnerIdRef.current = partnerId;
   }, [partnerId]);
 
+  // 🛡️ TASK-P0.3 / B3-01：**会话代际（authEpoch）镜像**。
+  //
+  //    缺陷（B3 诊断确认）：本 Hook 的账号切换清理 effect 只依赖 user?.id。
+  //    「A → 登出 → A 重新登录」或「同账号新会话」时 userId 完全相同，
+  //    effect 不重跑 → authGeneration 不自增 → partnerId / partnerData 保留
+  //    上一会话的残留值，且上一会话在途的 fetchPartnerRecord / 实时回调
+  //    代际校验依然通过，可把旧会话的搭子数据写进新会话。
+  //
+  //    修复：把 authEpoch 纳入「身份转移」判定。epoch 变化（含同账号重登）
+  //    与 userId 变化同等对待：自增授权代际、清空搭子状态、取消防抖定时器。
+  //    注意：这里**不**清理磁盘缓存（那是 clearPartner 的职责），
+  //    账号切换后的缓存归属由 useHealthData 的 profile 加载负责。
+  const authEpochRef = useRef(authEpoch);
+  useEffect(() => {
+    authEpochRef.current = authEpoch;
+  }, [authEpoch]);
+
   // 🛡️ T6-B/X-08（复审返工 CR-01）+ 第二轮复审 14-01：
   //    pending 载荷必须绑定「入队时的 owner + recordDate」，且「未确认成功前绝不丢弃」。
   //
@@ -97,6 +114,41 @@ export function useHealthCloud(user, getDateStr) {
   //    保证「当前用户」永远以最新登录态为准，不受闭包陈旧影响。
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
+
+  // 🛡️ TASK-P0.3 / B3-L4-R1（缺陷 5）：**state 归属身份**。
+  //
+  //    partnerId / partnerData 属于「某个身份」（userId + authEpoch）。
+  //    身份切换时 React 的第一次渲染发生在 cleanup effect 之前，此时
+  //    state 仍是上一账号的残留值，首帧会把 A 的搭子 id 与健康数据暴露给 B。
+  //    仅靠 useEffect 内 setState 清空，必然晚一帧。
+  //
+  //    修复：在**渲染期**比对「state 归属身份」与「当前身份」，不一致则
+  //    对外一律呈现空值（partnerId=null、partnerData=空），首帧即不可见。
+  //    这是纯派生值，不产生额外 setState，不改变 effect 时序。
+  //
+  //    ⚠️ 归属身份用 **state** 承载（而非 ref）：渲染期读取 state 是合法
+  //      的，读取 ref 会被 react-hooks/refs 判为违规。合法写入路径通过
+  //      claimStateOwner() → setStateOwnerKey() 推进归属身份并触发重渲染。
+  //
+  //    ⚠️ 归属身份必须随「合法写入」同步推进，否则会永久遮蔽：
+  //      若只在首次渲染初始化，身份切换后归属永远停留在旧身份 →
+  //      ownerIsCurrent 恒为 false → 新会话的合法数据（缓存 / 网络 / 实时）
+  //      全部被遮蔽，表现为「重绑同一搭子后搭子数据永久为 0」（T7-H22 回归）。
+  //      因此 bindPartner / clearPartner / 账号切换 effect / 所有合法
+  //      setPartnerData 写入点都会调用 claimStateOwner() 推进归属身份。
+  const [stateOwnerKey, setStateOwnerKey] = useState(`${user?.id ?? ''}::${authEpoch}`);
+  // 归属身份的 ref 镜像：供异步回调同步比对（避免闭包读到陈旧 state）。
+  const stateOwnerKeyRef = useRef(stateOwnerKey);
+  useEffect(() => { stateOwnerKeyRef.current = stateOwnerKey; }, [stateOwnerKey]);
+  const claimStateOwner = useCallback(() => {
+    const nextKey = `${userRef.current?.id ?? ''}::${authEpochRef.current}`;
+    if (stateOwnerKeyRef.current === nextKey) return;
+    stateOwnerKeyRef.current = nextKey;
+    setStateOwnerKey(nextKey);
+  }, []);
+  // ref 镜像：供依赖数组被源码契约锁定的 effect 调用（避免改动依赖形状）。
+  const claimStateOwnerRef = useRef(null);
+  useEffect(() => { claimStateOwnerRef.current = claimStateOwner; }, [claimStateOwner]);
 
   /**
    * 提交单个 pending 载荷。
@@ -219,11 +271,18 @@ export function useHealthCloud(user, getDateStr) {
     //    任何 await 之后写回 state 前都必须比对；不一致说明授权已变更
     //    （解绑 / 换绑 / 权威空结果），本次结果必须整体丢弃，绝不写回缓存。
     const gen = authGenerationRef.current;
+    // 🛡️ TASK-P0.3 / B3-02：同时快照会话代际（authEpoch）。
+    //    仅比对 authGeneration 无法覆盖「同账号新会话」——若新会话尚未发生
+    //    bind/clear（authGeneration 未变），旧会话的迟到请求仍会通过校验。
+    const epoch = authEpochRef.current;
+    const isStale = () => gen !== authGenerationRef.current || epoch !== authEpochRef.current;
 
     // 1. 离线缓存优先加载（第 0 帧秒开，断网绝不显示 0）
     try {
       const cachedStr = await AsyncStorage.getItem(cacheKey);
-      if (cachedStr && gen === authGenerationRef.current) {
+      if (cachedStr && !isStale()) {
+        // 合法写入：归属身份推进到当前会话，否则新会话数据会被渲染期遮蔽。
+        claimStateOwner();
         setPartnerData(JSON.parse(cachedStr));
       }
     } catch (_) {}
@@ -239,14 +298,16 @@ export function useHealthCloud(user, getDateStr) {
 
       if (error && error.code !== 'PGRST116') throw error;
 
-      // 🛡️ 网络往返期间授权可能已被撤销 → 丢弃过期结果
-      if (gen !== authGenerationRef.current) return null;
+      // 🛡️ 网络往返期间授权可能已被撤销 / 会话已切换 → 丢弃过期结果
+      if (isStale()) return null;
 
       if (data) {
         const newData = {
           waterAmount: data.water_amount || 0,
           mealsStatus: data.meals_status || EMPTY_MEALS,
         };
+        // 合法写入：归属身份推进到当前会话。
+        claimStateOwner();
         // 更新内存并回写本地磁盘镜像
         setPartnerData(newData);
         AsyncStorage.setItem(cacheKey, JSON.stringify(newData)).catch(() => {});
@@ -257,15 +318,17 @@ export function useHealthCloud(user, getDateStr) {
       console.warn('离线状态，使用本地缓存的搭子健康数据', e?.message || e);
     }
     return null;
-  }, []);
+  }, [claimStateOwner]);
 
   const applyPartnerRecord = useCallback((record) => {
     if (!record) return;
+    // 合法写入：归属身份推进到当前会话。
+    claimStateOwner();
     setPartnerData({
       waterAmount: record.water_amount || 0,
       mealsStatus: record.meals_status || EMPTY_MEALS,
     });
-  }, []);
+  }, [claimStateOwner]);
 
   /**
    * 🧹 T6/A06：权威清空搭子状态。
@@ -279,6 +342,8 @@ export function useHealthCloud(user, getDateStr) {
    */
   const clearPartner = useCallback((stalePartnerId = null) => {
     bumpAuthGeneration();
+    // 归属身份推进到当前身份：清空后的空值属于当前会话，必须可被呈现。
+    claimStateOwner();
     setPartnerId(null);
     setPartnerData({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
 
@@ -293,7 +358,7 @@ export function useHealthCloud(user, getDateStr) {
         })
         .catch(() => {});
     }
-  }, [bumpAuthGeneration]);
+  }, [bumpAuthGeneration, claimStateOwner]);
 
   /**
    * 🔗 T6/A06：确认/切换搭子关系时调用，使旧代际的在途请求全部失效。
@@ -301,8 +366,10 @@ export function useHealthCloud(user, getDateStr) {
    */
   const bindPartner = useCallback((nextPartnerId) => {
     bumpAuthGeneration();
+    // 归属身份推进到当前身份：新绑定的搭子属于当前会话，必须可被呈现。
+    claimStateOwner();
     setPartnerId(nextPartnerId ?? null);
-  }, [bumpAuthGeneration]);
+  }, [bumpAuthGeneration, claimStateOwner]);
 
   /**
    * 🔔 T6.1/FIX-05：订阅「授权关系变更」，用于实时感知对方解绑。
@@ -341,6 +408,10 @@ export function useHealthCloud(user, getDateStr) {
 
     const channelName = `partner_auth_${pId}_${Date.now()}`;
     const gen = authGenerationRef.current;
+    // 🛡️ TASK-P0.3 / B3-03：会话代际快照。同账号新会话（epoch 变化）时，
+    //    旧订阅的复验结果必须整体作废，绝不能触发 onRevoked 清空新会话状态。
+    const epoch = authEpochRef.current;
+    const isStale = () => gen !== authGenerationRef.current || epoch !== authEpochRef.current;
 
     // 🔒 T6.2 收尾：复验协调器（verifying / pending 状态机）。
     //   复验期间若又收到新事件，不能直接丢弃 —— 因为当前这次复验的 RPC 可能
@@ -349,8 +420,8 @@ export function useHealthCloud(user, getDateStr) {
     //   最新服务端状态为准（否则可能漏掉撤销）。
     //   状态机抽到 authRevokeLogic.createRevokeVerifier，生产与测试共用同一实现。
     const verifier = createRevokeVerifier({
-      // 代际已变更（本端已主动解绑/换绑/账号切换）→ 丢弃结果且不再复验
-      isStale: () => gen !== authGenerationRef.current,
+      // 代际已变更（本端已主动解绑/换绑/账号切换/同账号新会话）→ 丢弃结果且不再复验
+      isStale,
       // 🔒 以服务端权威状态为准，不信任 payload.old / payload.new
       verify: () => supabase.rpc('get_active_partner_id'),
       onResult: (rpcResult) => {
@@ -386,8 +457,9 @@ export function useHealthCloud(user, getDateStr) {
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'partner_authorizations' },
           (payload) => {
-            // 授权代际已变更（本端已主动解绑/换绑）→ 无需重复处理
-            if (gen !== authGenerationRef.current) return;
+            // 授权代际 / 会话代际已变更（本端已主动解绑/换绑/切号/同账号新会话）
+            // → 无需重复处理
+            if (isStale()) return;
 
             // 只处理与本端当前搭子相关的关系（纯函数，绝不读 payload.old.status）。
             // 无法排除相关性时交给服务端复验兜底（宁可多查一次）。
@@ -412,14 +484,25 @@ export function useHealthCloud(user, getDateStr) {
 
     const channelName = `partner_health_${pId}_${Date.now()}`;
     const cacheKey = `@partner_health_${pId}_${date}`;
+    // 🛡️ TASK-P0.3 / B3-04：会话代际快照。同账号新会话（epoch 变化）时，
+    //    旧订阅的迟到事件必须丢弃，绝不能把上一会话的搭子健康数据写进新会话。
+    const epoch = authEpochRef.current;
+    // 🛡️ TASK-P0.3 / B3-L4-R1（缺陷 4）：**授权代际快照**。
+    //
+    //    T7-H22 曾移除代际判断，因为「重绑同一搭子」时 partnerId 值不变、
+    //    旧订阅已被 cleanup 移除、而 effect 不重建 → 订阅永久失效。
+    //    但完全移除代际判断会留下另一个缺口：重绑同一搭子（partnerId 与
+    //    authEpoch 都不变，只有 authGeneration 自增）时，旧 channel 上残留的
+    //    回调仍能通过 partnerId + epoch 双重校验，把旧授权周期的数据写回。
+    //
+    //    正确做法：**恢复代际闸门，同时保证订阅会重建**。
+    //      · 本函数快照 gen，回调内比对 gen —— 授权代际一变，旧回调立即失效；
+    //      · useHealthData 的订阅 effect 依赖已包含 authGeneration（T7-H22 已加），
+    //        因此 bindPartner 自增代际后 effect 必然重建订阅，不会出现
+    //        「无订阅存活」的回归。
+    //    两者缺一不可：只加闸门不重建 → 永久失效；只重建不加闸门 → 旧回调可写回。
+    const gen = authGenerationRef.current;
 
-    // 🛡️ T7-H22：不再快照授权代际做丢弃判断。
-    //    原实现用 `gen !== authGenerationRef.current` 丢弃事件，本意是防止
-    //    「解绑后旧 channel 的在途事件写回」。但订阅本身在 partnerId 变化时
-    //    就会被 cleanup 移除，代际判断反而导致「重绑同一搭子」后订阅永久失效
-    //    （partnerId 值未变 → effect 不重建 → 旧订阅已被移除 → 无订阅存活）。
-    //    改为在回调内实时比对 partnerIdRef，语义更准确：
-    //    只有「当前搭子已不是这个 pId」时才丢弃事件。
     try {
       supabase
         .getChannels()
@@ -434,11 +517,18 @@ export function useHealthCloud(user, getDateStr) {
           (payload) => {
             // 当前搭子已变更（解绑 / 换人）→ 忽略过期实时事件
             if (partnerIdRef.current !== pId) return;
+            // 🛡️ TASK-P0.3 / B3-04：会话代际已变更（同账号新会话）→ 丢弃旧订阅事件
+            if (epoch !== authEpochRef.current) return;
+            // 🛡️ TASK-P0.3 / B3-L4-R1：授权代际已变更（重绑同一搭子 / 解绑）
+            //    → 旧授权周期的回调必须立即失效，即使 partnerId 与 epoch 都相同。
+            if (gen !== authGenerationRef.current) return;
             if (payload.new && payload.new.record_date === date) {
               const newData = {
                 waterAmount: payload.new.water_amount || 0,
                 mealsStatus: payload.new.meals_status || EMPTY_MEALS,
               };
+              // 合法写入：归属身份推进到当前会话（经 ref，保持依赖数组形状）。
+              claimStateOwnerRef.current?.();
               // 实时更新内存并同步存入本地磁盘
               setPartnerData(newData);
               AsyncStorage.setItem(cacheKey, JSON.stringify(newData)).catch(() => {});
@@ -461,14 +551,27 @@ export function useHealthCloud(user, getDateStr) {
   //   partnerId / partnerData 仍是 A 的残留值，B 会短暂看到 A 的搭子卡片
   //   与健康数据，且旧代际的在途请求仍可能写回。
   //
-  // 处理：user.id 变化时自增代际（作废所有在途请求）+ 清空 partnerId /
+  // 🛡️ TASK-P0.3 / B3-01：判定条件从「仅 userId 变化」扩展为
+  //   「userId 变化 **或** authEpoch 变化」。原因：
+  //     · A → 登出 → A 重新登录：userId 相同，但这是全新会话，
+  //       上一会话的搭子状态与在途请求必须全部作废；
+  //     · 同账号新 authEpoch（token 轮换 / 重新登录）同理。
+  //   旧实现只比较 userId，导致上述场景下 partnerId / partnerData 残留，
+  //   且旧会话在途请求的代际校验依然通过。
+  //
+  // 处理：身份转移时自增代际（作废所有在途请求）+ 清空 partnerId /
   //   partnerData。注意这里**不**清理磁盘缓存（那是 clearPartner 的职责，
   //   需要具体 stalePartnerId），账号切换由 useHealthData 的 profile 加载负责。
   const lastUserIdRef = useRef(user?.id ?? null);
+  const lastEpochRef = useRef(authEpoch);
   useEffect(() => {
     const nextUserId = user?.id ?? null;
-    if (lastUserIdRef.current === nextUserId) return;
+    const nextEpoch = authEpoch;
+    const userChanged = lastUserIdRef.current !== nextUserId;
+    const epochChanged = lastEpochRef.current !== nextEpoch;
+    if (!userChanged && !epochChanged) return;
     lastUserIdRef.current = nextUserId;
+    lastEpochRef.current = nextEpoch;
 
     // 🛡️ T6-B/X-08（复审返工 CR-01）+ 第二轮复审 14-01：账号切换时取消旧账号的防抖定时器，
     //    但**绝不丢弃** pendingMapRef 中的未同步载荷。
@@ -485,9 +588,12 @@ export function useHealthCloud(user, getDateStr) {
 
     // 作废所有在途请求与实时回调
     bumpAuthGeneration();
+    // 归属身份推进到新身份：清空后的空值属于新会话，必须可被呈现。
+    // 经 ref 调用，保持本 effect 依赖数组形状不变（源码契约锁定）。
+    claimStateOwnerRef.current?.();
     setPartnerId(null);
     setPartnerData({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
-  }, [user?.id, bumpAuthGeneration, tryFlushPending]);
+  }, [user?.id, authEpoch, bumpAuthGeneration, tryFlushPending]);
 
   useEffect(() => () => {
     if (timerRef.current) {
@@ -499,25 +605,35 @@ export function useHealthCloud(user, getDateStr) {
     tryFlushPending();
   }, [tryFlushPending]);
 
-  return useMemo(() => ({
-    partnerData,
-    partnerId,
-    // 🔧 T7-H22：对外暴露授权代际 state，供 useHealthData 的订阅 effect 纳入依赖，
-    //    使「重绑同一搭子」（partnerId 值不变、代际已变）也能重建实时订阅。
-    authGeneration,
-    setPartnerId,
-    bindPartner,
-    clearPartner,
-    fetchMyRecord,
-    fetchPartnerRecord,
-    applyPartnerRecord,
-    subscribePartner,
-    subscribeAuthorization,
-    syncToCloud,
-    flushNow,
-  }), [
-    partnerData, partnerId, authGeneration, bindPartner, clearPartner, fetchMyRecord,
-    fetchPartnerRecord, applyPartnerRecord, subscribePartner, subscribeAuthorization,
+  // 🛡️ TASK-P0.3 / B3-L4-R1（缺陷 5）：**渲染期身份遮蔽**（对外呈现层）。
+  //
+  //    归属身份 stateOwnerKey 在文件上部定义；这里只做纯派生：
+  //    归属身份 === 当前身份 → 正常呈现；否则一律呈现空值。
+  //    派生逻辑放在 useMemo 内，避免条件表达式导致依赖每次渲染变化。
+  const currentOwnerKey = `${user?.id ?? ''}::${authEpoch}`;
+
+  return useMemo(() => {
+    const ownerIsCurrent = stateOwnerKey === currentOwnerKey;
+    return {
+      partnerData: ownerIsCurrent ? partnerData : { waterAmount: 0, mealsStatus: EMPTY_MEALS },
+      partnerId: ownerIsCurrent ? partnerId : null,
+      // 🔧 T7-H22：对外暴露授权代际 state，供 useHealthData 的订阅 effect 纳入依赖，
+      //    使「重绑同一搭子」（partnerId 值不变、代际已变）也能重建实时订阅。
+      authGeneration,
+      setPartnerId,
+      bindPartner,
+      clearPartner,
+      fetchMyRecord,
+      fetchPartnerRecord,
+      applyPartnerRecord,
+      subscribePartner,
+      subscribeAuthorization,
+      syncToCloud,
+      flushNow,
+    };
+  }, [
+    partnerData, partnerId, stateOwnerKey, currentOwnerKey, authGeneration, bindPartner, clearPartner,
+    fetchMyRecord, fetchPartnerRecord, applyPartnerRecord, subscribePartner, subscribeAuthorization,
     syncToCloud, flushNow,
   ]);
 }

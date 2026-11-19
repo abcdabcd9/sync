@@ -44,7 +44,11 @@ export function HealthProvider({ children }) {
   } = storage;
 
   // ☁️ 所有 health_records 网络 IO 都收敛在 useHealthCloud 内部（不碰本地存储）
-  const cloud = useHealthCloud(user, getDateStr);
+  // 🛡️ TASK-P0.3 / B3-01：传入 authEpoch，使「同账号新会话」（userId 不变但
+  //    authEpoch 自增）也能作废旧会话的搭子状态、在途请求与实时订阅。
+  //    旧实现只传 user，账号切换清理 effect 仅比较 user.id，
+  //    A→登出→A 重新登录时搭子状态与旧订阅不会被作废。
+  const cloud = useHealthCloud(user, getDateStr, authEpoch);
   const {
     partnerData, partnerId, authGeneration, setPartnerId, bindPartner, clearPartner,
     fetchMyRecord, fetchPartnerRecord, applyPartnerRecord,
@@ -406,10 +410,15 @@ export function HealthProvider({ children }) {
   //    只有重启 App（走 loadAllData 一次性快照）才能看到数据。
   //    authGeneration 是 state，bindPartner / clearPartner 都会自增它，
   //    因此重绑同一人时也会触发本 effect 重建订阅。
+  //
+  // 🛡️ TASK-P0.3 / B3-05：依赖数组必须包含 authEpoch。
+  //    场景：A → 登出 → A 重新登录（partnerId 值相同、authGeneration 可能
+  //    尚未自增）→ 旧订阅若不重建，会继续以旧会话身份接收事件。
+  //    纳入 authEpoch 后，同账号新会话必然重建订阅，旧订阅被 cleanup 移除。
   useEffect(() => {
     if (!partnerId) return;
     return subscribePartner(partnerId, todayStr);
-  }, [partnerId, todayStr, authGeneration, subscribePartner]);
+  }, [partnerId, todayStr, authGeneration, authEpoch, subscribePartner]);
 
   // 🔔 T6.1/FIX-05：授权撤销实时感知。
   //    对方解绑时 partner_authorizations 的 status 由 accepted 变为 revoked，
@@ -428,7 +437,9 @@ export function HealthProvider({ children }) {
         return next;
       });
     });
-  }, [partnerId, subscribeAuthorization, clearPartner]);
+    // 🛡️ TASK-P0.3 / B3-05：authEpoch 纳入依赖，同账号新会话必须重建授权订阅，
+    //    避免旧会话订阅的复验结果清空新会话的搭子状态。
+  }, [partnerId, authEpoch, subscribeAuthorization, clearPartner]);
 
   // 🎯 饮水写入：本地 state 立即更新（零延迟，数字不跳动）+ 云端 500ms 防抖同步
   //
