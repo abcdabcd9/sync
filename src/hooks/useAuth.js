@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { supabase, authStorageStatus, AUTH_STORAGE_ERROR } from '../services/supabase';
 import { setSignedUrlOwner } from './chat/useSignedMediaUrl';
 import { setProfileCacheOwner } from './profile/useProfileCache';
+import { setMediaCacheOwner } from '../services/mediaCache';
 
 const AuthContext = createContext();
 
@@ -152,9 +153,12 @@ export function AuthProvider({ children }) {
     if (ownerChanged) {
       setSignedUrlOwner(nextOwnerId);
       setProfileCacheOwner(nextOwnerId);
+      // 🗄️ B2：沙盒媒体写入闸门同步登记身份（仅作迟到写回校验，不改索引键）。
+      setMediaCacheOwner(nextOwnerId);
     } else if (tokenRotated) {
       setSignedUrlOwner(nextOwnerId, true);
       setProfileCacheOwner(nextOwnerId, true);
+      setMediaCacheOwner(nextOwnerId, true);
     }
 
     ownerIdRef.current = nextOwnerId;
@@ -315,6 +319,8 @@ export function AuthProvider({ children }) {
         // 🆔 B1-D / B1-E：同步清空下游模块级缓存并推进其代际
         setSignedUrlOwner(null);
         setProfileCacheOwner(null);
+        // 🗄️ B2：沙盒写入闸门同步失效（不删除磁盘文件，保留合法离线缓存）
+        setMediaCacheOwner(null);
         ownerIdRef.current = null;
         sessionRef.current = null;
         // 🛡️ CR-08：登出成功路径必须显式清空 user/session。

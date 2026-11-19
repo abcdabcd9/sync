@@ -274,6 +274,73 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': 'export function createClient(){ return {}; } export default { createClient };',
   });
 
+  // expo-file-system stub（B2：useAuth 现在会 import mediaCache，后者依赖
+  //   expo-file-system/legacy。本套件不验证沙盒文件读写，只需模块可解析、
+  //   调用不抛错，因此提供最小可用的内存实现。）
+  mk('expo-file-system', {
+    'package.json': JSON.stringify({
+      name: 'expo-file-system',
+      version: '0.0.0',
+      type: 'module',
+      main: 'index.js',
+      exports: { '.': './index.js', './legacy': './legacy.js' },
+    }),
+    'index.js': 'export default {};',
+    'legacy.js': `
+const __files = new Map();
+const __dirs = new Set(['file:///doc/']);
+const api = {
+  documentDirectory: 'file:///doc/',
+  cacheDirectory: 'file:///cache/',
+  async getInfoAsync(p) {
+    const key = String(p);
+    if (__files.has(key)) return { exists: true, isDirectory: false, size: __files.get(key).length, uri: key };
+    if (__dirs.has(key)) return { exists: true, isDirectory: true, uri: key };
+    return { exists: false, isDirectory: false };
+  },
+  async makeDirectoryAsync(p) { __dirs.add(String(p)); },
+  async readDirectoryAsync(p) {
+    const base = String(p);
+    const out = [];
+    for (const k of __files.keys()) {
+      if (k.startsWith(base) && !k.slice(base.length).includes('/')) out.push(k.slice(base.length));
+    }
+    for (const d of __dirs) {
+      if (d !== base && d.startsWith(base) && !d.slice(base.length).replace(/\\/$/, '').includes('/')) {
+        out.push(d.slice(base.length).replace(/\\/$/, ''));
+      }
+    }
+    return out;
+  },
+  async downloadAsync(url, target) {
+    __files.set(String(target), 'x');
+    return { uri: String(target), status: 200 };
+  },
+  async copyAsync({ from, to }) {
+    __files.set(String(to), __files.get(String(from)) || 'x');
+  },
+  async deleteAsync(p) {
+    const key = String(p);
+    __files.delete(key);
+    __dirs.delete(key);
+  },
+  async writeAsStringAsync(p, c) { __files.set(String(p), String(c)); },
+  async readAsStringAsync(p) { return __files.get(String(p)) || ''; },
+};
+export default api;
+export const documentDirectory = api.documentDirectory;
+export const cacheDirectory = api.cacheDirectory;
+export const getInfoAsync = api.getInfoAsync;
+export const makeDirectoryAsync = api.makeDirectoryAsync;
+export const readDirectoryAsync = api.readDirectoryAsync;
+export const downloadAsync = api.downloadAsync;
+export const copyAsync = api.copyAsync;
+export const deleteAsync = api.deleteAsync;
+export const writeAsStringAsync = api.writeAsStringAsync;
+export const readAsStringAsync = api.readAsStringAsync;
+`,
+  });
+
   const copy = (rel) => {
     const src = path.join(repoRoot, rel);
     const dst = path.join(dir, rel);
@@ -317,6 +384,9 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'src/hooks/browser/useBrowserHistory.js',
     'src/hooks/profile/useProfileCache.js',
     'src/hooks/chat/useSignedMediaUrl.js',
+    // 🗄️ B2：useAuth 现在 import mediaCache 以同步登记沙盒写入身份闸门，
+    //    因此必须把该真实模块一并复制进沙箱（其 expo-file-system 依赖已 stub）。
+    'src/services/mediaCache.js',
     'src/context/BrowserSessionContext.js',
     'src/hooks/useAuth.js',
   ];
