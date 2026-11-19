@@ -232,7 +232,15 @@ export const supabase = {
   channel(name) { return makeChannel(name); },
   getChannels() { return state.channels.filter((c) => !c.removed).map((c) => ({ topic: c.topic, __ref: c })); },
   removeChannel(chOrRef) {
-    const target = chOrRef && chOrRef.__ref ? chOrRef.__ref : state.channels.find((c) => c.topic === (chOrRef && chOrRef.topic));
+    // 真实 Supabase 的 removeChannel(channel) 接受 channel 实例（即 makeChannel
+    // 返回的 api 对象）并移除它。旧 stub 只按 topic 查找，而 api 对象没有 topic
+    // 字段 → 永远找不到目标 → channel 永不 removed。这会让「cleanup 后旧 channel
+    // 仍存活」以及「重复订阅去重失效」两个断言在毫秒级竞争下随机失败（HEAD 即存在）。
+    // 修复：优先按 api 反向引用（ch.api === chOrRef）定位，其次按 __ref / topic。
+    const target = chOrRef && chOrRef.__ref
+      ? chOrRef.__ref
+      : state.channels.find((c) => c.api === chOrRef)
+        || state.channels.find((c) => c.topic === (chOrRef && chOrRef.topic));
     if (target) target.removed = true;
     return Promise.resolve('ok');
   },

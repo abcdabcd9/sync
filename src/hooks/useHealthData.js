@@ -52,7 +52,9 @@ export function HealthProvider({ children }) {
   const {
     partnerData, partnerId, authGeneration, setPartnerId, bindPartner, clearPartner,
     fetchMyRecord, fetchPartnerRecord, applyPartnerRecord,
-    subscribePartner, subscribeAuthorization, syncToCloud, flushNow,
+    subscribePartner, subscribeAuthorization, syncToCloud, flushNow, hasPendingFor,
+    // 🛡️ TASK-P0.3 / B4-L4-R1（L4-03 / I-10）：外层 500ms 防抖排队时立即入队落盘。
+    enqueuePending, scheduleFlush,
   } = cloud;
 
   // 🧠 连续打卡状态机（纯业务规则，零网络 / 零磁盘）
@@ -294,8 +296,17 @@ export function HealthProvider({ children }) {
           // 🛡️ X-02 / CR-05：身份或会话代际已切换 → 丢弃旧账号/旧会话的云端响应，
           //    绝不写进新账号/新会话 key。hydrateFromCloud 内部还会再次 fail-closed 校验。
           // 🛡️ Round 4A / CR4-02：异步边界 ④（fetchMyRecord 往返）同样需要来源身份校验。
+          // 🛡️ TASK-P0.3 / B4（R-07）：**本地未同步 pending 优先**。
+          //    若本地存在「今天」的未同步 pending（用户已改但尚未成功上云），
+          //    云端返回的是旧快照，绝不能覆盖本地新值。此时跳过 hydrate，
+          //    让 pending flush 把本地新值推上云，云端随后自然一致。
+          //    这是「冷启动本地新值被旧云端快照覆盖」的核心闸门。
+          const hasLocalPending = loadOwnerId
+            ? await hasPendingFor(loadOwnerId, currentDayStr)
+            : false;
           if (
             myData &&
+            !hasLocalPending &&
             !userInteractedRef.current &&
             isIdentityCurrent(originSnapshot) &&
             profileUserIdRef.current === loadOwnerId &&
@@ -471,13 +482,22 @@ export function HealthProvider({ children }) {
   //    定时器真正触发时再校验一次。身份已切换（旧会话回调）则丢弃，绝不把
   //    旧会话的饮水值同步到云端（避免「本地被拒、云端却仍排队」的错位）。
   const scheduleWaterSync = useCallback((nextWater, snapshot) => {
+    // 🛡️ TASK-P0.3 / B4-L4-R1（L4-03 / I-10）：**排队即入队落盘**。
+    //    旧实现只在 500ms 定时器触发后才 syncToCloud → persistPending，
+    //    导致「用户点击后 500ms 内进程被杀」时磁盘无 Pending，冷启动无法恢复，
+    //    且旧云端快照会覆盖本地新值（L4-03 复现：点击后本地 401，Pending 为 null）。
+    //    修复：在防抖排队时立即 enqueuePending（写内存 + 落盘），把持久化窗口
+    //    从「整个 500ms 防抖期」压缩到「setState 之后、AsyncStorage 写入之前」。
+    //    500ms 定时器只负责触发 flush（scheduleFlush），不再承担落盘职责。
+    if (!isIdentityCurrent(snapshot)) return;
+    enqueuePending(nextWater, mealsStatusRef.current);
     if (waterSyncTimerRef.current) clearTimeout(waterSyncTimerRef.current);
     waterSyncTimerRef.current = setTimeout(() => {
       waterSyncTimerRef.current = null;
       if (!isIdentityCurrent(snapshot)) return;
-      syncToCloud(nextWater, mealsStatusRef.current);
+      scheduleFlush();
     }, 500);
-  }, [syncToCloud, isIdentityCurrent]);
+  }, [enqueuePending, scheduleFlush, isIdentityCurrent]);
 
   /**
    * 统一的饮水写入入口。

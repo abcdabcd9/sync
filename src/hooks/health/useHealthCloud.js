@@ -22,6 +22,82 @@ import {
 const EMPTY_MEALS = { '早餐': false, '午餐': false, '晚餐': false };
 const DEBOUNCE_MS = 1500;
 
+// ============================================================================
+// 🛡️ TASK-P0.3 / B4 — 健康数据同步可靠性（Pending 持久化 + 版本化提交）
+//
+// B4 诊断确认的真实缺陷（详见 TASK_P0.3.md §19.4）：
+//   R-01/R-02  pendingMapRef 为纯内存 Map，进程结束即丢失，冷启动无法恢复。
+//   R-03/R-07  本地已落盘的新值，冷启动后被云端旧快照 hydrate 覆盖。
+//   R-05       inflightRef 单布尔在并发 flush 时会让第二个 flush 全部跳过。
+//   补充二     V1 提交成功会删除已被 V2 覆盖的槽位（旧成功清理新版本）。
+//
+// 统一设计（不变量）：
+//   I-1  Pending 必须持久化到 AsyncStorage，按 owner 命名空间隔离：
+//          @sync_health_pending_v1_${ownerId}  →  JSON { [recordDate]: entry }
+//        entry = { recordDate, water, meals, ownerId, rev, updatedAt }
+//   I-2  rev 为单调递增版本号（同一 owner+date 每次入队 +1）。
+//        提交成功只允许删除「rev 与本次提交 rev 相同」的条目；
+//        rev 不同说明已被更新版本覆盖 → 保留新版本，绝不删除。
+//   I-3  入队即持久化（先写盘再返回），把「防抖窗口内杀进程」的丢失窗口
+//        压缩到「setState 之后、AsyncStorage.setItem 之前」这一无法消除的
+//        极小窗口（AsyncStorage 无同步写 API，此为平台保证边界）。
+//   I-4  hydrate 冲突判定：若该 owner+date 存在 pending 且 pending.updatedAt
+//        不早于云端 updated_at，则拒绝用云端覆盖本地（本地更新优先）。
+//   I-5  并发 flush 用「按 key 的 in-flight Set」替代单布尔，避免互相跳过。
+//   I-6  所有持久化读写都必须校验 owner 归属，绝不跨账号共享。
+// ============================================================================
+
+/** Pending 持久化 key 前缀（版本化，便于未来演进） */
+const PENDING_KEY_PREFIX = '@sync_health_pending_v1_';
+
+/** 构造某 owner 的 pending 持久化 key；无 owner 返回 null（不读写磁盘） */
+function buildPendingKey(ownerId) {
+  if (!ownerId || typeof ownerId !== 'string') return null;
+  return `${PENDING_KEY_PREFIX}${ownerId}`;
+}
+
+/**
+ * 读取某 owner 的持久化 pending 表。
+ * @returns {Promise<Record<string, object>>} 失败/无数据时返回空对象（fail-open 到空，不抛错）
+ */
+async function readPendingStore(ownerId) {
+  const key = buildPendingKey(ownerId);
+  if (!key) return {};
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    // 归属校验：只接受 ownerId 与请求 owner 一致的条目（防串号）
+    const out = {};
+    for (const [date, entry] of Object.entries(parsed)) {
+      if (entry && entry.ownerId === ownerId) out[date] = entry;
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * 写入某 owner 的持久化 pending 表。
+ * 空表时直接删除 key（避免残留空对象）。
+ */
+async function writePendingStore(ownerId, store) {
+  const key = buildPendingKey(ownerId);
+  if (!key) return;
+  try {
+    const dates = Object.keys(store || {});
+    if (dates.length === 0) {
+      await AsyncStorage.removeItem(key);
+      return;
+    }
+    await AsyncStorage.setItem(key, JSON.stringify(store));
+  } catch (e) {
+    console.warn('⚠️ pending 持久化写入失败(内存态仍保留)', e?.message || e);
+  }
+}
+
 export function useHealthCloud(user, getDateStr, authEpoch = 0) {
   const [partnerData, setPartnerData] = useState({ waterAmount: 0, mealsStatus: EMPTY_MEALS });
   const [partnerId, setPartnerId] = useState(null);
@@ -39,7 +115,12 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
   //      · 不同账号 / 不同日期互不覆盖，各自保留、各自重试。
   //      · 提交成功只删除「该键对应的那一项」，不影响其他待同步项。
   //      · 提交失败 / 跨账号一律保留，等待下次重试。
-  //    注意：这是内存级最小修复，不实现 B4 的完整持久化队列（超出本轮授权范围）。
+  //
+  // 🛡️ TASK-P0.3 / B4（R-01 / R-02）：**升级为持久化队列**。
+  //    内存 Map 仍是运行时唯一事实源（读写零延迟），但每次变更都会镜像到
+  //    AsyncStorage（key = @sync_health_pending_v1_${ownerId}），冷启动时
+  //    由 hydratePendingFromDisk() 恢复。载荷新增 rev（版本号）与 updatedAt
+  //    （入队时刻），用于「旧提交成功不得清理新版本」与「hydrate 冲突判定」。
   const pendingMapRef = useRef(new Map());
   const pendingKeyOf = useCallback((ownerId, recordDate) => `${ownerId}::${recordDate}`, []);
 
@@ -100,8 +181,9 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
   //        待切回原账号后由 flushNow / 防抖重试（可恢复、可重试）。
   //      · upsert 返回 error 或抛异常 → 保留该槽位，等待下次重试。
   //      · 仅当 upsert 确认无 error 时，才删除「该键对应的那一项」（成功确认后才移除）。
-  //      · 并发提交用 inflightRef 去重，避免重复 upsert。
-  const inflightRef = useRef(false);
+  //
+  // 🛡️ TASK-P0.3 / B4：并发去重由单布尔 inflightRef 升级为按 key 的
+  //    inflightKeysRef（见文件下部 B4 基础设施区）。此处不再声明 inflightRef。
 
   // 🛡️ T6-B 第二轮复审 14-01（BLOCKER）补充：当前登录用户的 ref 镜像。
   //
@@ -150,9 +232,196 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
   const claimStateOwnerRef = useRef(null);
   useEffect(() => { claimStateOwnerRef.current = claimStateOwner; }, [claimStateOwner]);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // 🛡️ TASK-P0.3 / B4：Pending 持久化与版本化提交基础设施
+  //
+  //    ⚠️ 这些 hook 必须位于 B3 测试锁定的前 7 个槽位（0=partnerData
+  //       1=partnerId 2=timerRef 3=pendingMapRef 4=pendingKeyOf
+  //       5=authGenerationRef 6=authGeneration）**之后**，且位于 commit /
+  //       tryFlushPending 之前（它们依赖 persistPending / inflightKeysRef）。
+  //       这样既保证 B3 冻结测试读取的槽位索引不变，又避免 TDZ 引用错误。
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // 🛡️ TASK-P0.3 / B4（R-05）：按 key 的 in-flight 集合，替代单布尔 inflightRef。
+  //    单布尔会让「防抖 flush」与「AppState background flush」并发时，
+  //    第二个 flush 的所有 commit 全部 return false 被跳过（虽不丢数据，
+  //    但会延迟到下一次 flush，且语义上把「并发」误判为「重复」）。
+  //    改为按 key 去重：同一 key 不重复提交，不同 key 可并行。
+  const inflightKeysRef = useRef(new Set());
+
+  // 🛡️ TASK-P0.3 / B4-L4-R1（L4-01 / I-9）：in-flight 完成后自动补传。
+  //    问题：V1 在途时 V2 的防抖 flush 因同 key 去重被跳过；V1 成功后
+  //    没有任何机制重新提交 V2 → V2 永久滞留 pending（需用户再操作/重启）。
+  //    修复：commit 的 finally 释放 key 后，若该 key 仍有 pending 且其
+  //    「操作序号」大于刚提交的版本，则调度一次 tryFlushPending（微任务，
+  //    避免同步递归）。用 ref 持有 tryFlushPending，规避 TDZ 与依赖环。
+  //
+  //    ⚠️ B4-L4-R2（L4-R1-01）：判定依据由 updatedAt 改为 opSeq。
+  //       Date.now() 只有毫秒精度，两次合法编辑可能落在同一毫秒 →
+  //       `latest.updatedAt > submittedAt` 恒为 false → V2 永不补传。
+  //       opSeq 是本进程内严格单调递增的整数，与系统时间无关。
+  const retryFlushRef = useRef(null);
+
+  // 🛡️ TASK-P0.3 / B4-L4-R2（L4-R1-01 / L4-R1-02）：**Pending 操作身份**。
+  //
+  //    统一问题域：Pending 的「新旧」判定绝不能依赖系统时间（Date.now 既非
+  //    跨进程单调，也非毫秒内唯一）。因此引入两个与时间无关的标识：
+  //
+  //      · bootIdRef —— 本 Hook 实例（≈ 本进程）的唯一标识，随机生成。
+  //        仅用于回答「两个 Pending 是否来自同一进程」，绝不比较其大小。
+  //      · opSeqRef  —— 本进程内严格单调递增的操作序号（每次 enqueuePending +1）。
+  //        同一 bootId 下，opSeq 大者必然后产生 → 可靠的进程内版本序。
+  //
+  //    载荷同时携带 opId = `${bootId}-${opSeq}`，用于「成功提交只确认对应实例」。
+  //    ⚠️ 跨进程（bootId 不同）时**不比较任何序号大小**，改由初始化屏障
+  //       （hydratedOwnersRef）给出确定性优先级，见 hydratePendingFromDisk。
+  //
+  //    ⚠️ bootId 采用「首次入队时惰性生成」而非渲染期生成：
+  //       · 渲染期调用 Date.now()/Math.random() 违反 react-hooks/purity；
+  //       · 用 useState 惰性初始化器虽合规，但会**新增一个 hook 槽位**，
+  //         改变 useHealthCloud 的 hook 数量，进而影响 B3 冻结测试所依赖的
+  //         渲染时序（实测会显著加剧 B3 同名 channel 的毫秒级竞争 flake）。
+  //       因此这里只声明 ref，真正的 bootId 在 enqueuePending（非渲染期）
+  //       首次调用时生成。hydratePendingFromDisk 中若 bootIdRef 仍为 null，
+  //       说明本进程尚无新操作，sameBoot 判为 false → 走初始化屏障分支，
+  //       语义依然正确（见下方仲裁逻辑）。
+  const bootIdRef = useRef(null);
+  const opSeqRef = useRef(0);
+
+  // 🛡️ TASK-P0.3 / B4-L4-R1（L4-01 / I-9 精化）：**仅对「防抖已到期」的 key 补传**。
+  //    区分两种「V1 在途时存在 V2」的情形：
+  //      (a) V2 的防抖 flush 已到期并因同 key 去重被跳过 → V2 已「尝试过」但未提交，
+  //          V1 完成后必须自动补传（L4-01 场景：V2 的 1500ms 定时器已触发过）。
+  //      (b) V2 的防抖 flush 尚未到期（仍在防抖窗口内）→ V2 的定时器稍后会正常提交，
+  //          无需在 V1 完成时抢跑（AC-B4-09/10 场景：V2 应保持 pending 直到自身防抖到期）。
+  //    因此用 debounceElapsedKeysRef 记录「该 key 的防抖定时器已触发过」：
+  //      · enqueuePending 写入新版本时清除该 key 标记（新版本重新进入防抖窗口）；
+  //      · scheduleFlush 的定时器回调触发时，把当前所有 pending key 标记为已到期；
+  //      · commit 的 finally 仅当 key 已到期且存在更新版本时才补传。
+  //    这样既修复 L4-01（防抖已到期却被去重），又不改变「防抖窗口内 V2 保持 pending」
+  //    的既有语义（AC-B4-09/10）。
+  const debounceElapsedKeysRef = useRef(new Set());
+
+  // 🛡️ TASK-P0.3 / B4-L4-R1（L4-02 / I-8）：**初始化屏障**。
+  //    记录「已从磁盘 hydrate 完成」的 owner。hydrate 完成前用户产生的新操作
+  //    属于「本进程新意图」，绝不能被磁盘旧 pending 覆盖（即使磁盘 rev 更大）。
+  //
+  //    ⚠️ B4-L4-R2（L4-R1-02）：该屏障现在是**唯一的跨进程仲裁依据**。
+  //       旧实现用 updatedAt 比较内存/磁盘条目，但设备时钟可能被 NTP 回拨，
+  //       磁盘旧条目的时间戳可能「晚于」本进程新操作 → 旧值反覆盖新值。
+  //       新规则（见 hydratePendingFromDisk）：
+  //         · owner 尚未 hydrate（屏障未建立）→ 内存条目必是本进程新操作
+  //           → 无条件优先，磁盘旧条目丢弃（不比较任何时间/序号）；
+  //         · owner 已 hydrate → 内存条目只可能来自磁盘恢复或本进程新操作，
+  //           两者 bootId 相同则用 opSeq 比较；bootId 不同（理论上不会发生）
+  //           则保守保留内存。
+  const hydratedOwnersRef = useRef(new Set());
+
+  // 🛡️ TASK-P0.3 / B4：pending 持久化写盘串行化。
+  //    多个 syncToCloud / commit 可能并发触发写盘，用 Promise 链保证
+  //    「后写覆盖前写」的顺序与内存 Map 的最终状态一致。
+  const persistChainRef = useRef(Promise.resolve());
+
+  /**
+   * 把内存 pendingMapRef 中「属于 ownerId 的条目」镜像到 AsyncStorage。
+   * 串行化执行，避免并发写盘乱序。
+   */
+  const persistPending = useCallback((ownerId) => {
+    if (!ownerId) return Promise.resolve();
+    const store = {};
+    for (const payload of pendingMapRef.current.values()) {
+      if (!payload || payload.ownerId !== ownerId) continue;
+      store[payload.recordDate] = payload;
+    }
+    persistChainRef.current = persistChainRef.current
+      .then(() => writePendingStore(ownerId, store))
+      .catch(() => {});
+    return persistChainRef.current;
+  }, []);
+
+  /**
+   * 🛡️ TASK-P0.3 / B4（R-02）：冷启动 / 登录后从磁盘恢复 pending。
+   * 只恢复「属于当前登录用户」的条目；磁盘上其他 owner 的数据原样保留。
+   * 恢复后立即尝试 flush 一次（网络可用时补传）。
+   */
+  const hydratePendingFromDisk = useCallback(async (ownerId) => {
+    if (!ownerId) return;
+    // 🛡️ B4-L4-R2（L4-R1-02）：**在第一个 await 之前**快照「屏障是否已建立」。
+    //    这是本函数唯一的跨进程仲裁依据：若此刻屏障尚未建立，说明本进程
+    //    尚未完成该 owner 的初始化，内存中已存在的条目必然是本进程新操作
+    //    （用户冷启动后立刻编辑），必须无条件优先于磁盘旧条目。
+    const alreadyHydrated = hydratedOwnersRef.current.has(ownerId);
+    const diskStore = await readPendingStore(ownerId);
+    let restored = 0;
+    let dropped = 0;
+    for (const [date, entry] of Object.entries(diskStore)) {
+      if (!entry || entry.ownerId !== ownerId) continue;
+      const key = pendingKeyOf(ownerId, date);
+      const existing = pendingMapRef.current.get(key);
+      if (existing) {
+        // 🛡️ TASK-P0.3 / B4-L4-R2（L4-R1-02）：**确定性优先级，不比较系统时间**。
+        //
+        //    旧实现用 `memAt >= diskAt`（updatedAt）判定，隐含假设 Date.now()
+        //    跨进程单调。但设备时钟可能被 NTP 回拨：磁盘旧条目的时间戳可能
+        //    比本进程新操作「更晚」→ 旧值反覆盖新值（L4-R1-EXTRA-02 复现）。
+        //
+        //    新规则（两级，均与时间无关）：
+        //      1) 屏障未建立（!alreadyHydrated）→ 内存条目必是本进程新操作
+        //         → 无条件保留内存，丢弃磁盘旧条目。
+        //      2) 屏障已建立 → 内存条目只可能来自「磁盘恢复」或「本进程新操作」。
+        //         同一 bootId 下用 opSeq 比较（严格单调，可靠）；
+        //         bootId 不同（理论上不会发生）→ 保守保留内存，不比较大小。
+        const sameBoot = existing.bootId && existing.bootId === bootIdRef.current;
+        const memWins = !alreadyHydrated
+          || !sameBoot
+          || (existing.opSeq ?? 0) >= (entry.opSeq ?? 0);
+        if (memWins) {
+          dropped += 1;
+          continue;
+        }
+      }
+      // 磁盘条目胜出（或内存无该 key）→ 恢复磁盘条目。
+      // 保留磁盘条目的原始 bootId/opSeq（跨进程身份），不伪造本进程序号。
+      pendingMapRef.current.set(key, entry);
+      restored += 1;
+    }
+    // 标记该 owner 的初始化屏障已完成（此后 hydrate 不再覆盖本进程新操作）。
+    hydratedOwnersRef.current.add(ownerId);
+    if (restored > 0) {
+      console.log(`🔄 已从磁盘恢复 ${restored} 条未同步健康数据`);
+    }
+    if (dropped > 0) {
+      // 磁盘旧值被本进程更新的操作取代 → 立即把内存态回写磁盘，保持一致性。
+      await persistPending(ownerId);
+    }
+  }, [pendingKeyOf, persistPending]);
+
+  /**
+   * 🛡️ TASK-P0.3 / B4（R-07）：查询「某账号某日期是否存在未同步的本地 pending」。
+   *    供 useHealthData 的云端 hydrate 闸门使用：若本地有未同步的新值，
+   *    则云端旧快照不得覆盖本地（本地优先），避免「冷启动本地新值被旧云端覆盖」。
+   *    同时检查内存 Map 与磁盘（冷启动时内存可能尚未 hydrate 完成）。
+   */
+  const hasPendingFor = useCallback(async (ownerId, recordDate) => {
+    if (!ownerId || !recordDate) return false;
+    const key = pendingKeyOf(ownerId, recordDate);
+    if (pendingMapRef.current.has(key)) return true;
+    const diskStore = await readPendingStore(ownerId);
+    return Boolean(diskStore[recordDate] && diskStore[recordDate].ownerId === ownerId);
+  }, [pendingKeyOf]);
+
   /**
    * 提交单个 pending 载荷。
-   * @returns {Promise<boolean>} true = 已确认成功（可移除该槽位）；false = 未成功（必须保留）
+   *
+   * 🛡️ TASK-P0.3 / B4（补充二）：**版本化提交**。
+   *    载荷携带 rev（单调递增版本号）。commit 只负责「把这一版写进云端」，
+   *    不负责删除 pending —— 删除由 tryFlushPending 在「确认当前 pending
+   *    仍是同一 rev」后才执行。这样「V1 慢 / V2 快」时：
+   *      · V2 先成功 → 删除 rev=2 的 pending；
+   *      · V1 后成功 → tryFlushPending 发现当前 pending 已不是 rev=1（或已不存在）
+   *        → 不删除任何东西，V2 的最终结果不被 V1 的迟到成功覆盖。
+   *
+   * @returns {Promise<boolean>} true = 该 rev 已确认写入云端；false = 未成功（必须保留）
    */
   const commit = useCallback(async (payload) => {
     if (!payload) return false;
@@ -165,8 +434,26 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
     if (payload.ownerId && payload.ownerId !== currentUser.id) {
       return false;
     }
-    if (inflightRef.current) return false;
-    inflightRef.current = true;
+    // 🛡️ B4（R-05）：按 key 去重，同一 key 不重复提交，不同 key 可并行。
+    const key = pendingKeyOf(payload.ownerId || currentUser.id, payload.recordDate);
+    if (inflightKeysRef.current.has(key)) return false;
+    inflightKeysRef.current.add(key);
+    // 🛡️ B4-L4-R3（L4-R2-CROSS-BOOT）：快照本次提交的「操作身份」，用于 finally
+    //    判定在途期间是否产生了更新的版本。
+    //
+    //    ⚠️ 为什么不再快照 opSeq 并比较大小：
+    //       opSeq 只在**同一 bootId 内**严格单调。磁盘恢复的旧进程条目可能携带
+    //       很大的 opSeq（如 80），而本进程新操作从 1 开始 → `1 > 80` 为 false，
+    //       新操作永不自动补传（L4-R2-CROSS-BOOT 复现：upserts=[1000], pending=2000）。
+    //       跨进程比较序号大小在语义上无意义。
+    //
+    //    新判定（三级，均不跨 boot 比较数值）：
+    //      1) opId 身份：当前 pending 的 opId 与提交时不同 → 已被新操作替换；
+    //      2) 对象实例：当前 pending 已不是提交时的那个对象 → 已被替换
+    //         （覆盖缺少 opId 的旧载荷；同一操作重复恢复不会改变对象实例）；
+    //      3) 旧载荷兼容：两者都缺 opId 且是同一对象 → 视为未变化。
+    const submittedOpId = payload.opId ?? null;
+    const submittedRef = payload;
     try {
       const { error } = await supabase.from('health_records').upsert(
         {
@@ -186,34 +473,79 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
       console.warn('⚠️ health_records 云端写入异常(保留待重试)', e?.message || e);
       return false;
     } finally {
-      inflightRef.current = false;
+      inflightKeysRef.current.delete(key);
+      // 🛡️ TASK-P0.3 / B4-L4-R1（L4-01 / I-9）：**in-flight 完成后自动补传**。
+      //    释放 key 后，若该 key 仍有 pending 且它已**不是**本次提交的那一版，
+      //    说明在途期间产生了更新的版本。但只有「该 key 的防抖定时器已触发过」
+      //    （debounceElapsedKeysRef 命中）时才补传——若其防抖尚未到期，则交给其
+      //    自身定时器，保持「防抖窗口内 pending 保持」的既有语义（AC-B4-09/10）。
+      //    用微任务调度，避免在 finally 内同步递归；retryFlushRef 规避 TDZ。
+      //
+      //    ⚠️ B4-L4-R2（L4-R1-01）：判定依据由 updatedAt 改为操作身份（不再用时间）。
+      //    ⚠️ B4-L4-R3（L4-R2-CROSS-BOOT）：判定依据由「opSeq 数值大小」改为
+      //       「opId 身份 / 对象实例变化」——跨 bootId 的 opSeq 不可比较。
+      const latest = pendingMapRef.current.get(key);
+      const replaced = Boolean(latest) && (
+        (submittedOpId !== null && (latest.opId ?? null) !== submittedOpId)
+        || latest !== submittedRef
+      );
+      if (replaced && debounceElapsedKeysRef.current.has(key)) {
+        debounceElapsedKeysRef.current.delete(key);
+        const flush = retryFlushRef.current;
+        if (flush) {
+          Promise.resolve().then(() => { flush(); }).catch(() => {});
+        }
+      }
     }
-  }, []);
+  }, [pendingKeyOf]);
 
   /**
    * 尝试提交 pendingMapRef 中「属于当前登录用户」的全部载荷。
-   * 仅当 commit 确认成功时才删除该键；失败/跨账号一律保留。
-   * 其他账号的槽位不在此处提交（避免串号），留待切回原账号后重试。
+   *
+   * 🛡️ TASK-P0.3 / B4（补充二）：**版本校验后删除**。
+   *    提交前快照该载荷的「操作身份」；提交成功后重新读取 map.get(key)，
+   *    仅当「当前 pending 仍是同一操作实例」时才删除。若提交期间用户又编辑
+   *    产生了新载荷，则保留新载荷，绝不用旧提交的成功清理新版本。
+   *    删除后立即 persistPending，保证磁盘与内存一致。
+   *
+   *    ⚠️ B4-L4-R2（L4-R1-01）：身份判定由 rev 改为 opId。
+   *       rev 是进程内序号，冷启动后从 1 重新开始，与磁盘恢复的条目可能
+   *       撞号；opId = `${bootId}-${opSeq}` 全局唯一，能精确回答
+   *       「当前 pending 是否仍是我刚提交的那一个实例」。
    */
   const tryFlushPending = useCallback(async () => {
     const map = pendingMapRef.current;
     if (!map || map.size === 0) return;
     // 以执行时的实时登录用户为准（避免陈旧闭包把旧账号当作当前账号）。
     const currentUserId = userRef.current?.id ?? null;
+    if (!currentUserId) return;
     // 快照键列表，避免迭代过程中 Map 被修改。
     const keys = Array.from(map.keys());
+    let mutated = false;
     for (const key of keys) {
       const payload = map.get(key);
       if (!payload) continue;
       // 只提交属于当前登录用户的载荷；其他账号的保留待切回后重试。
-      if (!currentUserId || payload.ownerId !== currentUserId) continue;
+      if (payload.ownerId !== currentUserId) continue;
+      const submittedOpId = payload.opId ?? null;
       const ok = await commit(payload);
-      // 只有「仍是同一份载荷」且「确认成功」时才移除，避免提交期间被新载荷替换。
-      if (ok && map.get(key) === payload) {
+      if (!ok) continue;
+      // 🛡️ 重新读取当前 pending，只有「仍是同一操作实例」才删除。
+      const current = map.get(key);
+      if (current && submittedOpId !== null && (current.opId ?? null) === submittedOpId) {
         map.delete(key);
+        mutated = true;
       }
+      // 若 current 已不存在（并发 flush 已删）或已是新操作（用户又编辑）→ 不动。
     }
-  }, [commit]);
+    if (mutated) {
+      await persistPending(currentUserId);
+    }
+  }, [commit, persistPending]);
+
+  // 🛡️ TASK-P0.3 / B4-L4-R1（L4-01 / I-9）：把 tryFlushPending 挂到 ref，
+  //    供 commit 的 finally 在 in-flight 释放后调度补传（规避 TDZ / 依赖环）。
+  useEffect(() => { retryFlushRef.current = tryFlushPending; }, [tryFlushPending]);
 
   const flushNow = useCallback(async () => {
     if (timerRef.current) {
@@ -223,24 +555,92 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
     await tryFlushPending();
   }, [tryFlushPending]);
 
+  /**
+   * 本地健康数据变更 → 入队 pending → 防抖提交。
+   *
+   * 🛡️ TASK-P0.3 / B4（R-01 / 补充一）：**入队即持久化**。
+   *    旧实现只在内存 Map 里放载荷，进程被杀即丢失。现在：
+   *      1. 生成单调递增 rev + updatedAt（入队时刻）；
+   *      2. 写入内存 Map（运行时事实源）；
+   *      3. **立即** persistPending 落盘（不等防抖），把「进程被杀」窗口
+   *         从「整个防抖期」压缩到「一次 AsyncStorage 写入的异步间隙」；
+   *      4. 再启动防抖定时器，到点后 tryFlushPending 提交云端。
+   *    这样即使防抖窗口内进程被杀，冷启动 hydratePendingFromDisk 也能恢复。
+   */
+  /**
+   * 🛡️ TASK-P0.3 / B4-L4-R1（L4-03 / I-10）：**仅入队 + 落盘**（不启动防抖定时器）。
+   *
+   *    供 useHealthData 在「外层 500ms 防抖排队时」立即调用，使 Pending 在用户
+   *    点击后**立刻**持久化，而不是等 500ms 防抖结束进入 syncToCloud 才落盘。
+   *    这样「点击后 500ms 内进程被杀」也能在冷启动时恢复（L4-03 复现缺口）。
+   *
+   *    🛡️ B4-L4-R2（L4-R1-01 / L4-R1-02）：**操作身份取代时间戳作为版本依据**。
+   *      · opSeq：本进程严格单调递增（每次入队 +1），进程内新旧判定的唯一依据；
+   *      · bootId：本 Hook 实例标识，仅用于区分「是否同一进程」，不比较大小；
+   *      · opId：`${bootId}-${opSeq}`，全局唯一，用于「成功提交只确认对应实例」。
+   *      · rev / updatedAt 仍保留写入（向后兼容旧磁盘数据与既有断言），
+   *        但**不再参与任何新旧仲裁**。
+   * @returns {{ownerId:string, recordDate:string}|null} 入队成功返回定位信息
+   */
+  const enqueuePending = useCallback((newWater, newMeals) => {
+    const currentUser = userRef.current;
+    if (!currentUser) return null;
+    const recordDate = getDateStr();
+    const key = pendingKeyOf(currentUser.id, recordDate);
+    const prev = pendingMapRef.current.get(key);
+    const nextRev = (prev?.rev ?? 0) + 1;
+    // 🛡️ B4-L4-R2：进程内严格单调序号（与系统时间无关）。
+    opSeqRef.current += 1;
+    const nextOpSeq = opSeqRef.current;
+    // 🛡️ B4-L4-R2：bootId 在首次入队时惰性生成（非渲染期，规避 purity 与
+    //    hook 槽位变化对 B3 冻结测试渲染时序的影响）。
+    if (bootIdRef.current === null) {
+      bootIdRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    const bootId = bootIdRef.current;
+    const payload = {
+      recordDate,
+      water: newWater,
+      meals: newMeals,
+      ownerId: currentUser.id,
+      rev: nextRev,
+      updatedAt: Date.now(),
+      bootId,
+      opSeq: nextOpSeq,
+      opId: `${bootId}-${nextOpSeq}`,
+    };
+    pendingMapRef.current.set(key, payload);
+    // 🛡️ B4-L4-R1（L4-01 / I-9）：新版本重新进入防抖窗口 → 清除「防抖已到期」标记，
+    //    避免上一版本的到期标记误触发本版本的自动补传。
+    debounceElapsedKeysRef.current.delete(key);
+    // 🛡️ 入队即落盘（不等防抖），最小化进程被杀丢数据窗口。
+    persistPending(currentUser.id);
+    return { ownerId: currentUser.id, recordDate };
+  }, [getDateStr, pendingKeyOf, persistPending]);
+
+  /**
+   * 启动/重置云端防抖提交定时器（到点后 tryFlushPending）。
+   */
+  const scheduleFlush = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      // 🛡️ B4-L4-R1（L4-01 / I-9）：标记当前所有 pending key 的「防抖已到期」。
+      //    若本次 flush 因 in-flight 去重被跳过，commit 的 finally 会据此补传。
+      for (const k of pendingMapRef.current.keys()) {
+        debounceElapsedKeysRef.current.add(k);
+      }
+      tryFlushPending();
+    }, DEBOUNCE_MS);
+  }, [tryFlushPending]);
+
   const syncToCloud = useCallback((newWater, newMeals) => {
     if (!user) return;
     // 载荷绑定入队时的 owner + recordDate，按 owner+date 隔离到独立槽位。
     // 不同账号 / 不同日期互不覆盖，各自保留、各自重试。
-    const recordDate = getDateStr();
-    const key = pendingKeyOf(user.id, recordDate);
-    pendingMapRef.current.set(key, {
-      recordDate,
-      water: newWater,
-      meals: newMeals,
-      ownerId: user.id,
-    });
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      tryFlushPending();
-    }, DEBOUNCE_MS);
-  }, [user, getDateStr, pendingKeyOf, tryFlushPending]);
+    enqueuePending(newWater, newMeals);
+    scheduleFlush();
+  }, [user, enqueuePending, scheduleFlush]);
 
   const fetchMyRecord = useCallback(async (date) => {
     if (!user) return null;
@@ -605,6 +1005,26 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
     tryFlushPending();
   }, [tryFlushPending]);
 
+  // 🛡️ TASK-P0.3 / B4（R-02 / 补充一）：**登录 / 冷启动 / 身份切换后恢复 pending**。
+  //
+  //    时机：user.id 或 authEpoch 变化（含冷启动首次挂载、A→B、A→登出→A 重登）。
+  //    动作：从磁盘读取「属于当前用户」的 pending，合并进内存 Map（rev 大者胜），
+  //          随后尝试 flush 一次把恢复的载荷补传云端。
+  //    隔离：只恢复当前 owner 的条目；其他账号的磁盘数据原样保留，互不污染。
+  //    这是「防抖窗口内进程被杀」后数据能恢复的关键路径。
+  useEffect(() => {
+    const ownerId = user?.id ?? null;
+    if (!ownerId) return;
+    let cancelled = false;
+    (async () => {
+      await hydratePendingFromDisk(ownerId);
+      if (cancelled) return;
+      // 恢复后立即尝试补传（网络可用时）。
+      await tryFlushPending();
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, authEpoch, hydratePendingFromDisk, tryFlushPending]);
+
   // 🛡️ TASK-P0.3 / B3-L4-R1（缺陷 5）：**渲染期身份遮蔽**（对外呈现层）。
   //
   //    归属身份 stateOwnerKey 在文件上部定义；这里只做纯派生：
@@ -629,12 +1049,18 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
       subscribePartner,
       subscribeAuthorization,
       syncToCloud,
+      // 🛡️ TASK-P0.3 / B4-L4-R1（L4-03 / I-10）：供 useHealthData 在外层 500ms
+      //    防抖排队时立即入队落盘（enqueuePending），到点再 scheduleFlush。
+      enqueuePending,
+      scheduleFlush,
       flushNow,
+      // 🛡️ TASK-P0.3 / B4（R-07）：供 useHealthData 云端 hydrate 闸门查询本地未同步 pending。
+      hasPendingFor,
     };
   }, [
     partnerData, partnerId, stateOwnerKey, currentOwnerKey, authGeneration, bindPartner, clearPartner,
     fetchMyRecord, fetchPartnerRecord, applyPartnerRecord, subscribePartner, subscribeAuthorization,
-    syncToCloud, flushNow,
+    syncToCloud, enqueuePending, scheduleFlush, flushNow, hasPendingFor,
   ]);
 }
 // --- END OF FILE src/hooks/health/useHealthCloud.js ---
