@@ -119,6 +119,7 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => null };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));

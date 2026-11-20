@@ -20,6 +20,8 @@ export default function HealthDetailScreen() {
     selectedMeal, currentSessionOwnerKey, selectedMealSelectionId,
     mealsStatus, waterAmount, maxWater,
     openMeal, closeMeal, confirmCheck, undoCheck, setWaterDirect, updateMaxWater,
+    // 🍎 FINAL-2：D-11 拒绝操作的用户可见提示（设备日期异常）。
+    dateAnomalyNotice, clearDateAnomalyNotice,
   } = useHealthData();
   const [scrollEnabled, setScrollEnabled] = useState(true);
 
@@ -47,6 +49,23 @@ export default function HealthDetailScreen() {
           scrollEnabled={scrollEnabled}
         >
           <View style={[styles.contentWrapper, { maxWidth: width >= 768 ? 680 : '100%' }]}>
+            {/* 🍎 FINAL-2：设备日期异常（回拨）导致写入被拒绝时的用户可见提示。
+                拒绝时不显示成功反馈，改为在此明确告知用户恢复正确时间后重试。 */}
+            {dateAnomalyNotice ? (
+              <View style={[styles.noticeBanner, { backgroundColor: palette.card, borderColor: palette.primary }]}>
+                <Ionicons name="alert-circle-outline" size={18} color={palette.primary} />
+                <Text style={[styles.noticeText, { color: palette.textPrimary }]}>{dateAnomalyNotice}</Text>
+                <Pressable
+                  onPress={clearDateAnomalyNotice}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="关闭提示"
+                  style={({ pressed }) => [{ opacity: pressed ? 0.5 : 1 }]}
+                >
+                  <Ionicons name="close" size={18} color={palette.textSecondary} />
+                </Pressable>
+              </View>
+            ) : null}
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, { color: palette.textSecondary }]}>饮食记录</Text>
               <View
@@ -150,4 +169,17 @@ const styles = StyleSheet.create({
   listContainer: { borderRadius: SIZES.radiusList, overflow: 'hidden' },
   glassWrapper: { borderRadius: SIZES.radiusList, overflow: 'hidden' },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 56 },
+  // 🍎 FINAL-2：设备日期异常提示横幅
+  noticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    marginHorizontal: SIZES.padding,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: SIZES.radiusList,
+    borderWidth: 1,
+  },
+  noticeText: { flex: 1, fontSize: 13, lineHeight: 18 },
 });

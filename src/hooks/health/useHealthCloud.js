@@ -582,10 +582,13 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
    *        但**不再参与任何新旧仲裁**。
    * @returns {{ownerId:string, recordDate:string}|null} 入队成功返回定位信息
    */
-  const enqueuePending = useCallback((newWater, newMeals) => {
+  const enqueuePending = useCallback((newWater, newMeals, recordDateOverride = null) => {
     const currentUser = userRef.current;
     if (!currentUser) return null;
-    const recordDate = getDateStr();
+    // 🛡️ BUG-01（D-11）修复：优先使用调用方传入的 recordDate（即本地数据实际所属日期
+    //    todayStr），避免系统时间回拨时 getDateStr() 漂移到「回拨后的日期」，
+    //    导致本地数据写在 D0、云端却写到 D1 的日期归属错位。
+    const recordDate = recordDateOverride || getDateStr();
     const key = pendingKeyOf(currentUser.id, recordDate);
     const prev = pendingMapRef.current.get(key);
     const nextRev = (prev?.rev ?? 0) + 1;
@@ -634,11 +637,12 @@ export function useHealthCloud(user, getDateStr, authEpoch = 0) {
     }, DEBOUNCE_MS);
   }, [tryFlushPending]);
 
-  const syncToCloud = useCallback((newWater, newMeals) => {
+  const syncToCloud = useCallback((newWater, newMeals, recordDateOverride = null) => {
     if (!user) return;
     // 载荷绑定入队时的 owner + recordDate，按 owner+date 隔离到独立槽位。
     // 不同账号 / 不同日期互不覆盖，各自保留、各自重试。
-    enqueuePending(newWater, newMeals);
+    // 🛡️ BUG-01（D-11）：透传 recordDateOverride，使云端记录日期与本地数据日期一致。
+    enqueuePending(newWater, newMeals, recordDateOverride);
     scheduleFlush();
   }, [user, enqueuePending, scheduleFlush]);
 

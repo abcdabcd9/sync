@@ -1,6 +1,8 @@
 // --- START OF FILE src/hooks/useAuth.js ---
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { supabase, authStorageStatus, AUTH_STORAGE_ERROR } from '../services/supabase';
+import { AppState } from 'react-native';
+import { supabase, authStorageStatus, AUTH_STORAGE_ERROR, probeAuthStorage } from '../services/supabase';
+import { createAutoRefreshController } from '../services/authAutoRefresh';
 import { setSignedUrlOwner } from './chat/useSignedMediaUrl';
 import { setProfileCacheOwner } from './profile/useProfileCache';
 import { setMediaCacheOwner } from '../services/mediaCache';
@@ -313,6 +315,47 @@ export function AuthProvider({ children }) {
       subscription.unsubscribe();
     };
   }, [applySession, syncStorageFailure, bumpAuthEventSeq]);
+
+  // ==========================================================================
+  // 🔄 P0.3 iOS-01：Supabase Auth 自动刷新生命周期（AppState 驱动）
+  //
+  // 缺陷根因（真实 SDK 探针 P1–P9 已复现）：
+  //   `@supabase/auth-js` 在非浏览器环境（React Native）的
+  //   `_handleVisibilityChange()` 分支为 `if (autoRefreshToken) startAutoRefresh()`，
+  //   即「假定永远在前台」，ticker 一旦启动就永不停。
+  //   App 长时间切后台 → iOS 锁定 Keychain → `SecureStore.getItemAsync` 抛错 →
+  //   适配器置位 AUTH_STORAGE_UNAVAILABLE → 每次 tick 都打印
+  //   `Auto refresh tick failed with error.`（用户可见的稳定报错）。
+  //
+  // 修复（Supabase 官方 RN 推荐做法，不关闭自动刷新）：
+  //   · 唯一一个 AppState 监听器；
+  //   · 'active' → startAutoRefresh()；'background'/'inactive' → stopAutoRefresh()；
+  //   · 冷启动按当前状态初始化；重复切换幂等；卸载时移除监听并停止 ticker。
+  //
+  // 约束：
+  //   · 不修改凭证存储方式（storage / storageKey / persistSession 均不动）；
+  //   · 不绕过 AUTH_STORAGE_UNAVAILABLE 检测（本 effect 不触碰 authStorageStatus）；
+  //   · 不吞异常（控制器 onError 会 console.error 上报）。
+  // ==========================================================================
+  useEffect(() => {
+    // 配置无效时 supabase 为 null，RootLayout 已提前拦截，这里做防御性跳过。
+    if (!supabase?.auth) return undefined;
+
+    const controller = createAutoRefreshController({
+      auth: supabase.auth,
+      appState: AppState,
+      // 🍎 BUG-02（iOS-01 残留）：进入 active 时先探测 SecureStore 是否可用，
+      //    避免 iOS 解锁后 Keychain 短暂锁定窗口内立即 startAutoRefresh()
+      //    导致首个 tick 读 SecureStore 抛 `User interaction is not allowed`。
+      //    探测失败由控制器延迟重试，期间不启动 ticker（不产生失败 tick）。
+      probeStorage: probeAuthStorage,
+    });
+    controller.start();
+
+    return () => {
+      controller.dispose();
+    };
+  }, []);
 
   const value = useMemo(() => ({
     user,

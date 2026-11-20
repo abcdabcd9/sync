@@ -277,6 +277,20 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
   // expo-file-system stub（B2：useAuth 现在会 import mediaCache，后者依赖
   //   expo-file-system/legacy。本套件不验证沙盒文件读写，只需模块可解析、
   //   调用不抛错，因此提供最小可用的内存实现。）
+  // react-native stub（P0.3 iOS-01：useAuth 现在 import { AppState } 以驱动
+  //   Supabase Auth 自动刷新生命周期。本套件不验证 AppState 行为，
+  //   只需模块可解析、addEventListener 返回可 remove 的订阅。）
+  mk('react-native', {
+    'package.json': JSON.stringify({ name: 'react-native', version: '0.0.0', type: 'module', main: 'index.js' }),
+    'index.js': `
+export const AppState = {
+  currentState: 'active',
+  addEventListener() { return { remove() {} }; },
+};
+export default { AppState };
+`,
+  });
+
   mk('expo-file-system', {
     'package.json': JSON.stringify({
       name: 'expo-file-system',
@@ -387,6 +401,9 @@ export const readAsStringAsync = api.readAsStringAsync;
     // 🗄️ B2：useAuth 现在 import mediaCache 以同步登记沙盒写入身份闸门，
     //    因此必须把该真实模块一并复制进沙箱（其 expo-file-system 依赖已 stub）。
     'src/services/mediaCache.js',
+    // 🔄 P0.3 iOS-01：useAuth 现在 import authAutoRefresh 以驱动自动刷新生命周期。
+    //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
+    'src/services/authAutoRefresh.js',
     'src/context/BrowserSessionContext.js',
     'src/hooks/useAuth.js',
   ];
@@ -438,6 +455,10 @@ export const supabase = {
     signOut() { return globalThis.__SIGNOUT_IMPL__ ? globalThis.__SIGNOUT_IMPL__() : Promise.resolve({ error: null }); },
     getSession() { return globalThis.__GETSESSION_IMPL__ ? globalThis.__GETSESSION_IMPL__() : Promise.resolve({ data: { session: null }, error: null }); },
     onAuthStateChange() { return { data: { subscription: { unsubscribe() {} } } }; },
+    // 🔄 P0.3 iOS-01：useAuth 通过 authAutoRefresh 控制器调用这两个方法。
+    //    本套件不验证自动刷新行为，仅需方法存在且可 await。
+    async startAutoRefresh() {},
+    async stopAutoRefresh() {},
   },
   channel() { return { on() { return this; }, subscribe() { return this; } }; },
   getChannels() { return []; },
@@ -445,6 +466,9 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => (globalThis.__AUTH_STATUS__ ? globalThis.__AUTH_STATUS__() : null) };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+// 🍎 BUG-02（iOS-01 残留）：useAuth 现在会 import probeAuthStorage。
+//    沙箱 stub 需提供同名导出（默认视为可用，不改变既有测试语义）。
+export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));

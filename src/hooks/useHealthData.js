@@ -92,6 +92,19 @@ export function HealthProvider({ children }) {
   // 🛡️ 竞态守卫：用户一旦产生任何交互，云端回包就不再允许覆盖本地状态
   const userInteractedRef = useRef(false);
 
+  // 🍎 FINAL-2（P0.3 FINAL L4 收尾）：D-11 拒绝操作的用户可见反馈。
+  //    console.warn 不是面向用户的反馈。回拨期间写入被拒绝时，必须让用户
+  //    明确看到「设备日期异常，请恢复正确时间后重试」一类提示。
+  //    这里用 state 承载提示文案（null = 无提示），由 UI 渲染为横幅/弹窗；
+  //    同时暴露 clearDateAnomalyNotice 供 UI 关闭。
+  //    注意：仅承载「提示」，不改变 fail-closed 写入策略本身。
+  const [dateAnomalyNotice, setDateAnomalyNotice] = useState(null);
+  const clearDateAnomalyNotice = useCallback(() => setDateAnomalyNotice(null), []);
+  // 统一的「回拨拒绝」处理：设置用户可见提示（不写本地、不落盘、不排队、不触感）。
+  const rejectDueToSkew = useCallback(() => {
+    setDateAnomalyNotice('设备日期异常，请恢复正确时间后重试');
+  }, []);
+
   /**
    * 🛡️ T6-B Round 4A / CR4-01：**回调来源身份快照**（创建时捕获）。
    *
@@ -478,6 +491,22 @@ export function HealthProvider({ children }) {
     if (waterSyncTimerRef.current) clearTimeout(waterSyncTimerRef.current);
   }, []);
 
+  // 🛡️ BUG-01（D-11 / L4 ROUND2 BLOCK-01）：日期归属守卫。
+  //    本地 water/meals 是**单槽位**（非按日期存储），其真实所属日期是
+  //    `lastActiveDate`（加载时的日期）。当手机时钟被回拨到更早的日期
+  //    （`getDateStr() < lastActiveDate`）时，当前操作归属**无法确定**：
+  //      · 若按 getDateStr() 归属 → 会把「D0 的 800 + 1 = 801」写进历史 D1，污染 D1；
+  //      · 若按 lastActiveDate 归属 → 会把 801 写回 D0，破坏 D0 的 800。
+  //    两种归属都可能造成不可解释的数据错位。因此**回拨期间一律不自动同步云端**，
+  //    仅保留本地（用户可见），待日期恢复正常后再按正常路径同步。
+  //    在线校准成功时 getDateStr() 返回服务器真实日期，若与 lastActiveDate 一致
+  //    则不属于回拨，正常同步（可解释：用户确实在该日期操作）。
+  const isBackwardSkew = useCallback(() => {
+    if (!lastActiveDate) return false;
+    // YYYY-MM-DD 字符串可直接按字典序比较（等价于日期先后）
+    return getDateStr() < lastActiveDate;
+  }, [getDateStr, lastActiveDate]);
+
   // 🛡️ T6-B 第三轮复审 15-01：scheduleWaterSync 在**排队时**捕获身份快照，
   //    定时器真正触发时再校验一次。身份已切换（旧会话回调）则丢弃，绝不把
   //    旧会话的饮水值同步到云端（避免「本地被拒、云端却仍排队」的错位）。
@@ -490,14 +519,18 @@ export function HealthProvider({ children }) {
     //    从「整个 500ms 防抖期」压缩到「setState 之后、AsyncStorage 写入之前」。
     //    500ms 定时器只负责触发 flush（scheduleFlush），不再承担落盘职责。
     if (!isIdentityCurrent(snapshot)) return;
-    enqueuePending(nextWater, mealsStatusRef.current);
+    // 🛡️ BUG-01（D-11 / BLOCK-01）：回拨期间归属不确定 → 不同步云端，仅保留本地。
+    if (isBackwardSkew()) return;
+    // 🛡️ BUG-01（D-11）：传入 todayStr（本地数据实际所属日期），
+    //    避免系统时间回拨时 getDateStr() 漂移导致云端记录日期错位。
+    enqueuePending(nextWater, mealsStatusRef.current, todayStr);
     if (waterSyncTimerRef.current) clearTimeout(waterSyncTimerRef.current);
     waterSyncTimerRef.current = setTimeout(() => {
       waterSyncTimerRef.current = null;
       if (!isIdentityCurrent(snapshot)) return;
       scheduleFlush();
     }, 500);
-  }, [enqueuePending, scheduleFlush, isIdentityCurrent]);
+  }, [enqueuePending, scheduleFlush, isIdentityCurrent, todayStr, isBackwardSkew]);
 
   /**
    * 统一的饮水写入入口。
@@ -512,6 +545,17 @@ export function HealthProvider({ children }) {
     //    关键：校验必须先于 waterAmountRef.current 的写入，否则即使 storage 拒绝落盘，
     //    shadow ref 也已被旧会话污染，导致新会话下一次合法增量基于错误基数。
     if (!isIdentityCurrent(originSnapshot)) return;
+    // 🍎 BLOCK-B（D-11 / L4 ROUND3）：回拨期间日期不可信 → **拒绝写入**。
+    //    单槽位结构下，回拨期间的增量既无法安全归属（写 D1 会污染历史、写 D0 会
+    //    破坏 D0），也无法在恢复后保证不丢失（旧实现：本地 801 落盘，恢复后云端
+    //    800 覆盖 → 静默丢失）。因此这里 fail-closed：不改本地、不落盘、不排队，
+    //    绝不「显示成功后又悄悄丢失」。在线且服务器时间可信时 getDateStr() 返回
+    //    真实日期，与 lastActiveDate 一致 → 不触发本守卫，正常操作不受影响。
+    if (isBackwardSkew()) {
+      // 🍎 FINAL-2：拒绝时给出用户可见提示（替代 console.warn），不写本地/不落盘/不排队。
+      rejectDueToSkew();
+      return;
+    }
 
     const prev = waterAmountRef.current;
     const raw = typeof val === 'function' ? val(prev) : val;
@@ -524,7 +568,7 @@ export function HealthProvider({ children }) {
 
     // ② 云端防抖同步（携带创建时身份快照，触发时二次校验）
     if (sync) scheduleWaterSync(nextVal, originSnapshot);
-  }, [originSnapshot, isIdentityCurrent, setWater, scheduleWaterSync]);
+  }, [originSnapshot, isIdentityCurrent, setWater, scheduleWaterSync, isBackwardSkew, rejectDueToSkew]);
 
   // 顺序：① storage 纯本地修改 → ② Haptics → ③ cloud.syncToCloud（防抖）
   // 🛡️ Round 4A 收尾 / R4A-02：包装回调必须在**任何副作用之前**校验创建时身份。
@@ -532,19 +576,25 @@ export function HealthProvider({ children }) {
   //    旧会话（A）的包装回调在切到 B 后执行时，即使 setWaterDirect 内部 fail-closed，
   //    userInteractedRef 已被污染为 true → B 的云端 hydrate 被永久拦截。
   //    这里把身份校验提到最前（早于 ref 写入 / 触感 / 状态更新），复用 originSnapshot。
+  // 🍎 FINAL-2（P0.3 FINAL L4 收尾）：回拨期间拒绝写入时，**不得**提前设置
+  //    userInteractedRef（否则会永久拦截云端 hydrate），也**不得**触发触感
+  //    （否则等于给出「成功」反馈）。因此把 isBackwardSkew() 校验提到最前，
+  //    早于 ref 写入与 Haptics；拒绝时仅设置用户可见提示。
   const handleAddWater = useCallback(() => {
     if (!isIdentityCurrent(originSnapshot)) return;
+    if (isBackwardSkew()) { rejectDueToSkew(); return; }
     userInteractedRef.current = true;
     setWaterDirect(prev => prev + 1);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [setWaterDirect, originSnapshot, isIdentityCurrent]);
+  }, [setWaterDirect, originSnapshot, isIdentityCurrent, isBackwardSkew, rejectDueToSkew]);
 
   const handleMinusWater = useCallback(() => {
     if (!isIdentityCurrent(originSnapshot)) return;
+    if (isBackwardSkew()) { rejectDueToSkew(); return; }
     userInteractedRef.current = true;
     setWaterDirect(prev => Math.max(0, prev - 1));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [setWaterDirect, originSnapshot, isIdentityCurrent]);
+  }, [setWaterDirect, originSnapshot, isIdentityCurrent, isBackwardSkew, rejectDueToSkew]);
 
   const confirmCheck = useCallback(async () => {
     // 🛡️ Round 4A 收尾 / R4A-01：selectedMeal 内部存 { meal, ownerKey }，
@@ -555,6 +605,13 @@ export function HealthProvider({ children }) {
     //    旧会话回调必须整体 fail-closed——不 setState、不排队云端同步、
     //    不发伴侣通知。否则 storage 侧虽已拒绝写盘，云端仍会收到旧账号的打卡。
     if (!isIdentityCurrent(originSnapshot)) return;
+    // 🍎 BLOCK-B（D-11 / L4 ROUND3）：回拨期间日期不可信 → 拒绝打卡写入。
+    //    与 setWaterDirect 同理：单槽位下无法安全归属，禁止「假成功」。
+    if (isBackwardSkew()) {
+      // 🍎 FINAL-2：拒绝时给出用户可见提示（替代 console.warn）。
+      rejectDueToSkew();
+      return;
+    }
     // 🛡️ Round 4A 收尾 / R4A-02（修复 2）：捕获本次操作所属的「选中实例」。
     //    异步返回后必须同时校验身份 + 实例仍有效，否则会清空新会话的选择。
     const selectionIdAtStart = selectedMeal ? selectedMeal.selectionId : null;
@@ -564,7 +621,8 @@ export function HealthProvider({ children }) {
     const newMeals = { ...mealsStatus, [meal]: true };
     setMeals(newMeals);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    syncToCloud(waterAmount, newMeals);
+    // 🛡️ BLOCK-01：回拨期间归属不确定 → 不同步云端，仅保留本地。
+    if (!isBackwardSkew()) syncToCloud(waterAmount, newMeals, todayStr);
 
     // 伴侣通知（非阻塞，失败不影响本地状态）
     if (user) {
@@ -619,7 +677,7 @@ export function HealthProvider({ children }) {
       if (prev.selectionId !== selectionIdAtStart) return prev;
       return null;
     });
-  }, [visibleSelectedMeal, selectedMeal, mealsStatus, waterAmount, user, partnerId, bindPartner, syncToCloud, setMeals, originSnapshot, isIdentityCurrent]);
+  }, [visibleSelectedMeal, selectedMeal, mealsStatus, waterAmount, user, partnerId, bindPartner, syncToCloud, setMeals, originSnapshot, isIdentityCurrent, isBackwardSkew, rejectDueToSkew, todayStr]);
 
   const undoCheck = useCallback(() => {
     // 🛡️ Round 4A 收尾 / R4A-01：同 confirmCheck，使用按当前身份派生的餐次名。
@@ -628,6 +686,12 @@ export function HealthProvider({ children }) {
     // 🛡️ Round 4A / CR4-01：校验**回调创建时**身份（originSnapshot），
     //    旧会话回调必须整体 fail-closed——不 setState、不排队云端同步。
     if (!isIdentityCurrent(originSnapshot)) return;
+    // 🍎 BLOCK-B（D-11 / L4 ROUND3）：回拨期间日期不可信 → 拒绝撤销打卡写入。
+    if (isBackwardSkew()) {
+      // 🍎 FINAL-2：拒绝时给出用户可见提示（替代 console.warn）。
+      rejectDueToSkew();
+      return;
+    }
     // 🛡️ Round 4A 收尾 / R4A-02（修复 2）：捕获本次操作所属的「选中实例」。
     const selectionIdAtStart = selectedMeal ? selectedMeal.selectionId : null;
     userInteractedRef.current = true;
@@ -636,7 +700,8 @@ export function HealthProvider({ children }) {
     const newMeals = { ...mealsStatus, [meal]: false };
     setMeals(newMeals);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    syncToCloud(waterAmount, newMeals);
+    // 🛡️ BLOCK-01：回拨期间归属不确定 → 不同步云端，仅保留本地。
+    if (!isBackwardSkew()) syncToCloud(waterAmount, newMeals, todayStr);
     // 🛡️ Round 4A 收尾 / R4A-02（修复 2）：仅当实例仍是本次操作对应的实例才清理，
     //    避免误清空同账号新打开的餐次选择。
     setSelectedMeal(prev => {
@@ -644,7 +709,7 @@ export function HealthProvider({ children }) {
       if (prev.selectionId !== selectionIdAtStart) return prev;
       return null;
     });
-  }, [visibleSelectedMeal, selectedMeal, mealsStatus, waterAmount, syncToCloud, setMeals, originSnapshot, isIdentityCurrent]);
+  }, [visibleSelectedMeal, selectedMeal, mealsStatus, waterAmount, syncToCloud, setMeals, originSnapshot, isIdentityCurrent, isBackwardSkew, rejectDueToSkew, todayStr]);
 
   /**
    * 解绑/绑定后强制刷新伴侣关系（供 bind_partner 等页面调用）。
@@ -691,11 +756,18 @@ export function HealthProvider({ children }) {
     // 🛡️ Round 4A / CR4-01：校验**回调创建时**身份（originSnapshot），
     //    旧会话回调必须整体 fail-closed，避免把「重置」写进新账号本地与云端。
     if (!isIdentityCurrent(originSnapshot)) return;
+    // 🍎 BLOCK-B（D-11 / L4 ROUND3）：回拨期间日期不可信 → 拒绝重置写入。
+    if (isBackwardSkew()) {
+      // 🍎 FINAL-2：拒绝时给出用户可见提示（替代 console.warn）。
+      rejectDueToSkew();
+      return;
+    }
     userInteractedRef.current = true;
     resetTodayLocal();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    syncToCloud(0, { '早餐': false, '午餐': false, '晚餐': false });
-  }, [syncToCloud, resetTodayLocal, originSnapshot, isIdentityCurrent]);
+    // 🛡️ BLOCK-01：回拨期间归属不确定 → 不同步云端，仅保留本地重置。
+    if (!isBackwardSkew()) syncToCloud(0, { '早餐': false, '午餐': false, '晚餐': false }, todayStr);
+  }, [syncToCloud, resetTodayLocal, originSnapshot, isIdentityCurrent, isBackwardSkew, rejectDueToSkew, todayStr]);
 
   // 🛡️ Round 4A 收尾 / R4A-01：饮食详情选中态必须绑定「回调创建时身份」。
   //    旧实现 openMeal / closeMeal 无任何身份校验，A 的旧闭包在切到 B 后执行
@@ -745,11 +817,14 @@ export function HealthProvider({ children }) {
     currentSessionOwnerKey: currentOwnerKey, selectedMealSelectionId,
     mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     profile, profileLoading, refreshProfile: loadProfile,
+    // 🍎 FINAL-2：D-11 拒绝操作的用户可见提示（null=无提示）+ 清除函数。
+    dateAnomalyNotice, clearDateAnomalyNotice,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   }), [
     isLoaded, isDoneToday, visibleSelectedMeal, selectedMealOwnerKey, currentOwnerKey, selectedMealSelectionId,
     mealsStatus, waterAmount, maxWater, streakDays, motto, mealGuides, partnerData, partnerId,
     profile, profileLoading, loadProfile,
+    dateAnomalyNotice, clearDateAnomalyNotice,
     openMeal, closeMeal, confirmCheck, undoCheck, handleAddWater, handleMinusWater, setWaterDirect, updateMaxWater, updateMotto, updateMealGuide, resetToday, refreshPartner
   ]);
 

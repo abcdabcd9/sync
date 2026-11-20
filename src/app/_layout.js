@@ -14,6 +14,46 @@ import { isSupabaseConfigured, supabaseConfigErrors } from '../services/supabase
 // 🔒 安全审计 #10：无需登录即可访问的公开路由白名单
 const PUBLIC_ROUTES = new Set(['auth']);
 
+/**
+ * 🛡️ P0.3 iOS-02 修复：路由决策纯函数（单一事实来源）
+ *
+ * 背景（真机验收缺陷）：
+ *   旧实现把「路由跳转」与「白屏占位」都挂在同一个前置条件 `isInitialized`
+ *   （= useHealthData → useHealthStorage.isLoaded）上：
+ *     · 守卫：`if (isAuthLoading || !isInitialized) return;` → 未登录时
+ *       isInitialized 恒为 false，守卫永远提前 return，永不跳 /auth；
+ *     · 白屏：`if (!isInitialized) return <View .../>;` → 渲染纯背景色空 View。
+ *   而退出登录后 userId=null，useHealthStorage.load() 命中 `!k` 分支，
+ *   永久 setIsLoaded(false) → isInitialized 永远无法回到 true。
+ *   结果：白屏 View 永久驻留、跳转逻辑永久被跳过 —— 确定性死锁。
+ *
+ * 修复原则（最小、语义正确）：
+ *   · 「未登录 → 去登录页」是**鉴权**决策，与「健康数据是否加载完成」无关，
+ *     绝不能因 isInitialized=false 而阻塞；
+ *   · 「已登录但健康数据未就绪」才需要占位，避免闪现私人页 / 展示其他账号数据；
+ *   · authError 存在时由安全错误页接管，绝不误跳登录页。
+ *
+ * 返回值：null（不跳转）| '/auth'（去登录页）| '/'（回主界面）
+ *
+ * 该函数为纯函数，便于在纯 Node 环境做回归测试（见
+ * tests/security/ios02WhiteScreen.test.mjs）。
+ */
+export function computeAuthRedirect({ user, isAuthLoading, authError, isInitialized, isPublicRoute }) {
+  // ① 会话确认中：不做任何跳转，避免误拦截 / 闪现私人页
+  if (isAuthLoading) return null;
+  // ② 安全存储故障：由 AuthStorageErrorView 接管展示与重试，绝不误判为已登出
+  if (authError) return null;
+  // ③ 未登录：无论健康数据是否就绪，都必须去登录页（修复白屏死锁的核心）
+  if (!user) {
+    return isPublicRoute ? null : '/auth';
+  }
+  // ④ 已登录但健康数据未就绪：先不跳转（避免闪现私人页 / 错误账号数据）
+  if (!isInitialized) return null;
+  // ⑤ 已登录却停留在公开页（登录页）→ 送回主界面，避免重复登录
+  if (isPublicRoute) return '/';
+  return null;
+}
+
 function RootNavigation() {
   const { isInitialized } = useHealthData();
   // 🎨 统一主题控制权：跟随系统 / 强制浅色 / 强制深色
@@ -29,27 +69,38 @@ function RootNavigation() {
   const currentRoute = segments[0];
   const isPublicRoute = PUBLIC_ROUTES.has(currentRoute);
 
+  // 🛡️ P0.3 iOS-02 修复：路由决策统一由纯函数 computeAuthRedirect 给出。
+  //    关键点：未登录（!user）时**不再**受 isInitialized 阻塞，直接跳 /auth，
+  //    从而打破「白屏占位」与「跳转守卫」共用 isInitialized 造成的死锁。
+  const redirectTarget = computeAuthRedirect({
+    user,
+    isAuthLoading,
+    authError,
+    isInitialized,
+    isPublicRoute,
+  });
+
   useEffect(() => {
-    // 会话恢复中或健康数据初始化中，暂不做任何跳转，避免误拦截
-    if (isAuthLoading || !isInitialized) return;
-    // 🔒 Batch C：安全存储不可用时不得误判为「已登出」而跳登录页，
-    //    由下方 AuthStorageErrorView 接管展示与重试。
-    if (authError) return;
-
-    if (!user && !isPublicRoute) {
-      // 未登录访问私密页面（/chat_room、/account_info、/bind_partner 等）→ 强制拦截
-      router.replace('/auth');
-    } else if (user && isPublicRoute) {
-      // 已登录仍停留在登录页 → 送回主界面，避免重复登录
-      router.replace('/');
+    // 仅在确有跳转目标时执行；此时下方渲染分支保证 Stack（导航器）已挂载，
+    // 满足「不得在导航器未挂载时调用 router.replace()」的约束。
+    if (redirectTarget) {
+      router.replace(redirectTarget);
     }
-  }, [user, isAuthLoading, isInitialized, isPublicRoute, router, authError]);
+  }, [redirectTarget, router]);
 
-  if (!isInitialized) return <View style={{ flex: 1, backgroundColor: palette.background }} />;
-
-  // 🔒 Batch C：安全存储不可用 → 显式失败页（冻结会话使用，提供重试）
+  // 🔒 Batch C：安全存储不可用 → 显式失败页（冻结会话使用，提供重试）。
+  //    此分支 redirectTarget 恒为 null（computeAuthRedirect 已对 authError 返回 null），
+  //    故不会在错误页状态下触发跳转。
   if (authError) {
     return <AuthStorageErrorView code={authError.code} onRetry={retrySession} palette={palette} />;
+  }
+
+  // 🛡️ P0.3 iOS-02 修复：仅在「会话确认中」或「已登录但健康数据未就绪」时占位。
+  //    这两种状态下 redirectTarget 恒为 null（见 computeAuthRedirect），
+  //    因此占位期间不会调用 router.replace()，不存在「导航器未挂载即跳转」的问题。
+  //    未登录（!user）不再落入此分支 → 会渲染下方 Stack 并跳转 /auth，彻底消除白屏。
+  if (isAuthLoading || (user && !isInitialized)) {
+    return <View style={{ flex: 1, backgroundColor: palette.background }} />;
   }
 
   return (

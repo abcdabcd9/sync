@@ -292,6 +292,7 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => null };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'src/services/pushService.js'), `
@@ -477,6 +478,7 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => null };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
@@ -620,6 +622,20 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': 'export function createClient(){ return {}; } export default { createClient };',
   });
 
+  // react-native stub（P0.3 iOS-01：useAuth 现在 import { AppState } 以驱动
+  //   Supabase Auth 自动刷新生命周期。本沙箱不验证 AppState 行为，
+  //   只需模块可解析、addEventListener 返回可 remove 的订阅。）
+  mk('react-native', {
+    'package.json': JSON.stringify({ name: 'react-native', version: '0.0.0', type: 'module', main: 'index.js' }),
+    'index.js': `
+export const AppState = {
+  currentState: 'active',
+  addEventListener() { return { remove() {} }; },
+};
+export default { AppState };
+`,
+  });
+
   mk('expo-file-system', {
     'package.json': JSON.stringify({
       name: 'expo-file-system', version: '0.0.0', type: 'module', main: 'index.js',
@@ -673,6 +689,9 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   copy('src/hooks/chat/useSignedMediaUrl.js');
   copy('src/hooks/profile/useProfileCache.js');
   copy('src/services/mediaCache.js');
+  // 🔄 P0.3 iOS-01：useAuth 现在 import authAutoRefresh 以驱动自动刷新生命周期。
+  //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
+  copy('src/services/authAutoRefresh.js');
 
   // supabase stub：可控 auth 事件 + 可注入 getSession
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
@@ -697,6 +716,10 @@ export const supabase = {
     signOut() { return state.signOutImpl(); },
     signInWithPassword() { return Promise.resolve({ data: null, error: null }); },
     signUp() { return Promise.resolve({ data: null, error: null }); },
+    // 🔄 P0.3 iOS-01：useAuth 通过 authAutoRefresh 控制器调用这两个方法。
+    //    本沙箱不验证自动刷新行为，仅需方法存在且可 await。
+    async startAutoRefresh() {},
+    async stopAutoRefresh() {},
   },
   from() {
     const api = {
@@ -712,6 +735,7 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => null };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
@@ -1058,6 +1082,34 @@ export function __setContextValue(c, v) { __ctxValues.set(c, v); }`
   };
   copyRaw('src/hooks/chat/useSignedMediaUrl.js');
   copyRaw('src/services/mediaCache.js');
+  // 🔄 P0.3 iOS-01：真实 useAuth.js 现在 import authAutoRefresh 以驱动自动刷新生命周期。
+  //    复制**真实实现**（非 stub），保证本沙箱执行的是生产代码。
+  copyRaw('src/services/authAutoRefresh.js');
+
+  // react-native 桩（P0.3 iOS-01）：真实 useAuth.js 现在 import { AppState }。
+  //   本沙箱的 AC-B5-08 / AC-B5-11 需要**真实派发**前后台事件（AppState.__emit），
+  //   因此这里提供与 buildHealthSandbox 同构的可控 AppState（含 __emit / __listenerCount）。
+  const rnDir = path.join(nm, 'react-native');
+  fs.mkdirSync(rnDir, { recursive: true });
+  fs.writeFileSync(path.join(rnDir, 'package.json'), JSON.stringify({
+    name: 'react-native', version: '0.0.0', type: 'module', main: 'index.js',
+  }));
+  fs.writeFileSync(path.join(rnDir, 'index.js'), `
+const listeners = new Set();
+export const AppState = {
+  currentState: 'active',
+  addEventListener(type, cb) {
+    if (type === 'change') listeners.add(cb);
+    return { remove() { listeners.delete(cb); } };
+  },
+  __emit(next) {
+    AppState.currentState = next;
+    for (const cb of Array.from(listeners)) cb(next);
+  },
+  __listenerCount() { return listeners.size; },
+};
+export default { AppState };
+`);
 
   // expo-file-system 桩（mediaCache.js 通过 expo-file-system/legacy 引入）。
   const efsDir = path.join(nm, 'expo-file-system');
@@ -1203,6 +1255,10 @@ export const supabase = {
     signOut() { return state.signOutImpl(); },
     signInWithPassword() { return Promise.resolve({ data: null, error: null }); },
     signUp() { return Promise.resolve({ data: null, error: null }); },
+    // 🔄 P0.3 iOS-01：真实 useAuth 通过 authAutoRefresh 控制器调用这两个方法。
+    //    本沙箱不验证自动刷新行为，仅需方法存在且可 await。
+    async startAutoRefresh() {},
+    async stopAutoRefresh() {},
   },
   __emitAuth(event, session) {
     for (const cb of state.authListeners.slice()) cb(event, session);
@@ -1211,6 +1267,7 @@ export const supabase = {
 };
 export const authStorageStatus = { get: () => null };
 export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED: 'MIGRATION_FAILED', LEGACY_CLEANUP_FAILED: 'LEGACY_CLEANUP_FAILED' };
+export const probeAuthStorage = async () => true;
 `);
   return dir;
 }

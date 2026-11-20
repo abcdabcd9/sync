@@ -175,7 +175,18 @@ export function useHealthStorage(todayStr, userId = null, authEpoch = 0) {
     // ---- 跨天清零：当日饮水/三餐重置 ----
     // ⚠️ 必须同时满足「有上次活跃日期」且「与今天不同」才清零：
     //    首次安装（savedActive 为 null）时不应误判为跨天，但仍需写入今天的活跃日期。
-    if (savedActive && savedActive !== todayStr) {
+    //
+    // 🛡️ BUG-01（D-11）修复：仅当「上次活跃日期 < 今天」（正常向前跨天）才清零。
+    //    若「上次活跃日期 > 今天」（系统时间被回拨到过去），绝不能清零——
+    //    否则用户把手机日期调回昨天后，今天已记录的数据会被误判为「跨天」而清空，
+    //    随后新操作写入「昨天」槽位，造成数据被覆盖/丢失。
+    //    与上方 streak 分支的方向判断保持一致（savedTime > todayTime 视为时间流异常）。
+    const savedActiveTime = savedActive ? new Date(savedActive).getTime() : NaN;
+    const todayTime = new Date(todayStr).getTime();
+    const isForwardDayChange = savedActive && savedActive !== todayStr && savedActiveTime < todayTime;
+    const isBackwardClockSkew = savedActive && savedActive !== todayStr && savedActiveTime > todayTime;
+
+    if (isForwardDayChange) {
       // 已跨过 24 小时进入新的一天 → 第 0 帧彻底清零，并立即回写磁盘，
       // 确保冷启动 / 跨天切回 App 时昨天的饮水与三餐状态 100% 不会残留。
       setWaterAmount(0);
@@ -185,6 +196,15 @@ export function useHealthStorage(todayStr, userId = null, authEpoch = 0) {
       await AsyncStorage.setItem(k.meals, JSON.stringify(EMPTY_MEALS));
       await AsyncStorage.setItem(k.active, todayStr);
     } else {
+      // 正常同日 / 首次安装 / 系统时间回拨（savedActive > todayStr）：
+      // 一律保留磁盘数据，绝不清零。回拨场景仅记录告警，不修改任何数据。
+      if (isBackwardClockSkew) {
+        console.warn(
+          '[useHealthStorage] 检测到系统日期回拨（上次活跃 %s > 今天 %s），保留本地数据不清零',
+          savedActive,
+          todayStr
+        );
+      }
       setLastActiveDate(savedActive || todayStr);
       if (savedWater) setWaterAmount(Number(savedWater));
       if (savedMeals) setMealsStatus(JSON.parse(savedMeals));

@@ -97,4 +97,34 @@ export const supabase = config.ok
       },
     })
   : null;
+
+/**
+ * 🍎 BUG-02（iOS-01 残留）— SecureStore 可用性探测。
+ *
+ * 背景：iOS 解锁后 Keychain 存在短暂不可用窗口（`User interaction is not allowed`）。
+ *   若在 `AppState 'active'` 事件里**立即** `startAutoRefresh()`，首个自动刷新 tick
+ *   会读 SecureStore 并抛错，用户可见 `SecureStore getValueWithKeyAsync failed`。
+ *
+ * 本函数只做**只读探测**：尝试读取 auth storage key。
+ *   · 读取成功（含返回 null）→ Keychain 已解锁可用 → resolve(true)；
+ *   · 读取抛错（Keychain 锁定 / 交互不允许）→ resolve(false)，由调用方延迟重试。
+ *
+ * 约束：
+ *   · 不写、不删、不降级明文；不改变凭证存储方式；
+ *   · 不吞异常：探测失败返回 false（不抛），由控制器决定重试节奏；
+ *   · 配置无效（supabase 为 null / 无 storageKey）时直接返回 true（无凭证可读，不阻塞）。
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function probeAuthStorage() {
+  if (!config.ok || !AUTH_STORAGE_KEY) return true;
+  try {
+    // 直接读底层 SecureStore（与适配器同一 key 归一化规则），只读不写。
+    await SecureStore.getItemAsync(AUTH_STORAGE_KEY);
+    return true;
+  } catch (_e) {
+    // Keychain 暂不可用（锁定 / 交互不允许）→ 交由控制器延迟重试。
+    return false;
+  }
+}
 // --- END OF FILE src/services/supabase.js ---
