@@ -27,7 +27,13 @@ export default function FriendSettingsScreen() {
   const prefs = useChatPrefs(user);
   const { deleteFriend, updateRemark } = useFriendActions(user);
 
-  const displayName = remark || nickname || username || '未知用户';
+  // 🐞 修复 P04-BUG-01（备注修改后界面不刷新）：
+  //    `remark` 来自路由参数，是不可变快照；保存成功后若不更新本地状态，
+  //    页面仍显示旧备注，用户误以为「没生效」。这里用本地 state 承载
+  //    当前生效的备注，保存成功后立即更新，并同步刷新草稿。
+  const [currentRemark, setCurrentRemark] = useState(remark || '');
+
+  const displayName = currentRemark || nickname || username || '未知用户';
   const displayId = sync_id || username || '暂无 ID';
 
   const [remarkEditing, setRemarkEditing] = useState(false);
@@ -35,13 +41,18 @@ export default function FriendSettingsScreen() {
 
   // ===== 1. 设置朋友资料（备注）=====
   const handleSaveRemark = async () => {
-    const res = await updateRemark(id, remarkDraft.trim());
+    const nextRemark = remarkDraft.trim();
+    const res = await updateRemark(id, nextRemark);
     if (res.ok) {
       haptic.success();
+      // 立即更新页面显示，避免「保存成功但界面没变」
+      setCurrentRemark(nextRemark);
+      setRemarkDraft(nextRemark);
       setRemarkEditing(false);
       Alert.alert('已保存', '备注已更新。');
     } else {
       haptic.error();
+      // 失败时给出明确提示，绝不假装「已保存」
       Alert.alert('保存失败', res.error || '请稍后重试。');
     }
   };
@@ -193,7 +204,7 @@ export default function FriendSettingsScreen() {
             style={styles.row}
             onPress={() => {
               haptic.light();
-              setRemarkDraft(remark || '');
+              setRemarkDraft(currentRemark || '');
               setRemarkEditing(true);
             }}
             activeOpacity={0.6}
@@ -203,7 +214,7 @@ export default function FriendSettingsScreen() {
             <Text style={[styles.title, { color: palette.textPrimary }]}>设置朋友资料</Text>
             <View style={styles.right}>
               <Text style={[styles.value, { color: palette.textSecondary }]} numberOfLines={1}>
-                {remark || '未设置备注'}
+                {currentRemark || '未设置备注'}
               </Text>
               <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
             </View>

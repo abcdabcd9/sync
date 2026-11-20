@@ -378,42 +378,36 @@ export function CinemaProvider({ children }) {
     setEpisodeListRequested(false);
     setEpisodeListRequest(null);
     if (cinemaRoomId) {
-      // 🍎 P2-16 修复：邀请卡片的 type 固定为 'cinema_invite'（见 invite_friend.js），
-      //    但 text 字段可能被清空/撤回，仅靠 .eq('text', roomId) 强匹配会失效。
-      //    策略：
-      //      1) 优先用 type + text 精确匹配（最准确）；
-      //      2) 若未命中（卡片被撤回/文本被清空），回退到 type + 当前用户最近一条邀请卡片；
-      //      3) 全程 try/catch，任何异常都不向外抛出，避免未捕获异常导致后续状态更新中断。
+      // 🍎 P2-16 / FIX-B 修复：邀请卡片的 type 固定为 'cinema_invite'（见 invite_friend.js），
+      //    text 字段写入的是放映厅 roomId。
+      //
+      //    ⚠️ 关键：客户端（authenticated）**没有** messages.subtype 的 UPDATE 权限
+      //    （迁移 21 的列级授权 + 迁移 28 的触发器共同限制），直接 UPDATE subtype
+      //    会报 `permission denied for table messages`。
+      //    因此改为调用受控的 SECURITY DEFINER RPC `end_cinema_invite(uuid)`：
+      //      · RPC 内校验「调用者=发送方 + type=cinema_invite + 起点 subtype 合法」；
+      //      · 只改 subtype 一列，幂等，返回受影响行数。
+      //
+      //    🔒 L4 第五批修正 1：**禁止**「最近一条邀请卡片」兜底。
+      //       旧兜底会误结束其它放映厅的邀请（用户可能同时有多个未结束的邀请卡片），
+      //       属于越权副作用。
+      //
+      //    🔒 L4 第六批第 2 项：同一 roomId 可能对应**多张**邀请卡片 ——
+      //       invite_friend.js 每次点击「邀请」都生成新的 msgId 并插入新消息，
+      //       而 text 始终是同一个 roomId。因此必须结束该 roomId 下**全部**
+      //       合法邀请卡片，不能只更新 limit(1) 的任意一张。
+      //
+      //    改为调用批量 RPC `end_cinema_invites_by_room(p_room_id)`：
+      //      · RPC 内限定 user_id = auth.uid() + type='cinema_invite' + text=roomId
+      //      · 只处理 subtype ∈ (NULL, 'SYNC_CINEMA_INVITE') 的行
+      //      · 只改 subtype 一列，幂等，返回受影响行数
+      //      · 接收方/无关账号调用影响 0 行（无越权）
+      //    全程 try/catch，任何异常都不向外抛出，避免未捕获异常导致后续状态更新中断。
       try {
-        const { data: matched, error: matchErr } = await supabase
-          .from('messages')
-          .update({ subtype: 'SYNC_CINEMA_ENDED' })
-          .eq('type', 'cinema_invite')
-          .eq('text', cinemaRoomId)
-          .select('id');
-
-        if (matchErr) throw matchErr;
-
-        // 精确匹配未命中 → 回退方案：按 type + 发送者定位最近一条邀请卡片
-        if (!matched || matched.length === 0) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user?.id) {
-            const { data: fallback } = await supabase
-              .from('messages')
-              .select('id')
-              .eq('type', 'cinema_invite')
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false })
-              .limit(1);
-            const fallbackId = fallback?.[0]?.id;
-            if (fallbackId) {
-              await supabase
-                .from('messages')
-                .update({ subtype: 'SYNC_CINEMA_ENDED' })
-                .eq('id', fallbackId);
-            }
-          }
-        }
+        const { error: rpcErr } = await supabase.rpc('end_cinema_invites_by_room', {
+          p_room_id: cinemaRoomId,
+        });
+        if (rpcErr) throw rpcErr;
       } catch (e) {
         // 静默降级：关闭房间的本地状态清理不应因数据库匹配失败而中断
         console.warn('⚠️ closePlayer 更新邀请卡片状态失败（已忽略）:', e?.message ?? e);

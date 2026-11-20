@@ -225,6 +225,31 @@ export function useChatMessages(targetId, user) {
           setMessages(prev => prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg, localUri: m.localUri, localThumbUri: m.localThumbUri } : m));
         }
       )
+      // 🍎 FIX-B：发送方视角的 UPDATE 订阅。
+      //    上面那条 UPDATE 订阅的 filter 是 `receiver_id=eq.<me>`，只能收到「别人发给我
+      //    的消息」的更新；而放映厅邀请卡片是「我发给对方」的，其 subtype 由我（发送方）
+      //    结束放映时更新 —— 发送方永远收不到自己的 UPDATE 事件，卡片状态不会刷新。
+      //    L4 明确禁止使用未经验证的 OR filter 语法，因此这里**单独**再挂一条
+      //    `user_id=eq.<me>` 的 UPDATE 订阅（单列等值 filter，语义确定、可验证），
+      //    与上一条互补，共同覆盖「我发出的」与「我收到的」两个方向。
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const isRelevant = (payload.new.user_id === user.id && payload.new.receiver_id === targetId)
+            || (payload.new.user_id === targetId && payload.new.receiver_id === user.id);
+          if (!isRelevant) return;
+
+          const deletedBy = Array.isArray(payload.new.deleted_by) ? payload.new.deleted_by : [];
+          if (deletedBy.includes(user.id)) {
+            setMessages(prev => prev.filter(m => m.id !== payload.new.id));
+            return;
+          }
+
+          const updatedMsg = formatDbMsg(payload.new, user.id);
+          setMessages(prev => prev.map(m => m.id === updatedMsg.id ? { ...m, ...updatedMsg, localUri: m.localUri, localThumbUri: m.localThumbUri } : m));
+        }
+      )
       .subscribe();
 
     return () => {
