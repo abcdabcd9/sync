@@ -1,8 +1,8 @@
 # Real database structure (exported from the live Supabase project)
 
-[中文版](../DB_SCHEMA_REFERENCE.zh.md) · [English](DB_SCHEMA_REFERENCE.en.md)
+[中文版](DB_SCHEMA_REFERENCE.zh.md) · [English](DB_SCHEMA_REFERENCE.en.md)
 
-> Project ref: `pjiyniqtrstcpnodsnqq` (Sync, aws-0-eu-west-1)
+> Project ref: `<your-project-ref>` (your own Supabase project; region depends on your setup)
 > How it was exported: Supabase Dashboard → SQL Editor → `information_schema.columns`
 > Purpose: this is the source of truth when writing `CREATE TABLE` migrations. **Don't guess from the code.**
 

@@ -1,6 +1,6 @@
 # Full database reset (wipe all test data)
 
-[中文版](../RESET_DATABASE.zh.md) · [English](RESET_DATABASE.en.md)
+[中文版](RESET_DATABASE.zh.md) · [English](RESET_DATABASE.en.md)
 
 > Purpose: bring the Supabase project back to a "zero data" state while **keeping the table structure, RLS policies, triggers and RPCs**.
 > Where to run it: Supabase Dashboard → SQL Editor

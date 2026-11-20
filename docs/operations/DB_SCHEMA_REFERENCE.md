@@ -1,8 +1,8 @@
 # 数据库真实结构（从线上 Supabase 导出）
 
-[English](DB_SCHEMA_REFERENCE.en.md) · [中文](../DB_SCHEMA_REFERENCE.zh.md)
+[English](DB_SCHEMA_REFERENCE.en.md) · [中文](DB_SCHEMA_REFERENCE.zh.md)
 
-> 项目 ref：`pjiyniqtrstcpnodsnqq`（Sync，aws-0-eu-west-1）
+> 项目 ref：`<your-project-ref>`（Supabase 项目，区域以你自己的项目为准）
 > 导出方式：Supabase Dashboard → SQL Editor → `information_schema.columns`
 > 用途：写 `CREATE TABLE` 迁移脚本时以此为准，**不要凭代码猜**
 

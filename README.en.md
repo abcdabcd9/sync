@@ -34,6 +34,23 @@ Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@
 
 ---
 
+## Development status & branches
+
+**Phase progress**
+
+- **P0 (stability & engineering baseline)**: the engineering phase is sealed. P0.3 is complete and frozen; P0.4 engineering acceptance is complete, where FIX-A (friend remark), FIX-B (cinema invite card) and FIX-C (push diagnostics) are **partially fixed** — the residual issues have been accepted as known risk by the project owner and handed off to later phases.
+- **P1 (architecture refactor)**: the next phase, not yet formally started.
+- **P2 / P3 / P4**: planned.
+
+**Branch strategy**
+
+- `main`: the only stable branch.
+- `refactor/phase-0`: the only long-term development branch. P1/P2/P3 all continue on this branch; no separate long-term branch is created per phase.
+
+> Note: a local merge, a remote push, a database migration, and a formal app release are four different things, and the docs label them separately rather than conflating them. The P0 work has not yet been merged into `main`.
+
+---
+
 ## What it does
 
 **Health check-ins**
@@ -108,7 +125,7 @@ npx supabase functions deploy send-push
 >
 > The current `app.json` is a **development/test** configuration (package name `com.mycoupleapp.app`). Stable and development builds use different package names, so **do not use the development Firebase config for production builds**. To change native config, edit `app.json` or a config plugin — never edit the `ios/` or `android/` directories by hand.
 
-There are 29 migration scripts (`00000000000000_bootstrap_base_schema.sql` for the base schema plus incremental migrations `01_` through `28_`). **Execute them in numeric order**:
+There are 30 migration scripts (`00000000000000_bootstrap_base_schema.sql` for the base schema plus incremental migrations `01_` through `29_`). **Execute them in numeric order**:
 
 | No. | File | Purpose |
 | --- | --- | --- |
@@ -140,10 +157,11 @@ There are 29 migration scripts (`00000000000000_bootstrap_base_schema.sql` for t
 | 26 | `26_配额清理改为低频非阻塞_transcribe_quota_cleanup.sql` | Makes quota cleanup low-frequency and non-blocking |
 | 27 | `27_授权表加入Realtime白名单_partner_authorizations_realtime.sql` | Adds `partner_authorizations` to the Realtime allowlist |
 | 28 | `28_修正会话软删除deleted_by触发器语义_fix_deleted_by_receiver.sql` | Fixes the `deleted_by` trigger semantics for one-sided soft delete (receiver side) |
+| 29 | `29_放映厅邀请卡片状态迁移_cinema_invite_status_transition.sql` | Cinema invite-card status transition: adds the `end_cinema_invite` / `end_cinema_invites_by_room` RPCs, extends the `messages_guard_update` trigger to support cinema status flow, and tightens write permission on the `subtype` column |
 
 > All scripts are idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`), so re-running them is safe.
 >
-> ⚠️ **Migrations 18 and 19 are replacements, not additions.** 18 implemented a physical two-sided `DELETE` (you delete it, the other party loses it too); 19 changes that to a one-sided soft delete. **A fresh database just runs 01 → 28.** On a database with existing data, running 19 overwrites the function body defined in 18 — no rollback needed.
+> ⚠️ **Migrations 18 and 19 are replacements, not additions.** 18 implemented a physical two-sided `DELETE` (you delete it, the other party loses it too); 19 changes that to a one-sided soft delete. **A fresh database just runs 01 → 29.** On a database with existing data, running 19 overwrites the function body defined in 18 — no rollback needed.
 
 Note: **`chat_media` is a Storage bucket, not a table.** The table-creation script can't create it. You need to manually create a bucket named `chat_media` in Dashboard → Storage (private is recommended; policies are in `03_聊天媒体桶私有化_private_chat_media_bucket.sql`).
 
@@ -243,7 +261,7 @@ Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list
 
 - Simplified Chinese only for now; no i18n
 - The relation network (multiple partners, small circles) is a reserved design — the code has a feature flag constant but no implementation. See the architecture notes in [`docs/architecture/CODEBASE_MAP.md`](docs/architecture/CODEBASE_MAP.md)
-- The project uses React 19, so `npx expo lint` reports 144 problems (119 errors / 25 warnings), almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
+- The project uses React 19, so `npx expo lint` reports 142 problems (119 errors / 23 warnings), almost all style suggestions from the new `react-hooks/*` rules. They don't affect runtime
 - No end-to-end encryption (honestly disclosed in `src/constants/security.js`)
 - Account deletion depends on the `delete_my_account` RPC, which is provided by `09_补齐缺失RPC函数_missing_rpcs.sql`, so the deletion flow works
 
@@ -263,7 +281,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` currently reports 144 problems (119 errors / 25 warnings, measured 2026-11-18). They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
+`npx expo lint` currently reports 142 problems (119 errors / 23 warnings, measured at the P0.4 engineering freeze). They're style suggestions from the new `react-hooks/*` rules under React 19 and are a known baseline — no need to fix them.
 
 ---
 
@@ -273,7 +291,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 
 **Database layer**
 
-- **29 Supabase migration scripts** (bootstrap + `01_`–`28_`), replayable in order from table creation through RLS hardening
+- **30 Supabase migration scripts** (bootstrap + `01_`–`29_`), replayable in order from table creation through RLS hardening
 - **All 7 core tables have RLS enabled**: `profiles`, `messages`, `friends`, `friend_requests`, `health_records`, `moments`, `complaints` — not a single one is left open
 - Policies aren't just "allow everything": only the receiver can approve a friend request (no self-approval), health record writes carry `WITH CHECK (auth.uid() = user_id)` (no forging), and moments are filtered by `visibility`
 - **Every `SECURITY DEFINER` function pins `search_path`** and is restricted to `authenticated` only — this is the classic PostgreSQL privilege-escalation vector, and [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql) exists specifically to fix it
@@ -309,7 +327,7 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 - GitHub: [@abcdabcd9](https://github.com/abcdabcd9)
 - Contact: tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-I built this end to end on my own — database schema, the 29 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
+I built this end to end on my own — database schema, the 30 migration scripts above, the Edge Function push service, and every UI component. If you find it useful, a star is the best way to say thanks.
 
 ---
 

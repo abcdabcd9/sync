@@ -34,6 +34,23 @@
 
 ---
 
+## 开发状态与分支
+
+**阶段进度**
+
+- **P0（稳定性与工程基线）**：工程阶段已封存。P0.3 已完成并冻结；P0.4 工程验收完成，其中 FIX-A（好友备注）、FIX-B（放映厅邀请卡片）、FIX-C（推送诊断）三项为**部分修复**，残留问题已由项目所有者确认接受风险，移交后续阶段。
+- **P1（架构重构）**：下一阶段，尚未正式启动。
+- **P2 / P3 / P4**：规划中。
+
+**分支策略**
+
+- `main`：唯一的稳定分支。
+- `refactor/phase-0`：唯一的长期开发分支，后续 P1/P2/P3 均在此分支上推进，不再为每个阶段单独开长期分支。
+
+> 说明：本地合并、远程推送、数据库迁移、App 正式发布是四件不同的事，本仓库文档会分别标注，不混为一谈。当前 P0 成果尚未合并进 `main`。
+
+---
+
 ## 能干什么
 
 **健康打卡**
@@ -108,7 +125,7 @@ npx supabase functions deploy send-push
 >
 > 当前 `app.json` 是**开发/测试版**配置（包名 `com.mycoupleapp.app`）。正式版与开发版使用不同的包名，**不要把开发版的 Firebase 配置用于生产构建**。如需调整原生配置，请修改 `app.json` 或 config plugin，不要手动改动 `ios/`、`android/` 目录。
 
-迁移脚本共 29 个（`00000000000000_bootstrap_base_schema.sql` 建基础结构 + `01_` ~ `28_` 增量迁移），**按编号顺序执行**：
+迁移脚本共 30 个（`00000000000000_bootstrap_base_schema.sql` 建基础结构 + `01_` ~ `29_` 增量迁移），**按编号顺序执行**：
 
 | 编号 | 文件 | 作用 |
 | --- | --- | --- |
@@ -140,10 +157,11 @@ npx supabase functions deploy send-push
 | 26 | `26_配额清理改为低频非阻塞_transcribe_quota_cleanup.sql` | 配额清理改为低频非阻塞执行 |
 | 27 | `27_授权表加入Realtime白名单_partner_authorizations_realtime.sql` | 把 `partner_authorizations` 加入 Realtime 白名单 |
 | 28 | `28_修正会话软删除deleted_by触发器语义_fix_deleted_by_receiver.sql` | 修正会话软删除 `deleted_by` 触发器语义（接收方视角） |
+| 29 | `29_放映厅邀请卡片状态迁移_cinema_invite_status_transition.sql` | 放映厅邀请卡片状态迁移：新增 `end_cinema_invite` / `end_cinema_invites_by_room` RPC，扩展 `messages_guard_update` 触发器支持放映厅状态流转，并收紧 `subtype` 列写权限 |
 
 > 全部脚本都是幂等的（`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP POLICY IF EXISTS`），重复跑不会出问题。
 >
-> ⚠️ **迁移 18 与 19 是替代关系，不是叠加关系。** 18 实现的是物理双向 `DELETE`（我删了对方也没了），19 把它改成单边软删除。**新库直接跑 01 → 28 即可**；已有数据的库跑完 19 后，18 定义的旧函数体会被 19 覆盖，无需回滚。
+> ⚠️ **迁移 18 与 19 是替代关系，不是叠加关系。** 18 实现的是物理双向 `DELETE`（我删了对方也没了），19 把它改成单边软删除。**新库直接跑 01 → 29 即可**；已有数据的库跑完 19 后，18 定义的旧函数体会被 19 覆盖，无需回滚。
 
 注意：**`chat_media` 是 Storage 桶，不是表。** 建表脚本建不出来，需要在 Dashboard → Storage 里手动建一个名为 `chat_media` 的桶（建议设为 private，策略见 `03_聊天媒体桶私有化_private_chat_media_bucket.sql`）。
 
@@ -243,7 +261,7 @@ supabase/
 
 - 目前只有简体中文，多语言没做
 - 关系网络（多搭子、小圈子）是预留设计，代码里有开关常量但没实现，架构说明见 [`docs/architecture/CODEBASE_MAP.md`](docs/architecture/CODEBASE_MAP.md)
-- 项目用 React 19，`npx expo lint` 会报 144 个问题（119 error / 25 warning），基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
+- 项目用 React 19，`npx expo lint` 会报 142 个问题（119 error / 23 warning），基本都是 `react-hooks/*` 新规则的风格建议，不影响运行
 - 端到端加密没做（`src/constants/security.js` 里有诚实披露）
 - 注销账号依赖的 `delete_my_account` RPC，已在 `09_补齐缺失RPC函数_missing_rpcs.sql` 中补齐，注销流程可用
 
@@ -263,7 +281,7 @@ npx tsc --noEmit
 npx expo lint
 ```
 
-`npx expo lint` 目前有 144 个问题（119 error / 25 warning，统计于 2026-11-18），是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
+`npx expo lint` 目前有 142 个问题（119 error / 23 warning，统计于 P0.4 工程封存时），是 React 19 下 `react-hooks/*` 新规则的风格建议，属于已知基线，不用去修。
 
 ---
 
@@ -273,7 +291,7 @@ npx expo lint
 
 **数据库层**
 
-- **29 个 Supabase 迁移脚本**（bootstrap + `01_`~`28_`），从建表到 RLS 加固，按编号顺序可完整重放
+- **30 个 Supabase 迁移脚本**（bootstrap + `01_`~`29_`），从建表到 RLS 加固，按编号顺序可完整重放
 - **7 张核心表全部启用 RLS**：`profiles`、`messages`、`friends`、`friend_requests`、`health_records`、`moments`、`complaints`，没有一张表是裸奔的
 - 策略不是「全开」了事：好友申请只有接收方能审批（防自发自批）、健康记录写入带 `WITH CHECK (auth.uid() = user_id)`（防伪造）、动态按 `visibility` 分级可见
 - **`SECURITY DEFINER` 函数全部固定 `search_path`**，并收紧为仅 `authenticated` 可执行，遵循 PostgreSQL 安全最佳实践（见 [`14_修复unbind_partner提权风险_harden_unbind_partner.sql`](supabase/migrations/14_修复unbind_partner提权风险_harden_unbind_partner.sql)）
@@ -309,7 +327,7 @@ npx expo lint
 - GitHub：[@abcdabcd9](https://github.com/abcdabcd9)
 - 联系：tangchengzhi641@gmail.com / tangchengzhi171@gmail.com
 
-这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 29 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
+这个项目从数据库设计到前端交互都是我一个人写的，包括上面提到的 30 个迁移脚本、Edge Function 推送服务和全部 UI 组件。如果你觉得有用，给个 Star 就是最好的支持。
 
 ---
 

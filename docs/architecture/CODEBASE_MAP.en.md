@@ -796,7 +796,7 @@ The design in [`src/hooks/chat/useSignedMediaUrl.js`](../../src/hooks/chat/useSi
 | File | Role |
 |---|---|
 | [`src/app/_layout.js`](../../src/app/_layout.js:15) | Root layout, provider tree, auth guard |
-| [`src/app/(tabs)/_layout.js`](../../src/app/(tabs)/_layout.js:6) | Bottom tab layout |
+| [`src/app/(tabs)/_layout.js`](../../src/app/%28tabs%29/_layout.js:6) | Bottom tab layout |
 | [`src/services/supabase.js`](../../src/services/supabase.js:48) | Supabase client + SecureStore adapter |
 | [`app.json`](../../app.json:1) | Expo config (single source of truth for CNG) |
 | [`package.json`](../../package.json:1) | Dependencies and scripts |

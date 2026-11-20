@@ -26,14 +26,14 @@
 | --- | --- |
 | [`development/DEV_LOG.md`](development/DEV_LOG.md) | 开发日志：按时间记录每个阶段做了什么、踩了什么坑、怎么修的。排查「这个改动为什么是这样」时先翻这里 |
 | [`development/TFG_DATA.md`](development/TFG_DATA.md) | 论文/答辩用的项目数据汇总（规模、技术栈、工作量统计） |
-| [`development/ROADMAP_2027_SUMMER.md`](development/ROADMAP_2027_SUMMER.md) · [EN](development/ROADMAP_2027_SUMMER.en.md) | 2027 暑假执行手册：六个阶段的顺序、工期、风险点、降级方案、每日流程、验收标准。**开工时只看这一份** |
+| [`development/ROADMAP_2027_SUMMER.md`](development/ROADMAP_2027_SUMMER.md) · [中文](development/ROADMAP_2027_SUMMER.md) · [EN](development/ROADMAP_2027_SUMMER.en.md) | 2027 暑假执行手册：六个阶段的顺序、工期、风险点、降级方案、每日流程、验收标准。**开工时只看这一份** |
 
 ## 三、运维手册（`operations/`，照着做就行）
 
 | 文档 | 用途 | 什么时候看 |
 | --- | --- | --- |
-| [`operations/RESET_DATABASE.md`](operations/RESET_DATABASE.md) · [中文](RESET_DATABASE.zh.md) · [EN](operations/RESET_DATABASE.en.md) | 数据库彻底重置的 6 步手册：清 `auth.users` → 清 7 张业务表 → 清 Storage → 验证全空 → 确认结构未坏 → 清 App 本地缓存 | 想把测试数据全清掉、从零开始验收时 |
-| [`operations/DB_SCHEMA_REFERENCE.md`](operations/DB_SCHEMA_REFERENCE.md) · [中文](DB_SCHEMA_REFERENCE.zh.md) · [EN](operations/DB_SCHEMA_REFERENCE.en.md) | 线上 Supabase 的真实结构快照：7 张表的列定义、RLS 策略逐条清单、触发器、RPC、修复优先级 | 改表结构前、排查权限问题、写新迁移前 |
+| [`operations/RESET_DATABASE.md`](operations/RESET_DATABASE.md) · [中文](operations/RESET_DATABASE.zh.md) · [EN](operations/RESET_DATABASE.en.md) | 数据库彻底重置的 6 步手册：清 `auth.users` → 清 7 张业务表 → 清 Storage → 验证全空 → 确认结构未坏 → 清 App 本地缓存 | 想把测试数据全清掉、从零开始验收时 |
+| [`operations/DB_SCHEMA_REFERENCE.md`](operations/DB_SCHEMA_REFERENCE.md) · [中文](operations/DB_SCHEMA_REFERENCE.zh.md) · [EN](operations/DB_SCHEMA_REFERENCE.en.md) | 线上 Supabase 的真实结构快照：7 张表的列定义、RLS 策略逐条清单、触发器、RPC、修复优先级 | 改表结构前、排查权限问题、写新迁移前 |
 
 ## 四、参考材料（`reference/`）
 

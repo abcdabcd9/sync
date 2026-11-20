@@ -796,7 +796,7 @@ documentDirectory/chat_media/
 | 文件 | 作用 |
 |---|---|
 | [`src/app/_layout.js`](../../src/app/_layout.js:15) | 根布局、Provider 树、鉴权守卫 |
-| [`src/app/(tabs)/_layout.js`](../../src/app/(tabs)/_layout.js:6) | 底部 Tab 布局 |
+| [`src/app/(tabs)/_layout.js`](../../src/app/%28tabs%29/_layout.js:6) | 底部 Tab 布局 |
 | [`src/services/supabase.js`](../../src/services/supabase.js:48) | Supabase 客户端 + SecureStore 适配器 |
 | [`app.json`](../../app.json:1) | Expo 配置（CNG 唯一真相源） |
 | [`package.json`](../../package.json:1) | 依赖与脚本 |

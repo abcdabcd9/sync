@@ -17,7 +17,7 @@ This directory holds all public documentation for the Sync project. Code lives i
 
 | Document | Content |
 | --- | --- |
-| [`architecture/CODEBASE_MAP.md`](architecture/CODEBASE_MAP.md) · [中文](architecture/CODEBASE_MAP.md) | **Architecture of the current code**: tech stack, five-layer split, full route tree, business modules, data model, data layer, realtime sync, chat subsystem. Describes what exists, not what's planned |
+| [`architecture/CODEBASE_MAP.md`](architecture/CODEBASE_MAP.md) · [中文](architecture/CODEBASE_MAP.md) · [EN](architecture/CODEBASE_MAP.en.md) | **Architecture of the current code**: tech stack, five-layer split, full route tree, business modules, data model, data layer, realtime sync, chat subsystem. Describes what exists, not what's planned |
 | [`architecture/ARCHITECTURE_DIAGRAMS.md`](architecture/ARCHITECTURE_DIAGRAMS.md) | Architecture diagrams: module layering, data flow, screen relationships |
 
 ## 2. Development records (`development/`)
@@ -26,14 +26,14 @@ This directory holds all public documentation for the Sync project. Code lives i
 | --- | --- |
 | [`development/DEV_LOG.md`](development/DEV_LOG.md) | Development log: what was done in each phase, what broke, and how it was fixed, in chronological order. Start here when asking "why is this change like this?" |
 | [`development/TFG_DATA.md`](development/TFG_DATA.md) | Project data summary for the thesis / defense (scale, tech stack, effort statistics) |
-| [`development/ROADMAP_2027_SUMMER.md`](development/ROADMAP_2027_SUMMER.md) · [中文](development/ROADMAP_2027_SUMMER.md) | 2027 summer execution manual: the order of the six phases, effort estimates, risk points, fallback plans, daily workflow, and acceptance criteria. **Read only this file when work resumes** |
+| [`development/ROADMAP_2027_SUMMER.md`](development/ROADMAP_2027_SUMMER.md) · [中文](development/ROADMAP_2027_SUMMER.md) · [EN](development/ROADMAP_2027_SUMMER.en.md) | 2027 summer execution manual: the order of the six phases, effort estimates, risk points, fallback plans, daily workflow, and acceptance criteria. **Read only this file when work resumes** |
 
 ## 3. Operations manuals (`operations/`, follow them step by step)
 
 | Document | Purpose | When to read |
 | --- | --- | --- |
-| [`operations/RESET_DATABASE.md`](operations/RESET_DATABASE.md) · [中文](RESET_DATABASE.zh.md) · [EN](operations/RESET_DATABASE.en.md) | 6-step manual for a full database reset: clear `auth.users` → clear the 7 business tables → clear Storage → verify everything is empty → confirm the schema is intact → clear the app's local cache | When you want to wipe all test data and start acceptance testing from scratch |
-| [`operations/DB_SCHEMA_REFERENCE.md`](operations/DB_SCHEMA_REFERENCE.md) · [中文](DB_SCHEMA_REFERENCE.zh.md) · [EN](operations/DB_SCHEMA_REFERENCE.en.md) | Snapshot of the real structure of the live Supabase project: column definitions for the 7 tables, a policy-by-policy RLS inventory, triggers, RPCs, and fix priorities | Before changing table structure, troubleshooting permission issues, or writing a new migration |
+| [`operations/RESET_DATABASE.md`](operations/RESET_DATABASE.md) · [中文](operations/RESET_DATABASE.zh.md) · [EN](operations/RESET_DATABASE.en.md) | 6-step manual for a full database reset: clear `auth.users` → clear the 7 business tables → clear Storage → verify everything is empty → confirm the schema is intact → clear the app's local cache | When you want to wipe all test data and start acceptance testing from scratch |
+| [`operations/DB_SCHEMA_REFERENCE.md`](operations/DB_SCHEMA_REFERENCE.md) · [中文](operations/DB_SCHEMA_REFERENCE.zh.md) · [EN](operations/DB_SCHEMA_REFERENCE.en.md) | Snapshot of the real structure of the live Supabase project: column definitions for the 7 tables, a policy-by-policy RLS inventory, triggers, RPCs, and fix priorities | Before changing table structure, troubleshooting permission issues, or writing a new migration |
 
 ## 4. Reference material (`reference/`)
 
