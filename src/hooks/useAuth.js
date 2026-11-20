@@ -64,6 +64,40 @@ export function AuthProvider({ children }) {
   const authEpochRef = useRef(0);
   const [authEpoch, setAuthEpoch] = useState(0);
 
+  // ==========================================================================
+  // 🔢 TASK-P0.3 / B5-R3：认证事件失效序号（authEventSeq）
+  //
+  // 为什么需要它（与 authEpoch 的区别）：
+  //   · authEpoch 表达「身份代际」——只在**真实身份转移**时自增
+  //     （owner 变化 / 同账号重新登录）。它刻意**不**为 TOKEN_REFRESHED 推进。
+  //   · 但「认证事件的发生顺序」比「身份代际」更细：
+  //       - 原本无 owner 时收到 SIGNED_OUT：owner 仍是 null，epoch 不变，
+  //         可它确实是一个**更新的、被采纳的认证事件**；
+  //       - 同账号 TOKEN_REFRESHED：epoch 不变，但它同样晚于更早的 getSession()。
+  //     仅靠 epoch 比对无法判定「某个异步会话读取结果是否已被更晚的认证事件取代」。
+  //
+  // 语义（严格单调递增，只增不减，同步读写，不触发渲染）：
+  //   · 任何**被采纳**的认证事件（onAuthStateChange 中通过既有安全过滤之后）
+  //     都会自增一次；
+  //   · signOut() 确认成功时自增一次（其 SIGNED_OUT 事件被 CR-08 过滤掉，
+  //     由 signOut 自身掌控终态，故在此处补记）；
+  //   · 异步会话读取（初始化 getSession / retrySession）在**发起时**快照该序号，
+  //     结果回来时若序号已变化，说明期间有更晚的认证事件被采纳，
+  //     本次结果属于已被取代的旧快照，必须整体丢弃（含 catch / finally）。
+  //
+  // 优先级约定（避免两套状态机冲突）：
+  //   authEventSeq 只用于「异步读取结果是否过期」的判定；
+  //   authEpoch 仍只用于「身份作用域数据隔离」。
+  //   二者互不替代：序号变化**不**推进 epoch，epoch 推进时序号也必然已推进。
+  // ==========================================================================
+  const authEventSeqRef = useRef(0);
+
+  /** 推进认证事件失效序号（同步、幂等安全）。返回新序号。 */
+  const bumpAuthEventSeq = useCallback(() => {
+    authEventSeqRef.current += 1;
+    return authEventSeqRef.current;
+  }, []);
+
   // 当前身份 ownerId 的 ref 镜像（供异步回调同步比对，避免闭包过期）
   const ownerIdRef = useRef(null);
 
@@ -169,31 +203,56 @@ export function AuthProvider({ children }) {
 
   // 重新尝试恢复会话（供错误页「重试」按钮调用）
   const retrySession = useCallback(async () => {
+    // 🛡️ B5-R3 / L4-FINAL-01：发起时快照认证事件序号。
+    //    getSession() 可能长时间挂起；期间若发生更晚的认证事件（如 B 登录），
+    //    本次重试结果即属于已被取代的旧快照，必须整体丢弃 —— 包括
+    //    不得 applySession（否则回滚 user 并推进 epoch）、不得写 authError、
+    //    不得改 isAuthLoading（否则会覆盖新会话的 loading 终态）。
+    const retrySeqSnapshot = authEventSeqRef.current;
+    const isStale = () => authEventSeqRef.current !== retrySeqSnapshot;
+
     setIsAuthLoading(true);
     setAuthError(null);
     try {
       const { data, error } = await supabase.auth.getSession();
+      if (isStale()) return;
       if (error) throw error;
       // C02：SDK 可能吞掉存储异常并返回 session:null，必须复查状态位
       if (syncStorageFailure()) return;
       applySession(data?.session ?? null);
     } catch (e) {
+      if (isStale()) return;
       // 显式失败：保留 authError，不把用户当作已登出
       console.error('🔒 会话恢复失败（安全存储不可用）:', e?.code ?? e?.message ?? e);
       setAuthError({ code: e?.code ?? 'AUTH_SESSION_RESTORE_FAILED', message: e?.message ?? String(e) });
     } finally {
-      setIsAuthLoading(false);
+      if (!isStale()) setIsAuthLoading(false);
     }
   }, [applySession, syncStorageFailure]);
 
   useEffect(() => {
     let cancelled = false;
 
+    // 🛡️ B5-R3 / L4-FINAL-02：初始化 getSession() 的「陈旧结果守卫」。
+    //    getSession() 是异步的；在其挂起期间，onAuthStateChange 可能已派发
+    //    一次更新的认证事件。仅比对 authEpoch 不足以覆盖全部情形：
+    //      · B 登录 → epoch 推进，可检测；
+    //      · 原本无 owner 时收到 SIGNED_OUT → owner 仍为 null、epoch 不变，
+    //        但它是**更新的、被采纳的认证事件**，旧 init 结果必须失效；
+    //      · 同账号 TOKEN_REFRESHED → epoch 不变，同样晚于更早的 getSession()。
+    //    因此改用「认证事件失效序号」快照：任何被采纳的认证事件都会自增序号。
+    //    then / catch / finally 三处均受该守卫约束，避免旧请求覆盖新会话的
+    //    user / authError / isAuthLoading 终态。
+    const initSeqSnapshot = authEventSeqRef.current;
+    const isInitStale = () => authEventSeqRef.current !== initSeqSnapshot;
+
     // 1. 初始化时获取当前缓存的会话（必须捕获失败，避免永久 loading）
     supabase.auth
       .getSession()
       .then(({ data, error }) => {
         if (cancelled) return;
+        // 🛡️ B5-R3：若挂起期间已有更晚的认证事件被采纳，本次结果属于旧快照，丢弃。
+        if (isInitStale()) return;
         if (error) throw error;
         // C02：优先信任适配器状态位 —— GoTrue 会吞掉存储异常
         if (syncStorageFailure()) return;
@@ -202,11 +261,16 @@ export function AuthProvider({ children }) {
       })
       .catch((e) => {
         if (cancelled) return;
+        // 🛡️ B5-R3：旧请求的失败不得覆盖新会话的错误状态。
+        if (isInitStale()) return;
         console.error('🔒 会话恢复失败（安全存储不可用）:', e?.code ?? e?.message ?? e);
         setAuthError({ code: e?.code ?? 'AUTH_SESSION_RESTORE_FAILED', message: e?.message ?? String(e) });
       })
       .finally(() => {
-        if (!cancelled) setIsAuthLoading(false);
+        if (cancelled) return;
+        // 🛡️ B5-R3：旧请求的完成不得覆盖新会话的 loading 终态。
+        if (isInitStale()) return;
+        setIsAuthLoading(false);
       });
 
     // 2. 监听全局 Auth 状态变化（登录、登出、Token刷新自动触发）
@@ -232,6 +296,12 @@ export function AuthProvider({ children }) {
         return;
       }
 
+      // 🛡️ B5-R3：任何**被采纳**的认证事件都推进失效序号（在全部安全过滤之后）。
+      //    这样即使该事件不推进 authEpoch（如无 owner 时的 SIGNED_OUT、
+      //    同账号 TOKEN_REFRESHED），也能使更早的 getSession()/retrySession()
+      //    结果失效，避免旧异步快照回滚当前身份。
+      bumpAuthEventSeq();
+
       applySession(nextSession, event);
       // 成功拿到状态变化且存储健康 → 清除历史错误
       setAuthError(null);
@@ -242,7 +312,7 @@ export function AuthProvider({ children }) {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, [applySession, syncStorageFailure]);
+  }, [applySession, syncStorageFailure, bumpAuthEventSeq]);
 
   const value = useMemo(() => ({
     user,
@@ -316,6 +386,10 @@ export function AuthProvider({ children }) {
         // ✅ 登出确认成功：推进身份代际，使所有旧账号在途异步结果失效。
         //    注意：此处只失效内存态，不删除任何磁盘持久化数据。
         bumpAuthEpoch();
+        // 🛡️ B5-R3：登出成功同样是一个「被采纳的认证事件」。
+        //    其 SIGNED_OUT 事件已被 CR-08 过滤（signOut 在途时忽略），
+        //    故在此补记失效序号，确保更早的 getSession()/retrySession() 结果失效。
+        bumpAuthEventSeq();
         // 🆔 B1-D / B1-E：同步清空下游模块级缓存并推进其代际
         setSignedUrlOwner(null);
         setProfileCacheOwner(null);
@@ -350,7 +424,8 @@ export function AuthProvider({ children }) {
     },
     // 注：signOut 内部直接读 authStorageStatus.get()（需按错误码分流），
     //     不再依赖 syncStorageFailure，故此处不列入依赖。
-  }), [user, session, isAuthLoading, authError, retrySession, bumpAuthEpoch, authEpoch, isIdentityTransitioning, signOutError]);
+    // 🛡️ B5-R3：signOut 成功路径调用 bumpAuthEventSeq()，需列入依赖。
+  }), [user, session, isAuthLoading, authError, retrySession, bumpAuthEpoch, bumpAuthEventSeq, authEpoch, isIdentityTransitioning, signOutError]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
