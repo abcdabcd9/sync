@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Sync test",
+    "name": "Sync",
     "slug": "my-app",
-    "version": "3.0.1",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon-white.png",
@@ -55,7 +55,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mycoupleapp.app",
+      "bundleIdentifier": "com.sync.app",
       "infoPlist": {
         "UIBackgroundModes": [
           "audio",
@@ -64,7 +64,7 @@
       }
     },
     "android": {
-      "package": "com.mycoupleapp.app",
+      "package": "com.sync.app",
       "googleServicesFile": "./google-services.json",
       "icon": "./assets/icon-white.png",
       "adaptiveIcon": {

@@ -79,7 +79,7 @@ export default function ProfileScreen() {
             </View>
 
             <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
-              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' }}>Sync App v{Constants.expoConfig?.version ?? '3.0.1'}</Text>
+              <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' }}>Sync App v{Constants.expoConfig?.version ?? '1.0.0'}</Text>
               <Text style={{ color: palette.textSecondary, fontSize: 12, fontWeight: '500', textAlign: 'center' }}>© 2026 abcdabcd9</Text>
             </View>
 
