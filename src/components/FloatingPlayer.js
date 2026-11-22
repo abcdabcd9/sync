@@ -16,6 +16,7 @@ import { BlurView } from 'expo-blur';
 import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCinema } from '../hooks/useCinema';
+import { useOwnerKey } from '../hooks/useOwnerKey';
 import { useAppTheme } from '../context/ThemeContext';
 import { SPRING } from '../constants/motion';
 import { haptic } from '../constants/haptics';
@@ -29,7 +30,17 @@ export default function FloatingPlayer() {
   const pathname = usePathname(); 
   const insets = useSafeAreaInsets();
   
-  const { currentUrl, closePlayer, isPlaying, togglePlay, isMinimized, setIsMinimized } = useCinema();
+  const { currentUrl, closePlayer, isPlaying, togglePlay, isMinimized, setIsMinimized, player, ownerKey: cinemaOwnerKey } = useCinema();
+
+  // 🆔 CLIENT-02：切号瞬间禁止继续消费上一个账号的视频与播放控制。
+  //    useCinema 暴露的 ownerKey 是「数据所属身份」；与当前渲染身份不一致时，
+  //    悬浮窗立即不渲染，并主动暂停旧 player（不改变视觉样式与业务协议）。
+  const { ownerKey: currentOwnerKey } = useOwnerKey();
+  const isOwnerMismatch = cinemaOwnerKey !== currentOwnerKey;
+  useEffect(() => {
+    if (!isOwnerMismatch) return;
+    try { player?.pause?.(); } catch (_) {}
+  }, [isOwnerMismatch, player]);
   
   const slideAnim = useRef(new Animated.Value(200)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -164,6 +175,8 @@ export default function FloatingPlayer() {
     }
   };
 
+  // 🆔 CLIENT-02：身份不一致时悬浮窗不渲染，避免闪现/操作旧账号的播放内容。
+  if (isOwnerMismatch) return null;
   if (!currentUrl) return null;
 
   const safeBottom = Math.max(insets.bottom, Platform.OS === 'ios' ? 34 : 24);

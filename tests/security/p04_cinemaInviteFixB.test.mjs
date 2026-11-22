@@ -32,7 +32,12 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
-const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+// P1.4 R6：部分模块已迁移为 .ts，按 .ts 优先、.js 兜底解析真实源码。
+const read = (rel) => {
+  const tsRel = rel.replace(/\.js$/, '.ts');
+  const actual = fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  return fs.readFileSync(path.join(repoRoot, actual), 'utf8');
+};
 
 // ---------------------------------------------------------------------------
 // P04-FIXB-01：closePlayer 不再直接 UPDATE subtype，改为调用批量 RPC
@@ -42,12 +47,16 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 //   roomId 下**全部**合法邀请卡片，改为调用批量 RPC `end_cinema_invites_by_room`。
 // ---------------------------------------------------------------------------
 test('P04-FIXB-01 useCinema 不再直接 UPDATE messages.subtype，改为调用 end_cinema_invites_by_room RPC', () => {
-  const src = read('src/hooks/useCinema.js');
+  // P1.4 R4：useCinema 已迁移为 TypeScript（src/hooks/useCinema.tsx）。
+  // 本用例为源码静态契约断言，直接读取迁移后的真实源码。
+  const src = read('src/hooks/useCinema.tsx');
 
   // 必须调用批量 RPC
+  // 注：迁移后源码为 `supabase!.rpc(...)`（TS 非空断言，运行时等价于 supabase.rpc），
+  //     故正则允许 `supabase` 与 `.rpc` 之间出现可选的 `!`。
   assert.match(
     src,
-    /supabase\.rpc\(\s*['"]end_cinema_invites_by_room['"]/,
+    /supabase!?\.rpc\(\s*['"]end_cinema_invites_by_room['"]/,
     'closePlayer 必须调用 supabase.rpc(\'end_cinema_invites_by_room\', ...)'
   );
 
@@ -75,7 +84,8 @@ test('P04-FIXB-01 useCinema 不再直接 UPDATE messages.subtype，改为调用 
 //   只处理 subtype ∈ (NULL, 'SYNC_CINEMA_INVITE') 的行，幂等。
 // ---------------------------------------------------------------------------
 test('P04-FIXB-02 批量 RPC 参数为 p_room_id，且以当前 roomId 精确定位（无兜底）', () => {
-  const src = read('src/hooks/useCinema.js');
+  // P1.4 R4：useCinema 已迁移为 TypeScript（src/hooks/useCinema.tsx）。
+  const src = read('src/hooks/useCinema.tsx');
 
   assert.match(
     src,
@@ -140,7 +150,8 @@ test('P04-FIXB-03 useChatMessages 具备接收方与发送方两条 UPDATE 订�
 // P04-FIXB-04：迁移草案的安全属性
 // ---------------------------------------------------------------------------
 test('P04-FIXB-04 迁移草案含 SECURITY DEFINER RPC 且不放宽 authenticated subtype 权限', () => {
-  const sql = read('.internal/refactor/tasks/P0/TASK-P0.4/fix-b/29_DRAFT_cinema_invite_status_transition.sql');
+  // 迁移草案已晋升为受版本控制的正式迁移 29，测试改读正式文件（不再依赖 .internal/）
+  const sql = read('supabase/migrations/29_放映厅邀请卡片状态迁移_cinema_invite_status_transition.sql');
 
   // RPC 定义 + SECURITY DEFINER + search_path 固化
   assert.match(sql, /CREATE OR REPLACE FUNCTION public\.end_cinema_invite\(/, '必须定义 end_cinema_invite');
@@ -189,7 +200,7 @@ test('P04-FIXB-04 迁移草案含 SECURITY DEFINER RPC 且不放宽 authenticate
 //   · 不向 anon 授予执行权。
 // ---------------------------------------------------------------------------
 test('P04-FIXB-05 RPC 负向约束：同时限定 id+user_id、统一 RETURN 0、不授予 anon', () => {
-  const sql = read('.internal/refactor/tasks/P0/TASK-P0.4/fix-b/29_DRAFT_cinema_invite_status_transition.sql');
+  const sql = read('supabase/migrations/29_放映厅邀请卡片状态迁移_cinema_invite_status_transition.sql');
 
   // 取出 RPC 函数体（从 CREATE ... end_cinema_invite 到其 $$; 结束）
   const fnStart = sql.indexOf('CREATE OR REPLACE FUNCTION public.end_cinema_invite(');
@@ -247,7 +258,7 @@ test('P04-FIXB-05 RPC 负向约束：同时限定 id+user_id、统一 RETURN 0�
 //   · 不授予 anon 执行权，且先 REVOKE PUBLIC 再 GRANT authenticated。
 // ---------------------------------------------------------------------------
 test('P04-FIXB-06 批量 RPC 负向约束：roomId+user_id 双限定、只处理合法起点、不授予 anon', () => {
-  const sql = read('.internal/refactor/tasks/P0/TASK-P0.4/fix-b/29_DRAFT_cinema_invite_status_transition.sql');
+  const sql = read('supabase/migrations/29_放映厅邀请卡片状态迁移_cinema_invite_status_transition.sql');
 
   const fnStart = sql.indexOf('CREATE OR REPLACE FUNCTION public.end_cinema_invites_by_room(');
   assert.ok(fnStart >= 0, '必须存在 end_cinema_invites_by_room 定义');

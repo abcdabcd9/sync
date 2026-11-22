@@ -30,8 +30,8 @@ const repoRoot = path.resolve(here, '../..');
 
 function buildSandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p04-browser-'));
-  const src = path.join(repoRoot, 'src/constants/browser/index.js');
-  const dst = path.join(dir, 'src/constants/browser/index.js');
+  const src = path.join(repoRoot, 'src/constants/browser/index.ts');
+  const dst = path.join(dir, 'src/constants/browser/index.ts');
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
@@ -57,7 +57,7 @@ test('P04-BROWSER-01 isSafeUrl 仅放行 https/about，isAdUrl 命中广告域�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { isSafeUrl, isAdUrl } = await import('./src/constants/browser/index.js');
+const { isSafeUrl, isAdUrl } = await import('./src/constants/browser/index.ts');
 const safe = {
   https: isSafeUrl('https://example.com/a'),
   httpsUpper: isSafeUrl('HTTPS://EXAMPLE.COM/a'),
@@ -114,7 +114,7 @@ test('P04-BROWSER-02 媒体扩展名 / 域名归一化 / URL 省略 / 列表项�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { getMediaExt, getDomain, ellipsisMiddle, buildMediaItem } = await import('./src/constants/browser/index.js');
+const { getMediaExt, getDomain, ellipsisMiddle, buildMediaItem } = await import('./src/constants/browser/index.ts');
 const ext = {
   m3u8: getMediaExt('https://cdn.x.com/a/index.m3u8'),
   mp4Query: getMediaExt('https://cdn.x.com/a.mp4?token=1'),
@@ -170,7 +170,7 @@ test('P04-BROWSER-03 历史时间格式化 / 标题回退链 / 媒体列表合�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { formatHistoryTime, buildHistoryTitle, mergeMediaList } = await import('./src/constants/browser/index.js');
+const { formatHistoryTime, buildHistoryTitle, mergeMediaList } = await import('./src/constants/browser/index.ts');
 // 固定本地时间戳（用 Date 构造，避免时区差异：断言用同一 Date 计算期望值）
 const ts = new Date(2026, 10, 29, 14, 30, 5).getTime();
 const time = {

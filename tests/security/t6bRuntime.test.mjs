@@ -38,6 +38,22 @@ import { createRequire } from 'node:module';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
+// P1.4 R1：BrowserSessionContext 迁移为 .tsx（含 Provider JSX + TS 类型）。
+// Node 24 无法直接加载 .tsx，沙箱使用项目自带的 TypeScript 编译器做
+// 「类型擦除 + JSX→createElement」转译（与生产构建同一套编译器，非手写改写）。
+const require = createRequire(import.meta.url);
+const ts = require('typescript');
+const transpileTsx = (code) =>
+  ts.transpileModule(code, {
+    compilerOptions: {
+      jsx: ts.JsxEmit.React,
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      isolatedModules: true,
+    },
+    fileName: 'BrowserSessionContext.tsx',
+  }).outputText;
+
 // ---------------------------------------------------------------------------
 // 极简 Hook 运行时（方案 A）—— 作为 react stub 注入沙箱
 //
@@ -355,47 +371,86 @@ export const readAsStringAsync = api.readAsStringAsync;
 `,
   });
 
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts/.tsx 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（迁移后为 .ts/.tsx，Node 24 原生类型擦除执行）。
+  // P1.4 R1：BrowserSessionContext 迁移为 .tsx（含 Provider JSX），需优先匹配 .tsx。
+  const resolveSrc = (rel) => {
+    const tsxRel = rel.replace(/\.js$/, '.tsx');
+    if (fs.existsSync(path.join(repoRoot, tsxRel))) return tsxRel;
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    // ⚠️ Node 24 无法加载 .tsx（无原生 JSX 支持）。BrowserSessionContext 迁移为
+    //    .tsx 后，需把 JSX 改写为 createElement 并以 .js 落盘，供沙箱真实 import。
+    //    其余模块按实际扩展名（.ts/.js）落盘，Node 24 原生类型擦除可直接执行。
+    const isCtx = rel.endsWith('BrowserSessionContext.js');
+    // P1.4 R3：useAuth 已迁移为 .tsx（含 JSX + TS 类型注解），同样需转译后以 .js 落盘，
+    //   保持沙箱内既有 import 路径 './src/hooks/useAuth.js' 不变。
+    const isAuth = rel.endsWith('useAuth.js');
+    // P1.4 R6：useHealthData 已迁移为 .tsx（HealthProvider JSX + TS 类型注解），
+    //   同样需经 TypeScript 编译器「类型擦除 + JSX→createElement」转译后以 .js 落盘。
+    const isHealthData = rel.endsWith('useHealthData.js');
+    // 落盘路径统一使用原始 rel（.js），与测试内 import 路径一致。
+    // 源为 .ts/.tsx 时同样以 .js 落盘：Node 24 原生类型擦除可执行 .ts 内容；
+    // .tsx 需先经 transpileTsx 转译（见下方 isCtx/isAuth 分支）。
+    const dstRel = rel;
+    const dst = path.join(dir, dstRel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     let code = fs.readFileSync(src, 'utf8');
-    // ⚠️ Node 无法解析 JSX。BrowserSessionContext.js 仅有一处 JSX return，
-    //    这里做最小等价改写为 React.createElement（不改变任何业务逻辑），
-    //    使该文件可在沙箱中被真实 import 与执行。
-    if (rel.endsWith('BrowserSessionContext.js')) {
-      code = code.replace(
-        /return \(\s*<BrowserSessionContext\.Provider value=\{value\}>\{children\}<\/BrowserSessionContext\.Provider>\s*\);/,
-        'return React.createElement(BrowserSessionContext.Provider, { value }, children);'
-      );
+    // ⚠️ Node 无法解析 JSX / TS 类型。BrowserSessionContext 迁移为 .tsx 后，
+    //    使用项目自带 TypeScript 编译器做「类型擦除 + JSX→createElement」转译，
+    //    再以 .js 落盘供沙箱真实 import（不改变任何业务逻辑）。
+    if (isCtx) {
+      code = transpileTsx(code);
     }
-    // useAuth.js 末尾有一处 JSX return（AuthContext.Provider），同样改写为 createElement
-    if (rel.endsWith('useAuth.js')) {
-      code = code.replace(
-        /return <AuthContext\.Provider value=\{value\}>\{children\}<\/AuthContext\.Provider>;/,
-        'return React.createElement(AuthContext.Provider, { value }, children);'
-      );
+    // P1.4 R3：useAuth 迁移为 .tsx，同样做「类型擦除 + JSX→createElement」转译。
+    //   转译后 JSX 已由编译器处理，无需再做正则改写（原正则仅适用于 .js 源）。
+    if (isAuth) {
+      code = transpileTsx(code);
     }
-    // useHealthData.js 末尾有一处 JSX return（HealthContext.Provider），同样改写。
-    // ⚠️ 该文件只具名导入 Hook，没有 React 命名空间，因此需补一行 import * as React。
-    if (rel.endsWith('useHealthData.js')) {
-      code = code.replace(
-        /return <HealthContext\.Provider value=\{value\}>\{children\}<\/HealthContext\.Provider>;/,
-        'return React.createElement(HealthContext.Provider, { value }, children);'
-      );
-      code = "import * as React from 'react';\n" + code;
+    // P1.4 R5：useSignedMediaUrl 等已迁移为 .ts（无 JSX）。
+    //   沙箱内 import 扩展名不一致（.js / .ts 混用），故同时落盘两份：
+    //   · rel（.js）：tsc 擦除类型后的可执行代码
+    //   · actual（.ts）：原样源码（Node 24 原生类型擦除）
+    if (!isCtx && !isAuth && !isHealthData && actual.endsWith('.ts')) {
+      const raw = code;
+      code = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, actual), raw);
+    }
+    // P1.4 R6：useHealthData 已迁移为 .tsx（HealthProvider JSX + TS 类型注解）。
+    //   使用项目自带 TypeScript 编译器做「类型擦除 + JSX→createElement」转译，
+    //   再以 .js 落盘供沙箱真实 import（不改变任何业务逻辑）。
+    if (isHealthData) {
+      code = transpileTsx(code);
+      // 源文件使用新 JSX 转换（未导入 React 命名空间），转译为 createElement 后需补导入。
+      if (!/import\s+\*\s+as\s+React\s+from\s+['"]react['"]/.test(code)) {
+        code = "import * as React from 'react';\n" + code;
+      }
     }
     fs.writeFileSync(dst, code);
   };
   // 默认复制 T6-B 涉及的全部被测模块及其直接依赖
   const baseCopies = [
     'src/hooks/health/useHealthStorage.js',
-    'src/hooks/health/constants.js',
-    'src/hooks/health/dateUtils.js',
+    'src/hooks/health/constants.ts',
+    'src/hooks/health/dateUtils.ts',
     'src/hooks/health/useHealthCloud.js',
-    'src/hooks/health/authRevokeLogic.js',
-    'src/constants/browser/index.js',
+    'src/hooks/health/authRevokeLogic.ts',
+    'src/constants/browser/index.ts',
     'src/hooks/browser/useBrowserHistory.js',
+    // 🧩 P1.3 R3：useBrowserHistory 已把历史/书签纯数据决策委托给 historyDataLogic.ts，
+    //    沙箱必须一并复制该真实模块，否则 import './historyDataLogic' 解析失败。
+    'src/hooks/browser/historyDataLogic.ts',
     'src/hooks/profile/useProfileCache.js',
     'src/hooks/chat/useSignedMediaUrl.js',
     // 🗄️ B2：useAuth 现在 import mediaCache 以同步登记沙盒写入身份闸门，
@@ -403,9 +458,13 @@ export const readAsStringAsync = api.readAsStringAsync;
     'src/services/mediaCache.js',
     // 🔄 P0.3 iOS-01：useAuth 现在 import authAutoRefresh 以驱动自动刷新生命周期。
     //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
-    'src/services/authAutoRefresh.js',
+    //    P1.2 R5：源码已迁移为 TypeScript，沙箱按 .ts 落盘（Node 24 原生类型擦除）。
+    'src/services/authAutoRefresh.ts',
     'src/context/BrowserSessionContext.js',
     'src/hooks/useAuth.js',
+    // 🧩 P1.4 R3：useAuth 已把身份转移决策委托给 identityTransitionLogic.ts，
+    //    沙箱必须一并复制该真实模块，否则 import './auth/identityTransitionLogic' 解析失败。
+    'src/hooks/auth/identityTransitionLogic.ts',
   ];
   for (const rel of [...baseCopies, ...extraCopies]) copy(rel);
 
@@ -473,7 +532,7 @@ export const probeAuthStorage = async () => true;
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'/index.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}try{return await n(s+'.tsx',c);}catch{}try{return await n(s+'/index.js',c);}catch{}try{return await n(s+'/index.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -500,7 +559,7 @@ test('T-X01 Profile 写入在 owner 未登记时必须 fail-closed 拒绝', () =
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const PC = await import('./src/hooks/profile/useProfileCache.js');
+const PC = await import('./src/hooks/profile/useProfileCache.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 // 未登记任何 owner（currentOwnerId === null）
@@ -528,7 +587,11 @@ process.stdout.write(JSON.stringify({ wrote, stored }));
 //       effect / 异步路径中。
 // ===========================================================================
 test('T-X01b useHealthData 不得在渲染期调用 setProfileCacheOwner', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/useHealthData.js'), 'utf8');
+  // P1.4 R6：useHealthData 已迁移为 .tsx，按 .tsx 优先、.js 兜底解析真实源码。
+  const healthDataRel = ['src/hooks/useHealthData.tsx', 'src/hooks/useHealthData.js']
+    .find((rel) => fs.existsSync(path.join(repoRoot, rel)));
+  assert.ok(healthDataRel, '应能定位 useHealthData 源码（.tsx 或 .js）');
+  const src = fs.readFileSync(path.join(repoRoot, healthDataRel), 'utf8');
   // 定位渲染期身份重置块（prevProfileOwner !== ... 的 if 块）
   const blockMatch = src.match(/if \(prevProfileOwner !== \(user\?\.id \?\? null\)\) \{[\s\S]*?\n  \}/);
   assert.ok(blockMatch, '应能定位 useHealthData 的渲染期身份重置块');
@@ -741,7 +804,7 @@ test('T-X05 tokenRotated 时下游代际必须同步推进（旧会话在途结�
   try {
     const out = runInSandbox(dir, `
 const SU = await import('./src/hooks/chat/useSignedMediaUrl.js');
-const PC = await import('./src/hooks/profile/useProfileCache.js');
+const PC = await import('./src/hooks/profile/useProfileCache.ts');
 
 const A = 'user-aaa';
 
@@ -792,8 +855,8 @@ test('T-X06 浏览器旧回调不得把 A 的历史写进 B 的 key', () => {
   try {
     const out = runInSandbox(dir, `
 const { createHookRuntime } = await import('react');
-const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.js');
-const { buildBrowserHistoryKey } = await import('./src/constants/browser/index.js');
+const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.ts');
+const { buildBrowserHistoryKey } = await import('./src/constants/browser/index.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa', B = 'user-bbb';
@@ -1317,8 +1380,8 @@ test('T-X06b 浏览器 delete/clear/toggle/remove 旧回调均不得写 B 的 ke
   try {
     const out = runInSandbox(dir, `
 const { createHookRuntime } = await import('react');
-const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.js');
-const { buildBrowserHistoryKey, buildBrowserBookmarksKey } = await import('./src/constants/browser/index.js');
+const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.ts');
+const { buildBrowserHistoryKey, buildBrowserBookmarksKey } = await import('./src/constants/browser/index.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa', B = 'user-bbb';
@@ -1797,8 +1860,8 @@ test('T-14-03 A→B→A 后浏览器旧回调（五回调 + rememberUrl/setPendi
     // ---- 运行 A：五个历史/书签回调 ----
     const outHistory = runInSandbox(dir, `
 const { createHookRuntime } = await import('react');
-const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.js');
-const { buildBrowserHistoryKey, buildBrowserBookmarksKey } = await import('./src/constants/browser/index.js');
+const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.ts');
+const { buildBrowserHistoryKey, buildBrowserBookmarksKey } = await import('./src/constants/browser/index.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa', B = 'user-bbb';
@@ -1940,8 +2003,8 @@ test('T-14-04 同一事件循环内连续 addHistory 两条记录都必须保留
   try {
     const out = runInSandbox(dir, `
 const { createHookRuntime } = await import('react');
-const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.js');
-const { buildBrowserHistoryKey } = await import('./src/constants/browser/index.js');
+const { useBrowserHistory } = await import('./src/hooks/browser/useBrowserHistory.ts');
+const { buildBrowserHistoryKey } = await import('./src/constants/browser/index.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa';
@@ -1993,7 +2056,7 @@ test('T-14-05 Profile 旧请求在 A→B→A 后不得更新 React state', () =>
   try {
     const out = runInSandbox(dir, `
 const { createHookRuntime } = await import('react');
-const PC = await import('./src/hooks/profile/useProfileCache.js');
+const PC = await import('./src/hooks/profile/useProfileCache.ts');
 
 const A = 'user-aaa', B = 'user-bbb';
 
@@ -3798,7 +3861,7 @@ export default { ImpactFeedbackStyle, NotificationFeedbackType, impactAsync, not
   });
 
   // 常量：真实复制（动画参数必须与生产一致，禁止在测试里写魔法数字）
-  for (const rel of ['src/constants/motion.js', 'src/constants/haptics.js']) {
+  for (const rel of ['src/constants/motion.ts', 'src/constants/haptics.ts']) {
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.writeFileSync(dst, fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
@@ -3837,7 +3900,7 @@ export function HealthProvider({ children }) { return children; }
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'/index.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}try{return await n(s+'.tsx',c);}catch{}try{return await n(s+'/index.js',c);}catch{}try{return await n(s+'/index.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -3918,7 +3981,7 @@ export function ThemeProvider({ children }) { return children; }
 `);
 
   // 真实常量（动画参数必须与生产一致）
-  for (const rel of ['src/constants/motion.js', 'src/constants/haptics.js']) {
+  for (const rel of ['src/constants/motion.ts', 'src/constants/haptics.ts']) {
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.writeFileSync(dst, fs.readFileSync(path.join(repoRoot, rel), 'utf8'));

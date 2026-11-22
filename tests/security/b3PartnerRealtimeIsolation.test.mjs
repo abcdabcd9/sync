@@ -31,9 +31,12 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
+// P1.4 R8：项目自带 TypeScript 编译器（.ts 类型擦除后以 .js 落盘供沙箱执行）。
+const ts = createRequire(import.meta.url)('typescript');
 
 // ---------------------------------------------------------------------------
 // 沙箱：stub react（带真实 hook 语义的极简实现）/ AsyncStorage / supabase
@@ -189,14 +192,33 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': 'export function createClient(){ return {}; } export default { createClient };',
   });
 
+  // P1.4 R8：useHealthCloud 已迁移为 .ts，按 .ts 优先、.js 兜底解析，
+  //   使沙箱始终复制当前真实源码（Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    if (actual.endsWith('.ts')) {
+      const code = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(dst, code);
+    } else {
+      fs.copyFileSync(src, dst);
+    }
   };
   copy('src/hooks/health/useHealthCloud.js');
-  copy('src/hooks/health/authRevokeLogic.js');
+  copy('src/hooks/health/authRevokeLogic.ts');
 
   // supabase stub：可注入 RPC 结果、可捕获 channel 注册与事件回调
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
@@ -272,7 +294,7 @@ export const probeAuthStorage = async () => true;
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -655,10 +677,14 @@ process.stdout.write(JSON.stringify({
 // AC-B3-05：源码契约 —— useHealthData 订阅 effect 依赖必须包含 authEpoch
 // ---------------------------------------------------------------------------
 test('AC-B3-05 源码契约 useHealthData 订阅 effect 依赖包含 authEpoch 且向 useHealthCloud 传入 authEpoch', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/useHealthData.js'), 'utf8');
+  // P1.4 R6：useHealthData 已迁移为 .tsx，按 .tsx 优先、.js 兜底解析真实源码。
+  const healthDataRel = ['src/hooks/useHealthData.tsx', 'src/hooks/useHealthData.js']
+    .find((rel) => fs.existsSync(path.join(repoRoot, rel)));
+  assert.ok(healthDataRel, '应能定位 useHealthData 源码（.tsx 或 .js）');
+  const src = fs.readFileSync(path.join(repoRoot, healthDataRel), 'utf8');
   assert.match(
     src,
-    /useHealthCloud\(user,\s*getDateStr,\s*authEpoch\)/,
+    /useHealthCloud\(\s*user\b[^,]*,\s*getDateStr,\s*authEpoch\s*\)/,
     'useHealthData 必须把 authEpoch 传给 useHealthCloud'
   );
   assert.match(
@@ -712,12 +738,17 @@ test('AC-B3-06 源码契约 bind_partner 页面级异步回调做身份快照校
 // 源码契约：useHealthCloud 必须把 authEpoch 纳入全部搭子数据/订阅路径
 // ---------------------------------------------------------------------------
 test('源码契约 useHealthCloud 全路径纳入 authEpoch 闸门', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/health/useHealthCloud.js'), 'utf8');
+  // P1.4 R8：useHealthCloud 已迁移为 .ts，按 .ts 优先、.js 兜底解析真实源码。
+  const cloudRel = ['src/hooks/health/useHealthCloud.ts', 'src/hooks/health/useHealthCloud.js']
+    .find((rel) => fs.existsSync(path.join(repoRoot, rel)));
+  assert.ok(cloudRel, '应能定位 useHealthCloud 源码（.ts 或 .js）');
+  const src = fs.readFileSync(path.join(repoRoot, cloudRel), 'utf8');
 
   // 1. 签名必须接收 authEpoch（默认 0，向后兼容）
+  //    P1.4 R8：迁移后的 .ts 签名可能跨多行，正则需容忍换行与缩进。
   assert.match(
     src,
-    /export function useHealthCloud\(user,\s*getDateStr,\s*authEpoch = 0\)/,
+    /export function useHealthCloud\(\s*user\b[^,]*,\s*getDateStr\b[^,]*,\s*authEpoch\b[^=]*=\s*0\s*\)/,
     'useHealthCloud 签名必须接收 authEpoch'
   );
 
@@ -729,7 +760,7 @@ test('源码契约 useHealthCloud 全路径纳入 authEpoch 闸门', () => {
   const fetchBlock = src.slice(src.indexOf('const fetchPartnerRecord = useCallback'), src.indexOf('const applyPartnerRecord'));
   assert.match(
     fetchBlock,
-    /const isStale = \(\) => gen !== authGenerationRef\.current \|\| epoch !== authEpochRef\.current;/,
+    /const isStale = \(\)(?::\s*boolean)?\s*=>\s*gen !== authGenerationRef\.current \|\| epoch !== authEpochRef\.current;/,
     'fetchPartnerRecord 的 isStale 必须同时比对 authGeneration 与 authEpoch'
   );
   assert.doesNotMatch(
@@ -742,7 +773,7 @@ test('源码契约 useHealthCloud 全路径纳入 authEpoch 闸门', () => {
   const authSubBlock = src.slice(src.indexOf('const subscribeAuthorization = useCallback'), src.indexOf('const subscribePartner = useCallback'));
   assert.match(
     authSubBlock,
-    /const isStale = \(\) => gen !== authGenerationRef\.current \|\| epoch !== authEpochRef\.current;/,
+    /const isStale = \(\)(?::\s*boolean)?\s*=>\s*gen !== authGenerationRef\.current \|\| epoch !== authEpochRef\.current;/,
     'subscribeAuthorization 的 isStale 必须同时比对 authGeneration 与 authEpoch'
   );
   assert.match(authSubBlock, /isStale,\s*\n\s*\/\/[^\n]*\n\s*verify:/, '复验协调器必须使用统一的 isStale');

@@ -31,8 +31,8 @@ const repoRoot = path.resolve(here, '../..');
 
 function buildSandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p04-pushdiag-'));
-  const src = path.join(repoRoot, 'src/services/pushService.js');
-  const dst = path.join(dir, 'src/services/pushService.js');
+  const src = path.join(repoRoot, 'src/services/pushService.ts');
+  const dst = path.join(dir, 'src/services/pushService.ts');
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
 
@@ -51,7 +51,7 @@ export const supabase = {
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -90,7 +90,7 @@ test('P04-PUSH-D01 FunctionsHttpError 携带 status 时返回 status/category �
   const dir = buildSandbox();
   try {
     const { out } = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 ${httpErrorCase(403, 'Not authorized to push to this user')}
 const r = await sendPushNotification('u', 't', 'b');
 process.stdout.write(JSON.stringify(r));
@@ -111,7 +111,7 @@ test('P04-PUSH-D02 状态码映射为稳定类别（401/403/404/500/502）', () 
   const dir = buildSandbox();
   try {
     const { out } = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 const results = {};
 const cases = [
   [401, 'Invalid or expired token'],
@@ -158,7 +158,7 @@ test('P04-PUSH-D03 日志与返回值绝不泄露 JWT / Push Token / service_rol
       serviceRole: 'service_role_key_should_never_leak_1234567890',
     };
     const { out, stderr } = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 // 模拟一个「恶意/异常」错误对象：把敏感串塞进 message 与 context 的无关字段，
 // 但服务端 error 字段本身是安全的短错误码。
 globalThis.__INVOKE_IMPL__ = () => ({
@@ -199,7 +199,7 @@ test('P04-PUSH-D04 无 context.status 时保持旧返回形状 { ok, reason }', 
   const dir = buildSandbox();
   try {
     const { out } = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 globalThis.__INVOKE_IMPL__ = () => ({ data: null, error: { message: 'network down' } });
 const r = await sendPushNotification('u', 't', 'b');
 process.stdout.write(JSON.stringify(r));
@@ -231,7 +231,7 @@ test('P04-PUSH-D05 服务端 error 字符串含模拟 Token 时必须脱敏', ()
       `push failed jwt=${SENSITIVE.jwt} token=${SENSITIVE.pushToken} ` +
       `key=${SENSITIVE.serviceRole} auth=${SENSITIVE.bearer}`;
     const { out, stderr } = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 globalThis.__INVOKE_IMPL__ = () => ({
   data: null,
   error: {

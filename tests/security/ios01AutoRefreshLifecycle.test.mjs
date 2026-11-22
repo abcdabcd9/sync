@@ -30,7 +30,7 @@
 //   卸载时移除监听、开发环境热更新不累积。
 //
 // 本测试的验证策略：
-//   把「生命周期决策」抽成 `src/services/authAutoRefresh.js` 中的纯逻辑
+//   把「生命周期决策」抽成 `src/services/authAutoRefresh.ts` 中的纯逻辑
 //   `createAutoRefreshController({ auth, appState, addListener })`，
 //   注入 fake auth / fake AppState，直接执行**真实实现**（不联网、不用真机）。
 //
@@ -60,8 +60,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
-const controllerPath = path.join(repoRoot, 'src/services/authAutoRefresh.js');
-const supabasePath = path.join(repoRoot, 'src/services/supabase.js');
+const controllerPath = path.join(repoRoot, 'src/services/authAutoRefresh.ts');
+const supabasePath = path.join(repoRoot, 'src/services/supabase.ts');
 
 // ---------------------------------------------------------------------------
 // 加载被测模块（修复前不存在 → 先红）
@@ -69,7 +69,7 @@ const supabasePath = path.join(repoRoot, 'src/services/supabase.js');
 let createAutoRefreshController = null;
 let loadError = null;
 try {
-  const mod = await import('../../src/services/authAutoRefresh.js');
+  const mod = await import('../../src/services/authAutoRefresh.ts');
   createAutoRefreshController = mod.createAutoRefreshController ?? null;
 } catch (e) {
   loadError = e;
@@ -79,7 +79,7 @@ function requireController() {
   assert.equal(
     typeof createAutoRefreshController,
     'function',
-    '未找到 src/services/authAutoRefresh.js 的 createAutoRefreshController：' +
+    '未找到 src/services/authAutoRefresh.ts 的 createAutoRefreshController：' +
       '旧实现完全没有 AppState 监听，后台 ticker 永不停，导致 iOS-01。' +
       (loadError ? ` 加载错误：${loadError.message}` : '')
   );
@@ -318,7 +318,7 @@ test('T6 退出登录后重新登录 → 自动刷新生命周期仍正常', asy
 // ---------------------------------------------------------------------------
 test('T7 真实 SecureStore 读取失败 → AUTH_STORAGE_UNAVAILABLE 仍被置位', async () => {
   const { createAuthStorageStatus, createSecureStoreAdapter, AUTH_STORAGE_ERROR } = await import(
-    '../../src/services/authStorage.js'
+    '../../src/services/authStorage.ts'
   );
 
   const status = createAuthStorageStatus();

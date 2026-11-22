@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -185,22 +186,61 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': 'export function createClient(){ return {}; } export default { createClient };',
   });
 
+  // P1.4 R2：模块可能已迁移为 .ts/.tsx，按 .ts → .tsx → .js 顺序解析真实源文件。
+  const resolveSrc = (rel) => {
+    const candidates = [];
+    if (rel.endsWith('.js')) {
+      candidates.push(rel.slice(0, -3) + '.ts', rel.slice(0, -3) + '.tsx', rel);
+    } else {
+      candidates.push(rel);
+    }
+    for (const cand of candidates) {
+      if (fs.existsSync(path.join(repoRoot, cand))) return cand;
+    }
+    return rel;
+  };
+
+  // P1.4 R6：项目自带 TypeScript 编译器（.ts/.tsx 类型擦除 + JSX 转译）。
+  const ts = createRequire(import.meta.url)('typescript');
+
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    // 沙箱内 import 路径统一为 .js，故以 rel 落盘。
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     let code = fs.readFileSync(src, 'utf8');
-    if (rel.endsWith('useHealthData.js')) {
-      code = code.replace(
-        /return <HealthContext\.Provider value=\{value\}>\{children\}<\/HealthContext\.Provider>;/,
-        'return React.createElement(HealthContext.Provider, { value }, children);'
-      );
-      code = "import * as React from 'react';\n" + code;
+    // P1.4 R6：useHealthData 已迁移为 .tsx（HealthProvider JSX + TS 类型注解）。
+    //   使用项目自带 TypeScript 编译器做「类型擦除 + JSX→createElement」转译，
+    //   再以 .js 落盘供沙箱真实 import（不改变任何业务逻辑）。
+    if (actual.endsWith('.tsx')) {
+      code = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.React,
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      if (!/import\s+\*\s+as\s+React\s+from\s+['"]react['"]/.test(code)) {
+        code = "import * as React from 'react';\n" + code;
+      }
+    } else if (actual.endsWith('.ts')) {
+      // .ts 源含 `import type` 等类型语法，Node 无法直接执行，需类型擦除。
+      code = ts.transpileModule(code, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
     }
     fs.writeFileSync(dst, code);
   };
   copy('src/hooks/health/useHealthCloud.js');
-  copy('src/hooks/health/authRevokeLogic.js');
+  copy('src/hooks/health/authRevokeLogic.ts');
   for (const rel of extraCopies) copy(rel);
 
   // supabase stub：可控 rpc（get_server_time / get_active_partner_id）、
@@ -277,7 +317,7 @@ export const probeAuthStorage = async () => true;
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -287,8 +327,8 @@ function buildHealthProviderSandbox() {
     'src/hooks/health/useHealthStorage.js',
     'src/hooks/health/useTimeSync.js',
     'src/hooks/health/useStreak.js',
-    'src/hooks/health/constants.js',
-    'src/hooks/health/dateUtils.js',
+    'src/hooks/health/constants.ts',
+    'src/hooks/health/dateUtils.ts',
     'src/hooks/profile/useProfileCache.js',
   ]);
   const nm = path.join(dir, 'node_modules');
@@ -426,7 +466,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const D0 = new RealDate(2026, 10, 20, 12, 0, 0);
@@ -557,7 +597,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const D0 = new RealDate(2026, 10, 20, 12, 0, 0);
@@ -673,7 +713,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const D0 = new RealDate(2026, 10, 20, 12, 0, 0);
@@ -829,7 +869,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 const Haptics = await import('expo-haptics');
 
 // 记录触感调用（用于断言「拒绝时无成功反馈」）

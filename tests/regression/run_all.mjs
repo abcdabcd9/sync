@@ -25,9 +25,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 // 仓库根：tests/regression -> tests -> root
 const repoRoot = path.resolve(here, '../..');
-const configPath = path.join(repoRoot, 'src/services/supabaseConfig.js');
-const supabasePath = path.join(repoRoot, 'src/services/supabase.js');
-const authStoragePath = path.join(repoRoot, 'src/services/authStorage.js');
+// 源码已迁移为 TypeScript（P1.2 R0）。沙箱在纯 Node 下运行，
+// 因此读取 .ts 源码并在沙箱内以 .js 落盘后 import，测试逻辑保持不变。
+const configPath = path.join(repoRoot, 'src/services/supabaseConfig.ts');
+const supabasePath = path.join(repoRoot, 'src/services/supabase.ts');
+// P1.2 R5：authStorage 已迁移为 TypeScript。
+const authStoragePath = path.join(repoRoot, 'src/services/authStorage.ts');
 const layoutPath = path.join(repoRoot, 'src/app/_layout.js');
 
 let pass = 0;
@@ -166,17 +169,19 @@ function buildSandbox() {
   // 注意：supabase.js 现在依赖 ./authStorage（C01/C02 抽取的适配器模块），
   // 沙箱必须一并复制，否则子进程会 ERR_MODULE_NOT_FOUND。
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
-  fs.copyFileSync(supabasePath, path.join(dir, 'src/services/supabase.js'));
-  fs.copyFileSync(configPath, path.join(dir, 'src/services/supabaseConfig.js'));
-  fs.copyFileSync(authStoragePath, path.join(dir, 'src/services/authStorage.js'));
+  // 源码已迁移为 TypeScript（P1.2 R4 / R5）。Node 24 原生支持 .ts 类型擦除，
+  // 沙箱以 .ts 落盘，resolve hook 会为无扩展名导入补 .ts。
+  fs.copyFileSync(supabasePath, path.join(dir, 'src/services/supabase.ts'));
+  fs.copyFileSync(configPath, path.join(dir, 'src/services/supabaseConfig.ts'));
+  fs.copyFileSync(authStoragePath, path.join(dir, 'src/services/authStorage.ts'));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   // resolve hook：允许无扩展名相对导入
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   fs.writeFileSync(path.join(dir, 'entry.mjs'),
     `import {register} from 'node:module';import {pathToFileURL} from 'node:url';import path from 'node:path';import {fileURLToPath} from 'node:url';const h=path.dirname(fileURLToPath(import.meta.url));register(pathToFileURL(path.join(h,'resolve-hook.mjs')).href,import.meta.url);await import('./run_case.mjs');`);
   fs.writeFileSync(path.join(dir, 'run_case.mjs'), `
-const mod = await import('./src/services/supabase.js');
+const mod = await import('./src/services/supabase');
 const iso = globalThis.__ISO__ || {};
 const cc = iso.cc || [];
 const as = iso.as || {get:0,set:0,remove:0};

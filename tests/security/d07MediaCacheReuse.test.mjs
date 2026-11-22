@@ -138,9 +138,15 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   fs.mkdirSync(path.join(nm, 'expo-file-system'), { recursive: true });
   fs.writeFileSync(path.join(nm, 'expo-file-system', 'legacy.js'), `export * from './index.js';\n`);
 
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    const dst = path.join(dir, actual);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
   };
@@ -171,8 +177,10 @@ export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
+  // P1.2 R6：mediaCache.ts 内部以无扩展名相对路径 import '../types/media'，
+  // 需在 .js 之后追加 .ts 兜底。
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -195,7 +203,7 @@ test('D07-A/B/C 缓存命中不重复下载、同账号重登复用、跨账号�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const {
   downloadToSandbox, resolveLocalMedia, getMemoryLocalMedia, setMediaCacheOwner,
@@ -279,7 +287,7 @@ test('D07-D 冷启动后持久化索引命中，不重复下载', () => {
   try {
     // 第一阶段：下载并落盘（进程结束，索引写入 AsyncStorage 持久层）
     const phase1 = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const MSG = '22222222-2222-4222-8222-222222222222';
@@ -301,7 +309,7 @@ process.stdout.write(JSON.stringify({ first, dlCount, indexRaw, filesDump, dirsD
 
     // 第二阶段：新进程，还原持久化文件系统 + 索引，再次打开 → 不得下载
     const phase2 = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const MSG = '22222222-2222-4222-8222-222222222222';

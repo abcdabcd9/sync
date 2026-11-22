@@ -25,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
@@ -82,16 +83,40 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
   });
 
   // 复制真实源码（仅被测模块及其直接依赖）
+  // P1.4 R1：useBrowserHistory 已迁移为 .ts，按 .ts 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
+  // 沙箱内不同 case 的 import 扩展名不一致（有的写 .js，有的写 .ts），
+  // 因此对 .ts 源同时落盘两份：
+  //   · rel（.js）：tsc 擦除类型后的可执行代码，供 import '...js' 使用
+  //   · actual（.ts）：原样源码，供 import '...ts' 使用（Node 24 原生类型擦除）
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    if (actual.endsWith('.ts')) {
+      const raw = fs.readFileSync(src, 'utf8');
+      const out = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, rel), out);
+      fs.writeFileSync(path.join(dir, actual), raw);
+      return;
+    }
+    fs.copyFileSync(src, path.join(dir, rel));
   };
   copy('src/hooks/health/useHealthStorage.js');
-  copy('src/hooks/health/constants.js');
-  copy('src/hooks/health/dateUtils.js');
-  copy('src/constants/browser/index.js');
+  copy('src/hooks/health/constants.ts');
+  copy('src/hooks/health/dateUtils.ts');
+  copy('src/constants/browser/index.ts');
   copy('src/hooks/browser/useBrowserHistory.js');
   copy('src/hooks/profile/useProfileCache.js');
   copy('src/hooks/chat/useSignedMediaUrl.js');
@@ -125,7 +150,7 @@ export const probeAuthStorage = async () => true;
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   // resolve hook：允许无扩展名相对导入
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -222,7 +247,7 @@ test('AC-B1-02/03 浏览器历史/书签按账号隔离，旧全局 key 原样�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { buildBrowserHistoryKey, buildBrowserBookmarksKey, HISTORY_KEY } = await import('./src/constants/browser/index.js');
+const { buildBrowserHistoryKey, buildBrowserBookmarksKey, HISTORY_KEY } = await import('./src/constants/browser/index.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa', B = 'user-bbb';
@@ -275,7 +300,7 @@ test('AC-B1-04 Profile Cache 按 owner 隔离，旧请求迟到写入被拦截',
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const PC = await import('./src/hooks/profile/useProfileCache.js');
+const PC = await import('./src/hooks/profile/useProfileCache.ts');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 
 const A = 'user-aaa', B = 'user-bbb';
@@ -430,12 +455,29 @@ process.stdout.write(JSON.stringify({
 // AC-B1-06 / 07：useAuth 源码契约（登出失败安全 + 身份代际语义）
 // ---------------------------------------------------------------------------
 test('AC-B1-06/07 useAuth 登出失败安全与身份代际契约（源码静态核验）', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/useAuth.js'), 'utf8');
+  // P1.4 R3：useAuth 已迁移为 .tsx；身份转移决策（ownerChanged / isTokenRefresh /
+  // tokenRotated）已提取到纯逻辑模块 identityTransitionLogic.ts。
+  // 这里把两个文件按「决策模块在前、Hook 在后」拼接后做同一组静态断言，
+  // 断言的安全语义与迁移前完全一致（不放松任何一条）。
+  const hookSrc = fs.readFileSync(path.join(repoRoot, 'src/hooks/useAuth.tsx'), 'utf8');
+  const logicSrc = fs.readFileSync(
+    path.join(repoRoot, 'src/hooks/auth/identityTransitionLogic.ts'),
+    'utf8'
+  );
+  const src = `${logicSrc}\n${hookSrc}`;
 
   // 登出失败安全：失败分支必须 setSignOutError 且 return，不得推进 epoch
   assert.match(src, /setIsIdentityTransitioning\(true\)/, 'signOut 开始必须置 transitioning=true');
   assert.match(src, /setSignOutError\(failure\)/, '失败分支必须写入 signOutError');
-  assert.match(src, /if \(error\) \{[\s\S]*?setSignOutError\(failure\)[\s\S]*?return \{ error \};/, 'signOut 返回 error 时必须提前 return');
+  // P1.4 R3-FIX：对外必须**原样透传 SDK 原始 error 对象**（保持引用与 status/name/detail
+  // 等附加字段），而内部仍用规范化 failure 写入 signOutError 状态。
+  // 迁移前 JS 即 `return { error };`，此处断言恢复到该原始语义（不放松安全要求：
+  // 仍要求先 setSignOutError(failure) 再提前 return，且不得推进 epoch）。
+  assert.match(
+    src,
+    /if \(error\) \{[\s\S]*?setSignOutError\(failure\)[\s\S]*?return \{ error: error as unknown as AuthErrorLike \};/,
+    'signOut 返回 error 时必须提前 return 原始 SDK error'
+  );
   assert.match(src, /AUTH_STORAGE_ERROR\.UNAVAILABLE[\s\S]*?setSignOutError\(err\)[\s\S]*?return \{ error: err \};/, 'SecureStore UNAVAILABLE 必须视为登出未完成');
   assert.match(src, /LEGACY_CLEANUP_FAILED[\s\S]*?console\.warn/, 'LEGACY_CLEANUP_FAILED 不应阻断登出');
 
@@ -454,11 +496,32 @@ test('AC-B1-06/07 useAuth 登出失败安全与身份代际契约（源码静态
     /const tokenRotated =\s*!ownerChanged && !isTokenRefresh && !!nextOwnerId && prevAccessToken !== nextAccessToken;/,
     '必须检测同账号 token 轮换，且排除正常 TOKEN_REFRESHED'
   );
-  assert.match(src, /if \(ownerChanged \|\| tokenRotated\) \{[\s\S]*?bumpAuthEpoch\(\);/, 'owner 变化或 token 轮换必须推进 epoch');
+  // P1.4 R3：迁移后 `if (ownerChanged || tokenRotated) { bumpAuthEpoch(); }` 被替换为
+  // 等价的 `if (shouldBumpEpoch) { bumpAuthEpoch(); }`，其中 shouldBumpEpoch 由纯逻辑
+  // 模块返回 `ownerChanged || tokenRotated`。两条断言合起来保证语义不变：
+  //   1) 纯逻辑模块必须返回 ownerChanged || tokenRotated；
+  //   2) Hook 必须依据该决策推进 epoch。
+  assert.match(
+    src,
+    /shouldBumpEpoch: ownerChanged \|\| tokenRotated/,
+    'owner 变化或 token 轮换必须推进 epoch（决策表达式）'
+  );
+  assert.match(
+    src,
+    /if \(shouldBumpEpoch\) \{[\s\S]*?bumpAuthEpoch\(\);/,
+    'owner 变化或 token 轮换必须推进 epoch（Hook 执行）'
+  );
 
   // 认证回调内不得 await 网络/磁盘（先剥离注释，避免注释里的 "await" 误判）
   const applyStart = src.indexOf('const applySession = useCallback(');
-  const applyEnd = src.indexOf('}, [bumpAuthEpoch]);', applyStart);
+  // P1.4 R3：迁移为 .tsx 后 useCallback 依赖数组带尾随逗号（Prettier 风格），
+  //   因此结束锚点同时兼容 `}, [bumpAuthEpoch]);` 与 `},\n    [bumpAuthEpoch],\n  );`。
+  const applyEndCandidates = [
+    src.indexOf('}, [bumpAuthEpoch]);', applyStart),
+    src.indexOf('[bumpAuthEpoch],', applyStart),
+  ].filter((i) => i > applyStart);
+  const applyEnd = applyEndCandidates.length ? Math.min(...applyEndCandidates) : -1;
+  assert.ok(applyStart !== -1 && applyEnd > applyStart, '必须能定位 applySession 函数体');
   const applyBody = src
     .slice(applyStart, applyEnd)
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -557,8 +620,8 @@ test('AC-B1-09 无回归：V2 命名契约与纯函数行为一致', () => {
   try {
     const out = runInSandbox(dir, `
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const B = await import('./src/constants/browser/index.js');
-const PC = await import('./src/hooks/profile/useProfileCache.js');
+const B = await import('./src/constants/browser/index.ts');
+const PC = await import('./src/hooks/profile/useProfileCache.ts');
 
 const uid = 'u1';
 const hk = buildHealthKeys(uid);

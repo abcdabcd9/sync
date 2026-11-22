@@ -35,6 +35,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,11 +43,14 @@ import {
   createRevokeVerifier,
   isAuthEventRelevant,
   shouldRevokeOnAuthChange,
-} from '../../src/hooks/health/authRevokeLogic.js';
+} from '../../src/hooks/health/authRevokeLogic.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
-const hookPath = path.join(repoRoot, 'src/hooks/health/useHealthCloud.js');
+// P1.4 R8：useHealthCloud 已迁移为 .ts，按 .ts 优先、.js 兜底解析真实源码。
+const hookPath = ['src/hooks/health/useHealthCloud.ts', 'src/hooks/health/useHealthCloud.js']
+  .map((rel) => path.join(repoRoot, rel))
+  .find((p) => existsSync(p));
 
 const P_ID = 'bbbbbbbb-0000-0000-0000-000000000002';
 

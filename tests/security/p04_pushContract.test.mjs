@@ -29,8 +29,8 @@ const repoRoot = path.resolve(here, '../..');
 
 function buildSandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p04-push-'));
-  const src = path.join(repoRoot, 'src/services/pushService.js');
-  const dst = path.join(dir, 'src/services/pushService.js');
+  const src = path.join(repoRoot, 'src/services/pushService.ts');
+  const dst = path.join(dir, 'src/services/pushService.ts');
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
 
@@ -50,7 +50,7 @@ export const supabase = {
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -73,7 +73,7 @@ test('P04-PUSH-01 缺 receiverId 时直接返回且不发起任何网络调用',
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 const { __invokes } = await import('./src/services/supabase.js');
 const cases = {};
 for (const [k, v] of Object.entries({ empty: '', nullVal: null, undefinedVal: undefined, zero: 0 })) {
@@ -98,7 +98,7 @@ test('P04-PUSH-02 必须通过 Edge Function send-push 且 body 字段完整', (
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 const { __invokes } = await import('./src/services/supabase.js');
 __invokes.length = 0;
 const result = await sendPushNotification('user-target', '标题', '正文', { route: '/chat_room', id: 'm1' });
@@ -132,7 +132,7 @@ test('P04-PUSH-03 云函数 error / ok:false / 抛异常一律归一化为 ok:fa
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { sendPushNotification } = await import('./src/services/pushService.js');
+const { sendPushNotification } = await import('./src/services/pushService');
 
 globalThis.__INVOKE_IMPL__ = () => ({ data: null, error: { message: 'network down' } });
 const errCase = await sendPushNotification('u', 't', 'b');

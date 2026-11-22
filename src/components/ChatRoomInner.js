@@ -27,6 +27,7 @@ import ChatInputBar from './ChatInputBar';
 import InteractiveMediaViewer from './InteractiveMediaViewer';
 import ChatContextMenu from './ChatContextMenu';
 import { useCinema } from '../hooks/useCinema';
+import { useOwnerKey } from '../hooks/useOwnerKey';
 
 const formatDuration = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
 
@@ -88,7 +89,13 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
   const { refreshPartner } = useHealthData();
 
   // ===== 三大领域 Hook（消息 / 媒体 / 录音）=====
-  const { messages, loading, messagesRef, saveAndSend, patchMessage, revokeMessage, deleteMessage } = useChatMessages(targetId, user);
+  const { messages, loading, messagesRef, saveAndSend, patchMessage, revokeMessage, deleteMessage, ownerKey: messagesOwnerKey } = useChatMessages(targetId, user);
+  // 🆔 R1-D2：渲染期 owner 一致性校验。
+  //    useChatMessages 暴露的 ownerKey 是「当前数据所属身份」；useOwnerKey() 返回的是
+  //    「此刻渲染身份」。两者不一致说明切号瞬间 state 尚未清空 —— 必须遮罩，
+  //    绝不能仅依赖 useEffect 的后续清理（首帧仍会闪现旧账号消息）。
+  const { ownerKey: currentOwnerKey } = useOwnerKey();
+  const isOwnerMismatch = messagesOwnerKey !== currentOwnerKey;
   const { uploading, uploadProgress, pickAndSendMedia } = useMediaUpload({ targetId, user, saveAndSend, patchMessage, deleteMessage });
   const { isRecording, recordingDuration, startRecord, stopAndSendRecord, cancelRecord, audioRecorder } = useAudioRecorder({ targetId, user, saveAndSend, patchMessage });
 
@@ -563,7 +570,7 @@ export default function ChatRoomInner({ targetId, targetName, isTabletMode = fal
         </TouchableOpacity>
       </View>
 
-      {(isTransitioning || loading) ? (
+      {(isTransitioning || loading || isOwnerMismatch) ? (
         <View style={styles.loadingContainer}><ActivityIndicator size="small" color={palette.textSecondary} /></View>
       ) : (
         <View style={[styles.chatArea, { backgroundColor: chatBackgroundColor }]}>

@@ -11,7 +11,7 @@
 //
 // 说明：
 //   - 不联网、不使用真实 .env / Token / 用户数据。
-//   - 直接 import 真实源码 src/utils/episodeUrl.js（纯函数、无原生依赖）。
+//   - 直接 import 真实源码 src/utils/episodeUrl.ts（纯函数、无原生依赖）。
 //   - 退出码：0 全部通过；1 存在失败。
 // ============================================================================
 import test from 'node:test';
@@ -33,7 +33,9 @@ function buildSandbox() {
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
   };
-  copy('src/utils/episodeUrl.js');
+  // 源码已迁移为 TypeScript（P1.2 R0）。Node 24 原生支持 .ts 类型擦除，
+  // 沙箱直接复制并 import .ts 源码，测试逻辑与断言保持不变。
+  copy('src/utils/episodeUrl.ts');
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   return dir;
 }
@@ -57,7 +59,7 @@ test('P04-CINEMA-01 parseEpisodeUrl 解析播放页 URL 且 buildEpisodeUrl 可�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { parseEpisodeUrl, buildEpisodeUrl } = await import('./src/utils/episodeUrl.js');
+const { parseEpisodeUrl, buildEpisodeUrl } = await import('./src/utils/episodeUrl.ts');
 const full = parseEpisodeUrl('https://www.kkys11.com/play/392563-36-700596.html');
 const pathOnly = parseEpisodeUrl('/play/392563-36-700596.html');
 const withQuery = parseEpisodeUrl('https://www.kkys11.com/play/392563-36-700596.html?from=share');
@@ -98,7 +100,7 @@ test('P04-CINEMA-02 下一集推断 / 同剧判定 / CDN 线路特征', () => {
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { buildNextEpisodeUrl, isSameSeries, getCdnHost } = await import('./src/utils/episodeUrl.js');
+const { buildNextEpisodeUrl, isSameSeries, getCdnHost } = await import('./src/utils/episodeUrl.ts');
 const cur = 'https://www.kkys11.com/play/392563-36-700596.html';
 const next1 = buildNextEpisodeUrl(cur);
 const next2 = buildNextEpisodeUrl(cur, 2);

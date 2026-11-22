@@ -27,6 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
@@ -143,11 +144,36 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   fs.mkdirSync(path.join(nm, 'expo-file-system'), { recursive: true });
   fs.writeFileSync(path.join(nm, 'expo-file-system', 'legacy.js'), `export * from './index.js';\n`);
 
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（迁移后为 .ts，Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    const tsPath = path.join(repoRoot, tsRel);
+    return fs.existsSync(tsPath) ? tsRel : rel;
+  };
+  // 沙箱内不同 case 的 import 扩展名不一致（有的写 .js，有的写 .ts），
+  // 因此对 .ts 源同时落盘两份：
+  //   · rel（.js）：tsc 擦除类型后的可执行代码，供 import '...js' 使用
+  //   · actual（.ts）：原样源码，供 import '...ts' 使用（Node 24 原生类型擦除）
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    if (actual.endsWith('.ts')) {
+      const raw = fs.readFileSync(src, 'utf8');
+      const out = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, rel), out);
+      fs.writeFileSync(path.join(dir, actual), raw);
+      return;
+    }
+    fs.copyFileSync(src, path.join(dir, rel));
   };
   copy('src/services/mediaCache.js');
   copy('src/hooks/chat/useSignedMediaUrl.js');
@@ -178,8 +204,10 @@ export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
+  // P1.2 R6：mediaCache.ts 内部以无扩展名相对路径 import '../types/media'，
+  // 需在 .js 之后追加 .ts 兜底。
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -303,7 +331,7 @@ test('AC-B2-06/08/09 沙盒写入受身份闸门约束、失败不写索引、�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const {
@@ -453,7 +481,9 @@ process.stdout.write(JSON.stringify({ stateValidForB, fallbackForB, epochA: snap
 // 源码契约：useAuth 必须在身份变化/登出时同步登记 mediaCache owner
 // ---------------------------------------------------------------------------
 test('源码契约 useAuth 在 owner 变化/forceBump/登出时同步登记 mediaCache owner', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/useAuth.js'), 'utf8');
+  // P1.4 R3：useAuth 已迁移为 .tsx（决策纯逻辑拆到 identityTransitionLogic.ts，
+  // 但 owner 登记副作用仍留在 Hook 内）。断言语义与迁移前一致。
+  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/useAuth.tsx'), 'utf8');
   assert.match(src, /import\s*\{\s*setMediaCacheOwner\s*\}\s*from\s*'\.\.\/services\/mediaCache'/, 'useAuth 必须导入 setMediaCacheOwner');
   assert.match(src, /if\s*\(ownerChanged\)\s*\{[\s\S]*?setMediaCacheOwner\(nextOwnerId\);/, 'owner 变化时必须登记 mediaCache owner');
   assert.match(src, /else if\s*\(tokenRotated\)\s*\{[\s\S]*?setMediaCacheOwner\(nextOwnerId,\s*true\);/, 'tokenRotated 时必须 forceBump mediaCache owner');
@@ -464,13 +494,18 @@ test('源码契约 useAuth 在 owner 变化/forceBump/登出时同步登记 medi
 // 源码契约：沙盒索引键不得包含 owner/epoch（防止合法缓存失效）
 // ---------------------------------------------------------------------------
 test('源码契约 沙盒索引键保持 kind:msgId，不含 owner/epoch 前缀', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/services/mediaCache.js'), 'utf8');
-  assert.match(src, /const indexKey = \(msgId, kind\) => `\$\{normalizeKind\(kind\)\}:\$\{msgId\}`/, '索引键必须保持 kind:msgId 形式');
+  // P1.2 R6：源码已迁移为 .ts，按 .ts 优先、.js 兜底读取。
+  const mcTs = path.join(repoRoot, 'src/services/mediaCache.ts');
+  const mcSrcPath = fs.existsSync(mcTs) ? mcTs : path.join(repoRoot, 'src/services/mediaCache.js');
+  const src = fs.readFileSync(mcSrcPath, 'utf8');
+  // P1.2 R6：迁移为 TypeScript 后签名带类型注解，正则需容忍 `: type` 片段，
+  // 但断言的**安全语义**与迁移前完全一致（索引键仍为 kind:msgId，不含 owner/epoch）。
+  assert.match(src, /const indexKey = \(msgId(?::\s*\w+)?, kind(?::\s*\w+)?\)(?::\s*\w+)?\s*=>\s*`\$\{normalizeKind\(kind\)\}:\$\{msgId\}`/, '索引键必须保持 kind:msgId 形式');
   assert.doesNotMatch(src, /indexKey\s*=\s*\([^)]*owner/, '索引键不得引入 owner 参数');
   // 身份闸门必须存在
   assert.match(src, /export function setMediaCacheOwner/, '必须导出 setMediaCacheOwner');
   // 写入路径必须经统一入口 commitIndex，且内部在末次 await 后复检身份
-  assert.match(src, /async function commitIndex\(key, uri, snapshot\)/, '必须存在统一写索引入口 commitIndex');
+  assert.match(src, /async function commitIndex\(/, '必须存在统一写索引入口 commitIndex');
   assert.match(src, /isMediaIdentityValid\(snapshot\.ownerId, snapshot\.epoch\)/, 'commitIndex 必须在末次 await 后复检身份');
   assert.match(src, /if \(!snapshot\.ownerId\) return false/, '未登录必须 fail-closed 拒绝写索引');
 });
@@ -482,7 +517,7 @@ test('PROBE stale download file can be rediscovered after switch', () => {
   const dir=buildSandbox();
   try {
     const out=runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const id = '11111111-1111-4111-8111-111111111111';
@@ -509,7 +544,7 @@ test('PROBE cross-owner inflight should not coalesce', () => {
  const dir=buildSandbox();
  try {
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 const urls=[];let release;
@@ -534,7 +569,7 @@ test('PROBE signed-out identity must fail-closed write', () => {
  const dir=buildSandbox();
  try {
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 FS.__files.set('file:///src.jpg',{size:10});
 const id='22222222-2222-4222-8222-222222222222';
@@ -551,7 +586,7 @@ test('PROBE identity changes while awaiting index initialization', () => {
  const dir=buildSandbox();
  try {
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const AS=(await import('@react-native-async-storage/async-storage')).default;
 FS.__files.set('file:///src_a.jpg',{size:100});
@@ -582,7 +617,7 @@ test('PROBE existing A file is readable by B if message ID is passed', () => {
  const dir=buildSandbox();
  try {
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 FS.__files.set('file:///src_a.jpg',{size:17});
 const id='11111111-1111-4111-8111-111111111111';
@@ -601,7 +636,7 @@ test('L4-CHECK legacy string cache belongs to A and cannot be read by B', () => 
  const dir=buildSandbox();
  try{
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const AS=(await import('@react-native-async-storage/async-storage')).default;
 const id='11111111-1111-4111-8111-111111111111';
@@ -620,7 +655,7 @@ test('L4-CHECK sidecar missing must not transfer A file to B', () => {
  const dir=buildSandbox();
  try{
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 MC.setMediaCacheOwner('A');
@@ -640,7 +675,7 @@ test('L4-CHECK A late download must not overwrite B owned file at same determini
  const dir=buildSandbox();
  try{
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 let releaseA,startedA=false;
@@ -676,7 +711,7 @@ test('L4-CHECK identity change during cached file probe must not return A URI to
    }`);
  fs.writeFileSync(file,src);
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 FS.__files.set('file:///srcA.jpg',{size:99,text:'A_PRIVATE'});
@@ -698,7 +733,7 @@ test('L4-R2-FINAL same-owner previous epoch download cannot overwrite new sessio
   const dir=buildSandbox();
   try {
     const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 let releaseOld;
@@ -727,7 +762,7 @@ test('L4-R2-FINAL stale A download must not hand private A uri into B session',(
  const dir=buildSandbox();
  try {
  const out=runInSandbox(dir, `
-const MC=await import('./src/services/mediaCache.js');
+const MC=await import('./src/services/mediaCache.ts');
 const FS=await import('expo-file-system');
 const id='11111111-1111-4111-8111-111111111111';
 let release,started=false;

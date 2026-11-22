@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
@@ -50,14 +51,31 @@ export default { useCallback, useState, useEffect, useRef };
 `,
   });
 
+  // P1.4 R5：useFriendActions 已迁移为 .ts（.js 原件删除）。
+  // 沙箱落盘仍为 .js（与测试内 import 路径一致），源优先取 .ts，
+  // 且必须先用 tsc 擦除类型（Node 类型擦除仅对 .ts 扩展名生效）。
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    const actual = fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+    const src = path.join(repoRoot, actual);
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
+    if (actual.endsWith('.ts')) {
+      const out = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(dst, out);
+      return;
+    }
     fs.copyFileSync(src, dst);
   };
   copy('src/hooks/chat/useFriendActions.js');
-  copy('src/hooks/health/authRevokeLogic.js');
+  copy('src/hooks/health/authRevokeLogic.ts');
 
   // supabase stub：记录每一次查询链路，便于断言「实际下发的条件」
   //
@@ -111,7 +129,7 @@ export const supabase = { from(table) { return makeBuilder(table); } };
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -324,7 +342,7 @@ test('P04-SOCIAL-03 授权撤销决策：不读 old.status、复验出错不误�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const { isAuthEventRelevant, shouldRevokeOnAuthChange } = await import('./src/hooks/health/authRevokeLogic.js');
+const { isAuthEventRelevant, shouldRevokeOnAuthChange } = await import('./src/hooks/health/authRevokeLogic.ts');
 const pId = 'partner-1';
 
 const relevant = {

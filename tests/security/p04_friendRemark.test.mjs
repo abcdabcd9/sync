@@ -25,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
@@ -33,10 +34,28 @@ const repoRoot = path.resolve(here, '../..');
 //   __DB__ 模拟 friends 表；__CALLS__ 记录调用序列；__FAIL__ 注入错误。
 function buildSandbox() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p04-remark-'));
-  const src = path.join(repoRoot, 'src/hooks/chat/useFriendActions.js');
+  // P1.4 R5：useFriendActions 已迁移为 .ts（.js 原件删除）。
+  // 沙箱落盘仍为 .js（与测试内 import 路径一致），源优先取 .ts，
+  // 且必须先用 tsc 擦除类型（Node 类型擦除仅对 .ts 扩展名生效）。
+  const tsSrc = path.join(repoRoot, 'src/hooks/chat/useFriendActions.ts');
+  const jsSrc = path.join(repoRoot, 'src/hooks/chat/useFriendActions.js');
+  const useTs = fs.existsSync(tsSrc);
+  const src = useTs ? tsSrc : jsSrc;
   const dst = path.join(dir, 'src/hooks/chat/useFriendActions.js');
   fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.copyFileSync(src, dst);
+  if (useTs) {
+    const out = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        isolatedModules: true,
+      },
+      fileName: 'useFriendActions.ts',
+    }).outputText;
+    fs.writeFileSync(dst, out);
+  } else {
+    fs.copyFileSync(src, dst);
+  }
 
   // react stub：useCallback 直接返回原函数（作为裸包 node_modules/react 解析）
   const reactDir = path.join(dir, 'node_modules/react');

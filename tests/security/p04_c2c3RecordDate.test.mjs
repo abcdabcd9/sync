@@ -25,11 +25,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
 function buildSandbox() {
+  // P1.4 R8：项目自带 TypeScript 编译器（.ts 类型擦除后以 .js 落盘供沙箱执行）。
+  const ts = createRequire(import.meta.url)('typescript');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p04-c2c3-'));
   const nm = path.join(dir, 'node_modules');
   const mk = (pkg, files) => {
@@ -80,14 +83,33 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': `export const createClient = () => ({}); export default { createClient };`,
   });
 
+  // P1.4 R8：useHealthCloud 已迁移为 .ts，按 .ts 优先、.js 兜底解析，
+  //   使沙箱始终复制当前真实源码（Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    if (actual.endsWith('.ts')) {
+      const code = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(dst, code);
+    } else {
+      fs.copyFileSync(src, dst);
+    }
   };
   copy('src/hooks/health/useHealthCloud.js');
-  copy('src/hooks/health/authRevokeLogic.js');
+  copy('src/hooks/health/authRevokeLogic.ts');
 
   // 覆盖 services/supabase.js 为可观测 stub（记录 upsert）。
   const svcDir = path.join(dir, 'src/services');
@@ -121,7 +143,7 @@ export default supabase;
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 

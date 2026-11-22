@@ -25,6 +25,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { haptic } from '../../constants/haptics';
 import { supabase } from '../../services/supabase';
 import { useChatList } from '../../hooks/chat/useChatList';
+import { useOwnerKey } from '../../hooks/useOwnerKey';
 import { useChatPrefs } from '../../hooks/chat/useChatPrefs';
 import ConversationRow from '../../components/chat/ConversationRow';
 import ChatRoomInner from '../../components/ChatRoomInner';
@@ -50,7 +51,13 @@ export default function ChatMainScreen() {
     loading,
     refresh,
     getDisplayName,
+    ownerKey: listOwnerKey,
   } = useChatList(user);
+
+  // 🆔 R1-D2：渲染期 owner 一致性校验。列表数据所属身份与当前渲染身份不一致时遮罩，
+  //    避免切号瞬间（useEffect 清理尚未生效）闪现旧账号会话/未读/预览。
+  const { ownerKey: currentOwnerKey } = useOwnerKey();
+  const isOwnerMismatch = listOwnerKey !== currentOwnerKey;
 
   // 会话级偏好（置顶 / 隐藏 / 免打扰 / 星标）—— 持久化到 AsyncStorage，按用户隔离
   const prefs = useChatPrefs(user);
@@ -358,7 +365,7 @@ export default function ChatMainScreen() {
         </TouchableOpacity>
       </View>
 
-      {loading ? (
+      {(loading || isOwnerMismatch) ? (
         <View style={styles.center}>
           <ActivityIndicator color={palette.textSecondary} />
         </View>

@@ -21,14 +21,14 @@
 //
 // 说明：
 //   - 纯 Node，无网络、无真机、无真实 Token。
-//   - 直接执行真实实现 `src/services/authAutoRefresh.js`。
+//   - 直接执行真实实现 `src/services/authAutoRefresh.ts`。
 //   - 修复前：BLOCK-02 / BLOCK-03 用例 FAIL（先红）。
 //   - 关键：所有 deferred 必须在调用 flush() 之前 resolve，否则 flush 会挂起。
 // ============================================================================
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAutoRefreshController } from '../../src/services/authAutoRefresh.js';
+import { createAutoRefreshController } from '../../src/services/authAutoRefresh.ts';
 
 // ---------------------------------------------------------------------------
 // 可控异步 fake auth：start/stop 返回可手动 resolve 的 promise，

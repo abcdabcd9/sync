@@ -35,6 +35,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import ts from 'typescript';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
@@ -196,28 +197,59 @@ export async function selectionAsync() {}
 export default { ImpactFeedbackStyle, NotificationFeedbackType, impactAsync, notificationAsync, selectionAsync };
 `);
 
+  // P1.4 R2：useProfileCache 已迁移为 .ts，按 .ts/.tsx 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsxRel = rel.replace(/\.js$/, '.tsx');
+    if (fs.existsSync(path.join(repoRoot, tsxRel))) return tsxRel;
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
+  // 沙箱内 import 扩展名不一致（.js / .ts 混用），故 .ts 源同时落盘两份：
+  //   · rel（.js）：tsc 擦除类型后的可执行代码
+  //   · actual（.ts）：原样源码（Node 24 原生类型擦除）
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     let code = fs.readFileSync(src, 'utf8');
-    if (rel.endsWith('useHealthData.js')) {
-      code = code.replace(
-        /return <HealthContext\.Provider value=\{value\}>\{children\}<\/HealthContext\.Provider>;/,
-        'return React.createElement(HealthContext.Provider, { value }, children);'
-      );
-      code = "import * as React from 'react';\n" + code;
+    // P1.4 R6：useHealthData 已迁移为 .tsx（HealthProvider JSX + TS 类型注解）。
+    //   使用项目自带 TypeScript 编译器做「类型擦除 + JSX→createElement」转译。
+    if (actual.endsWith('.tsx')) {
+      code = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.React,
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      if (!/import\s+\*\s+as\s+React\s+from\s+['"]react['"]/.test(code)) {
+        code = "import * as React from 'react';\n" + code;
+      }
+    } else if (actual.endsWith('.ts')) {
+      const raw = code;
+      code = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, actual), raw);
     }
-    fs.writeFileSync(dst, code);
+    fs.writeFileSync(path.join(dir, rel), code);
   };
   copy('src/hooks/useHealthData.js');
   copy('src/hooks/health/useHealthCloud.js');
   copy('src/hooks/health/useHealthStorage.js');
   copy('src/hooks/health/useTimeSync.js');
   copy('src/hooks/health/useStreak.js');
-  copy('src/hooks/health/constants.js');
-  copy('src/hooks/health/dateUtils.js');
-  copy('src/hooks/health/authRevokeLogic.js');
+  copy('src/hooks/health/constants.ts');
+  copy('src/hooks/health/dateUtils.ts');
+  copy('src/hooks/health/authRevokeLogic.ts');
   copy('src/hooks/profile/useProfileCache.js');
 
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
@@ -334,7 +366,7 @@ export function AuthProvider({ children }) { return children; }
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -447,11 +479,32 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   });
   fs.writeFileSync(path.join(nm, 'expo-file-system', 'legacy.js'), `export * from './index.js';\n`);
 
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（迁移后为 .ts，Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
+  // 沙箱内 import 扩展名不一致（.js / .ts 混用），故 .ts 源同时落盘两份。
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    if (actual.endsWith('.ts')) {
+      const raw = fs.readFileSync(src, 'utf8');
+      const out = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, rel), out);
+      fs.writeFileSync(path.join(dir, actual), raw);
+      return;
+    }
+    fs.copyFileSync(src, path.join(dir, rel));
   };
   copy('src/services/mediaCache.js');
   copy('src/hooks/chat/useSignedMediaUrl.js');
@@ -483,7 +536,7 @@ export const probeAuthStorage = async () => true;
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -669,29 +722,65 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   // 否则纯 Node ESM 无法解析。其余模块无 JSX，原样复制。
   const requireFromRepo = createRequire(path.join(repoRoot, 'package.json'));
   const babel = requireFromRepo('@babel/core');
-  const copy = (rel, transformJsx = false) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析。
+  // P1.4 R2：useProfileCache 已迁移为 .ts，按 .ts 优先、.js 兜底解析。
+  // P1.4 R3：useAuth 已迁移为 .tsx，按 .tsx / .ts 优先、.js 兜底解析。
+  const resolveAuthSrc = (rel) => {
+    const tsxRel = rel.replace(/\.js$/, '.tsx');
+    if (fs.existsSync(path.join(repoRoot, tsxRel))) return tsxRel;
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
+  // P1.4 R3：沙箱内一律落盘为 .js（沙箱 import 路径固定为 './src/hooks/useAuth.js'），
+  //   因此目标文件名必须由调用方显式指定，不能沿用源文件扩展名。
+  const copy = (rel, transformJsx = false, dstRel = rel) => {
+    const actual = resolveAuthSrc(rel);
+    const src = path.join(repoRoot, actual);
+    const dst = path.join(dir, dstRel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     if (transformJsx) {
+      // P1.4 R3：useAuth 已迁移为 .tsx，需同时剥离 TypeScript 类型注解。
+      //   对 .js 源保持原行为（仅 JSX 插件），不改变既有测试语义。
+      const isTs = /\.tsx?$/.test(actual);
       const code = babel.transformSync(fs.readFileSync(src, 'utf8'), {
+        presets: isTs ? ['@babel/preset-typescript'] : [],
         plugins: ['@babel/plugin-transform-react-jsx'],
         configFile: false,
         babelrc: false,
-        filename: path.basename(rel),
+        filename: path.basename(actual),
       }).code;
       fs.writeFileSync(dst, code);
+    } else if (actual.endsWith('.ts')) {
+      // P1.4 R5：useSignedMediaUrl 已迁移为 .ts。沙箱 import 路径固定为 .js，
+      //   因此必须转译为 .js 落盘（Node 24 原生类型擦除只对 .ts 扩展名生效，
+      //   直接把 .ts 内容写入 .js 会触发 SyntaxError: Unexpected token ':'）。
+      const out = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(dst, out);
     } else {
       fs.copyFileSync(src, dst);
     }
   };
-  copy('src/hooks/useAuth.js', true);
+  // 源为 .tsx，落盘为沙箱内的 .js（保持既有 import 路径不变）。
+  copy('src/hooks/useAuth.js', true, 'src/hooks/useAuth.js');
+  // P1.4 R3：useAuth.tsx 依赖身份转移决策纯逻辑模块，必须一并复制。
+  copy('src/hooks/auth/identityTransitionLogic.ts');
   copy('src/hooks/chat/useSignedMediaUrl.js');
-  copy('src/hooks/profile/useProfileCache.js');
-  copy('src/services/mediaCache.js');
+  // P1.4 R2：useProfileCache 已迁移为 .ts（含 `import type`），沙箱内必须落盘为 .ts，
+  //   由 Node 24 原生类型擦除处理；若落盘为 .js 会触发 SyntaxError。
+  copy('src/hooks/profile/useProfileCache.js', false, 'src/hooks/profile/useProfileCache.ts');
+  // P1.2 R6：mediaCache 已迁移为 .ts，同理落盘为 .ts。
+  copy('src/services/mediaCache.js', false, 'src/services/mediaCache.ts');
   // 🔄 P0.3 iOS-01：useAuth 现在 import authAutoRefresh 以驱动自动刷新生命周期。
   //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
-  copy('src/services/authAutoRefresh.js');
+  //    P1.2 R5：源码已迁移为 TypeScript，沙箱按 .ts 落盘（Node 24 原生类型擦除）。
+  copy('src/services/authAutoRefresh.ts');
 
   // supabase stub：可控 auth 事件 + 可注入 getSession
   fs.mkdirSync(path.join(dir, 'src/services'), { recursive: true });
@@ -739,8 +828,9 @@ export const probeAuthStorage = async () => true;
 `);
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
+  // P1.2 R5：authAutoRefresh 已迁移为 TypeScript，无扩展名相对导入需依次尝试 .js / .ts。
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}try{return await n(s+'/index.js',c);}catch{}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}try{return await n(s+'/index.js',c);}catch{}return n(s,c);}`);
   return dir;
 }
 
@@ -918,7 +1008,7 @@ export default { ImpactFeedbackStyle, NotificationFeedbackType, impactAsync, not
   });
 
   // 真实常量（动画参数必须与生产一致）
-  for (const rel of ['src/constants/motion.js', 'src/constants/haptics.js']) {
+  for (const rel of ['src/constants/motion.ts', 'src/constants/haptics.ts']) {
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.writeFileSync(dst, fs.readFileSync(path.join(repoRoot, rel), 'utf8'));
@@ -957,7 +1047,7 @@ export function HealthProvider({ children }) { return children; }
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}try{return await n(s+'/index.js',c);}catch{}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}try{return await n(s+'/index.js',c);}catch{}try{return await n(s+'/index.ts',c);}catch{}return n(s,c);}`);
   return dir;
 }
 
@@ -1035,19 +1125,29 @@ function buildAuthHealthSandbox() {
   const dir = buildHealthSandbox();
   const nm = path.join(dir, 'node_modules');
 
-  // 用真实 useAuth.js 覆盖 buildHealthSandbox 写入的 useAuth 桩。
-  // useAuth.js 含 JSX（<AuthContext.Provider>），必须 Babel 转译为 createElement。
+  // 用真实 useAuth 源码覆盖 buildHealthSandbox 写入的 useAuth 桩。
+  // P1.4 R3：源码已迁移为 useAuth.tsx（含 JSX），必须 Babel 转译为 createElement，
+  // 并落盘为沙箱内的 src/hooks/useAuth.js（沙箱 import 路径不变）。
   const requireFromRepo = createRequire(path.join(repoRoot, 'package.json'));
   const babel = requireFromRepo('@babel/core');
-  const authSrc = path.join(repoRoot, 'src/hooks/useAuth.js');
+  const authSrc = path.join(repoRoot, 'src/hooks/useAuth.tsx');
   const authDst = path.join(dir, 'src/hooks/useAuth.js');
   const authCode = babel.transformSync(fs.readFileSync(authSrc, 'utf8'), {
+    // P1.4 R3：源为 .tsx，需剥离 TypeScript 类型注解后再转译 JSX。
+    presets: ['@babel/preset-typescript'],
     plugins: ['@babel/plugin-transform-react-jsx'],
     configFile: false,
     babelrc: false,
-    filename: 'useAuth.js',
+    filename: 'useAuth.tsx',
   }).code;
   fs.writeFileSync(authDst, authCode);
+  // P1.4 R3：复制身份转移决策纯逻辑模块（useAuth.tsx 依赖）。
+  {
+    const logicSrc = path.join(repoRoot, 'src/hooks/auth/identityTransitionLogic.ts');
+    const logicDst = path.join(dir, 'src/hooks/auth/identityTransitionLogic.ts');
+    fs.mkdirSync(path.dirname(logicDst), { recursive: true });
+    fs.copyFileSync(logicSrc, logicDst);
+  }
 
   // 覆盖 react stub：在 buildHealthSandbox 的运行时基础上，增加「真实 Context 传播」能力。
   // 原因：真实 useAuth() = useContext(AuthContext)，而 HealthProvider 内部调用 useAuth()。
@@ -1074,17 +1174,38 @@ export function __setContextValue(c, v) { __ctxValues.set(c, v); }`
   //   · useSignedMediaUrl.js（setSignedUrlOwner）
   //   · mediaCache.js（setMediaCacheOwner，依赖 expo-file-system/legacy）
   // useProfileCache.js 已由 buildHealthSandbox 复制。
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析。
+  const resolveRawSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
+  // 沙箱内 import 扩展名不一致（.js / .ts 混用），故 .ts 源同时落盘两份。
   const copyRaw = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    const actual = resolveRawSrc(rel);
+    const src = path.join(repoRoot, actual);
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    if (actual.endsWith('.ts')) {
+      const raw = fs.readFileSync(src, 'utf8');
+      const out = ts.transpileModule(raw, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(path.join(dir, rel), out);
+      fs.writeFileSync(path.join(dir, actual), raw);
+      return;
+    }
+    fs.copyFileSync(src, path.join(dir, rel));
   };
   copyRaw('src/hooks/chat/useSignedMediaUrl.js');
   copyRaw('src/services/mediaCache.js');
   // 🔄 P0.3 iOS-01：真实 useAuth.js 现在 import authAutoRefresh 以驱动自动刷新生命周期。
   //    复制**真实实现**（非 stub），保证本沙箱执行的是生产代码。
-  copyRaw('src/services/authAutoRefresh.js');
+  //    P1.2 R5：源码已迁移为 TypeScript，沙箱按 .ts 落盘（Node 24 原生类型擦除）。
+  copyRaw('src/services/authAutoRefresh.ts');
 
   // react-native 桩（P0.3 iOS-01）：真实 useAuth.js 现在 import { AppState }。
   //   本沙箱的 AC-B5-08 / AC-B5-11 需要**真实派发**前后台事件（AppState.__emit），
@@ -1283,7 +1404,7 @@ const React = await import('react');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const B = 'user-bbb';
@@ -1431,7 +1552,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { AuthProvider } = await import('./src/hooks/useAuth.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const B = 'user-bbb';
@@ -1664,7 +1785,7 @@ process.stdout.write(JSON.stringify({
     assert.equal(healthOut.cacheWater, 500, 'epoch 变化后迟到 fetch 结果不得覆盖本地缓存');
 
     const mediaOut = runInSandbox(mediaDir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const M = await import('./src/hooks/chat/useSignedMediaUrl.js');
@@ -1728,7 +1849,7 @@ const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { buildHealthKeys } = await import('./src/hooks/health/useHealthStorage.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const B = 'user-bbb';
 const DATE = formatDateStr(new Date());
@@ -1948,7 +2069,7 @@ const React = await import('react');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const B = 'user-bbb';
@@ -2017,7 +2138,7 @@ test('AC-B5-07 媒体缓存跨账号不可读且同账号重登可复用', () =>
   const dir = buildMediaSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const M = await import('./src/hooks/chat/useSignedMediaUrl.js');
 
@@ -2091,7 +2212,7 @@ test('AC-B5-08 搭子授权撤销后可见数据清空且旧订阅失效', () =>
 const React = await import('react');
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const PARTNER = 'partner-xxx';
@@ -2229,7 +2350,7 @@ const React = await import('react');
 const AS = (await import('@react-native-async-storage/async-storage')).default;
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 
 const A = 'user-aaa';
 const DATE = formatDateStr(new Date());
@@ -2445,7 +2566,7 @@ const React = await import('react');
 const { supabase } = await import('./src/services/supabase.js');
 const { HealthProvider } = await import('./src/hooks/useHealthData.js');
 const { AuthProvider } = await import('./src/hooks/useAuth.js');
-const { formatDateStr } = await import('./src/hooks/health/dateUtils.js');
+const { formatDateStr } = await import('./src/hooks/health/dateUtils.ts');
 const { AppState } = await import('react-native');
 
 const A = 'user-aaa';

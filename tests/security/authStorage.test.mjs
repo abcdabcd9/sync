@@ -3,7 +3,7 @@
  * TASK-P0.2 Batch C — 认证存储加固测试
  *
  * C03 关键变更：**直接执行真实实现**。
- *   本测试 import `src/services/authStorage.js` 的 `createSecureStoreAdapter`，
+ *   本测试 import `src/services/authStorage.ts` 的 `createSecureStoreAdapter`，
  *   注入内存 fake 的 secureStore / asyncStorage，因此断言的是生产代码本身，
  *   而不是一份复刻逻辑。任何对真实适配器的修改都会立即反映到测试结果。
  *
@@ -42,7 +42,7 @@ import {
   createAuthStorageStatus,
   createSecureStoreAdapter,
   toSecureKey,
-} from '../../src/services/authStorage.js';
+} from '../../src/services/authStorage.ts';
 
 // ---------------------------------------------------------------------------
 // Fake storage 工厂（仅模拟原生模块，不模拟适配器逻辑）
@@ -287,7 +287,8 @@ test('C14 真实实现契约：导出错误码齐全，且不含明文降级路�
   assert.equal(AUTH_STORAGE_ERROR.LEGACY_CLEANUP_FAILED, 'AUTH_STORAGE_LEGACY_CLEANUP_FAILED');
 
   // 源码层面：真实实现不得包含明文降级写入
-  const srcPath = path.resolve(process.cwd(), 'src/services/authStorage.js');
+  // P1.2 R5：源码已迁移为 TypeScript，断言对象改为 .ts 实现。
+  const srcPath = path.resolve(process.cwd(), 'src/services/authStorage.ts');
   const src = await fs.readFile(srcPath, 'utf8');
   const code = src
     .replace(/\/\*[\s\S]*?\*\//g, '') // 块注释

@@ -18,6 +18,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useAuth } from '../hooks/useAuth';
+import { useOwnerKey } from '../hooks/useOwnerKey';
 import EpisodeDrawer from '../components/cinema/EpisodeDrawer';
 import HiddenSnifferWebView from '../components/cinema/HiddenSnifferWebView';
 
@@ -29,7 +30,36 @@ const IS_ANDROID = Platform.OS === 'android';
 //    若此时生成新 UUID，会重建 Supabase Channel → presence 重新 sync →
 //    partnerStatus 变化 → 广播 PLAY → 播放器被 replaceAsync/seek 到 0。
 //    用模块级变量记住上一次的房间号，保证同一次 App 会话内房间号稳定不变。
-let lastCinemaRoomId = null;
+//
+// 🆔 CLIENT-03：房间号必须与「所属账号」绑定，禁止跨账号复用。
+//    旧实现只存 roomId，切号后 B 会复用 A 的历史房间号 → 进入 A 的放映厅
+//    （presence / 广播串号）。现改为存 { ownerKey, roomId }：
+//      · 仅当「当前 ownerKey === 记录中的 ownerKey」时才复用（同账号最小化/重挂载）；
+//      · 真实身份切换（A→B、A→B→A、同账号重新登录导致 authEpoch 变化）时
+//        ownerKey 不同 → 不复用，生成新房间号。
+//    ownerKey 由 useOwnerKey 提供（`${ownerId}::${authEpoch}`），已区分同账号重登。
+let lastCinemaRoom = { ownerKey: null, roomId: null };
+
+// 🆔 CLIENT-03：房间号解析（纯函数，便于单测）。
+//   优先级：
+//     ① 邀请链接/上下文已带 roomId → 直接使用（不覆盖）；
+//     ② 记录中的 ownerKey 与当前 ownerKey 相同 → 复用（同账号最小化/重挂载）；
+//     ③ 否则生成新 UUID（真实身份切换 / 首次进入）。
+//   ownerKey 形如 `${ownerId}::${authEpoch}`，同账号重新登录 authEpoch 变化 → 不复用。
+export function resolveCinemaRoomId({ cinemaRoomId, lastRoom, currentOwnerKey, newUuid }) {
+  if (cinemaRoomId) return cinemaRoomId;
+  if (lastRoom && lastRoom.ownerKey === currentOwnerKey && lastRoom.roomId) {
+    return lastRoom.roomId;
+  }
+  return newUuid();
+}
+
+// 保持挂载的页面遇到身份变化时，必须轮换房间 ID；不能把旧房间
+// 简单地重新标记为新 owner。此函数由真实 effect 调用，便于边界测试。
+export function resolveOwnedCinemaRoomBinding({ roomBinding, currentOwnerKey, newUuid }) {
+  if (roomBinding?.ownerKey === currentOwnerKey) return roomBinding;
+  return { ownerKey: currentOwnerKey, roomId: newUuid() };
+}
 
 const DanmakuItem = React.memo(({ text, color, screenWidth }) => {
   const translateX = useRef(new Animated.Value(screenWidth)).current;
@@ -66,7 +96,39 @@ export default function CinemaScreen() {
     episodeListRequest,
     // 📺 自动下一集：复用已有的 playNextEpisode（内部已做边界判断）
     playNextEpisode,
+    // 🆔 R1-D3：放映厅数据所属身份
+    ownerKey: cinemaOwnerKey,
   } = useCinema();
+
+  // 🆔 R1-D3：渲染期 owner 一致性校验。切号瞬间 useCinema 的 useEffect 清理尚未生效，
+  //    首帧仍会渲染旧账号的弹幕/在线状态 —— 这里在渲染期直接遮蔽，绝不依赖后续清理。
+  const { ownerKey: currentOwnerKey } = useOwnerKey();
+
+  // 🆔 客户端 owner 作用域：roomId 必须同「创建它的 ownerKey」一起存储。
+  // 若页面保持挂载而账号切换，旧 roomId 在首帧立即失效，随后 effect 分配新的 UUID。
+  const initialRouteOwnerKeyRef = useRef(currentOwnerKey);
+  const [roomBinding, setRoomBinding] = useState(() => ({
+    ownerKey: currentOwnerKey,
+    roomId: params.roomId || resolveCinemaRoomId({
+      cinemaRoomId: cinemaOwnerKey === currentOwnerKey ? cinemaRoomId : null,
+      lastRoom: lastCinemaRoom,
+      currentOwnerKey,
+      newUuid: () => Crypto.randomUUID(),
+    }),
+  }));
+  const roomId = roomBinding.ownerKey === currentOwnerKey ? roomBinding.roomId : null;
+  const isOwnerMismatch = cinemaOwnerKey !== currentOwnerKey || !roomId;
+  const safeDanmakuList = isOwnerMismatch ? [] : danmakuList;
+  const safePartnerStatus = isOwnerMismatch ? '等待建立连接...' : partnerStatus;
+
+  // 🆔 CLIENT-02：切号瞬间禁止继续渲染/消费上一个账号的视频与播放控制。
+  //    · safePlayer = null → VideoView 不挂载旧 player，旧账号画面立即消失；
+  //    · 同时主动 pause 旧 player，避免后台继续解码/出声（不改变视觉样式与业务协议）。
+  const safePlayer = isOwnerMismatch ? null : player;
+  useEffect(() => {
+    if (!isOwnerMismatch) return;
+    try { player?.pause?.(); } catch (_) {}
+  }, [isOwnerMismatch, player]);
 
   // 🍎 P2-15 修复：房间号使用 useState 惰性初始化，仅在组件首次挂载时生成一次。
   //    旧实现把 roomId 放在 useEffect 里用 Date.now() 生成，任何重渲染/依赖变化
@@ -82,7 +144,11 @@ export default function CinemaScreen() {
   //    同时旧房间的残留指令也可能被消费 → 播放器被 replaceAsync/seek 到 0。
   //    这里把「最近一次使用的房间号」持久化到模块级变量，重新挂载时优先复用，
   //    保证同一次 App 会话内房间号稳定不变。
-  const [roomId] = useState(() => cinemaRoomId || lastCinemaRoomId || Crypto.randomUUID());
+  // 🆔 CLIENT-03：仅当「记录中的 ownerKey === 当前 ownerKey」时才复用历史房间号。
+  //    · 同账号最小化/重挂载：ownerKey 不变 → 复用，保持房间稳定（原行为）；
+  //    · 真实身份切换（A→B / A→B→A / 同账号重新登录 authEpoch 变化）：
+  //      ownerKey 不同 → 不复用，生成新房间号，避免进入他人放映厅。
+  //    注意：currentOwnerKey 在渲染期已可用（useOwnerKey 同步计算），可安全用于惰性初始化。
   const [activeRoomId, setActiveRoomId] = useState(null);
 
   const [isImmersive, setIsImmersive] = useState(false);
@@ -200,17 +266,27 @@ export default function CinemaScreen() {
   const lastVolumeValue = useRef(-1);
 
   useEffect(() => {
-    // 优先使用邀请链接带入的 roomId；否则使用本组件惰性生成的稳定 roomId。
-    // 一旦确定，不再因重渲染而改变，避免意外掉线。
-    const targetRoom = params.roomId || roomId;
-    // 🐞 记住本次使用的房间号，供下次重新挂载时复用（见文件顶部 lastCinemaRoomId 说明）
-    lastCinemaRoomId = targetRoom;
-    if (targetRoom !== cinemaRoomId) {
-      setCinemaRoomId(targetRoom);
+    // 保持挂载切号：此时 roomId === null（来源 owner 与当前身份不匹配），
+    // 在新房间生成前绝不向 Provider 写入旧账号的房间号。
+    if (!roomId) {
+      setActiveRoomId(null);
+      setRoomBinding((previous) => resolveOwnedCinemaRoomBinding({
+        roomBinding: previous,
+        currentOwnerKey,
+        newUuid: () => Crypto.randomUUID(),
+      }));
+      return;
     }
+    // 只允许此路由最初所属身份消费既有邀请参数；换账号后旧 params
+    // 不再自动被重用。如 B 收到新邀请，应通过新导航进入房间。
+    const targetRoom = initialRouteOwnerKeyRef.current === currentOwnerKey && params.roomId
+      ? params.roomId
+      : roomId;
+    lastCinemaRoom = { ownerKey: currentOwnerKey, roomId: targetRoom };
+    if (targetRoom !== cinemaRoomId) setCinemaRoomId(targetRoom);
     setActiveRoomId(targetRoom);
     (async () => { await Brightness.requestPermissionsAsync(); })();
-  }, [params.roomId, roomId, cinemaRoomId, setCinemaRoomId]);
+  }, [params.roomId, roomId, cinemaRoomId, setCinemaRoomId, currentOwnerKey]);
 
   useEffect(() => {
     if (isImmersive) {
@@ -877,17 +953,17 @@ export default function CinemaScreen() {
             <TouchableOpacity style={styles.backBtn} onPress={() => { setIsMinimized(true); router.back(); }}>
               <Ionicons name="chevron-down" size={28} color={palette.textPrimary} />
             </TouchableOpacity>
-            <View style={[styles.statusPill, { backgroundColor: partnerStatus.includes('对方') ? (isDark ? 'rgba(52,199,89,0.15)' : 'rgba(52,199,89,0.1)') : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') }]}>
-              <View style={[styles.statusDot, { backgroundColor: partnerStatus.includes('对方') ? '#34C759' : palette.textSecondary }]} />
-              <Text style={[styles.statusText, { color: partnerStatus.includes('对方') ? (isDark ? '#34C759' : '#248A3D') : palette.textSecondary }]}>{partnerStatus}</Text>
+            <View style={[styles.statusPill, { backgroundColor: safePartnerStatus.includes('对方') ? (isDark ? 'rgba(52,199,89,0.15)' : 'rgba(52,199,89,0.1)') : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') }]}>
+              <View style={[styles.statusDot, { backgroundColor: safePartnerStatus.includes('对方') ? '#34C759' : palette.textSecondary }]} />
+              <Text style={[styles.statusText, { color: safePartnerStatus.includes('对方') ? (isDark ? '#34C759' : '#248A3D') : palette.textSecondary }]}>{safePartnerStatus}</Text>
             </View>
-            <TouchableOpacity style={styles.inviteBtn} onPress={() => router.push({ pathname: '/invite_friend', params: { roomId: activeRoomId } })}>
+            <TouchableOpacity style={styles.inviteBtn} onPress={() => router.push({ pathname: '/invite_friend', params: { roomId: roomId ? activeRoomId : null } })}>
               <Ionicons name="paper-plane" size={24} color={palette.primary} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.cinemaWrapper}>
-            <VideoView style={styles.video} player={player} allowsFullscreen={false} nativeControls={true} contentFit="contain" />
+            <VideoView style={styles.video} player={safePlayer} allowsFullscreen={false} nativeControls={true} contentFit="contain" />
           </View>
 
           <View style={styles.controlPanelWrapper}>
@@ -921,11 +997,11 @@ export default function CinemaScreen() {
       {isImmersive && (
         <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', zIndex: 9999 }]}>
           
-          <VideoView style={StyleSheet.absoluteFill} player={player} allowsFullscreen={false} nativeControls={false} contentFit="contain" />
+          <VideoView style={StyleSheet.absoluteFill} player={safePlayer} allowsFullscreen={false} nativeControls={false} contentFit="contain" />
 
           {/* 💬 弹幕层：受 danmakuEnabled 开关控制，关闭时整层不渲染（不影响已收到的数据） */}
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            {danmakuEnabled && danmakuList.map((dm) => (
+            {danmakuEnabled && safeDanmakuList.map((dm) => (
               <DanmakuItem key={dm.id} text={dm.text} color={dm.color} screenWidth={SCREEN_WIDTH} />
             ))}
           </View>
@@ -984,8 +1060,8 @@ export default function CinemaScreen() {
             </View>
 
             <View style={styles.immersiveStatusPill}>
-              <View style={[styles.immersiveStatusDot, { backgroundColor: partnerStatus.includes('对方') ? '#34C759' : '#8E8E93' }]} />
-              <Text style={styles.immersiveStatusText}>{partnerStatus}</Text>
+              <View style={[styles.immersiveStatusDot, { backgroundColor: safePartnerStatus.includes('对方') ? '#34C759' : '#8E8E93' }]} />
+              <Text style={styles.immersiveStatusText}>{safePartnerStatus}</Text>
             </View>
 
             {/* 右侧固定宽度容器：⋯ 更多工具，点击展开/收起下方工具栏（同步 + 浏览器） */}

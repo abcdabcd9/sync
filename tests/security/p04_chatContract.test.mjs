@@ -23,13 +23,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 
-/** 从真实 useMediaUpload.js 抽取 cleanStoragePath 函数源码（该文件含大量原生 import）。 */
+/** 从真实 useMediaUpload 源码抽取 cleanStoragePath 函数源码（该文件含大量原生 import）。 */
 function extractCleanStoragePath() {
-  const src = fs.readFileSync(path.join(repoRoot, 'src/hooks/chat/useMediaUpload.js'), 'utf8');
+  // P1.4 R8：useMediaUpload 已迁移为 .ts，按 .ts 优先、.js 兜底解析真实源码。
+  const mediaRel = ['src/hooks/chat/useMediaUpload.ts', 'src/hooks/chat/useMediaUpload.js']
+    .find((rel) => fs.existsSync(path.join(repoRoot, rel)));
+  if (!mediaRel) throw new Error('未找到 useMediaUpload 源码（.ts 或 .js）');
+  const src = fs.readFileSync(path.join(repoRoot, mediaRel), 'utf8');
   const start = src.indexOf('export function cleanStoragePath(');
   if (start < 0) throw new Error('未找到 cleanStoragePath');
   const endMarker = '\n}\n';
@@ -37,7 +42,20 @@ function extractCleanStoragePath() {
   if (end < 0) throw new Error('未找到 cleanStoragePath 结束位置');
   const fn = src.slice(start, end + endMarker.length);
   // 该函数依赖模块级常量 STORAGE_BUCKET，抽取时一并注入。
-  return `const STORAGE_BUCKET = 'chat_media';\n${fn}`;
+  const withConst = `const STORAGE_BUCKET = 'chat_media';\n${fn}`;
+  // P1.4 R8：.ts 源含类型注解，需用项目自带 TypeScript 编译器做类型擦除后再注入沙箱。
+  if (mediaRel.endsWith('.ts')) {
+    const ts = createRequire(import.meta.url)('typescript');
+    return ts.transpileModule(withConst, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        isolatedModules: true,
+      },
+      fileName: 'useMediaUpload.ts',
+    }).outputText;
+  }
+  return withConst;
 }
 
 function buildSandbox() {
@@ -83,14 +101,39 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     'index.js': 'export function createClient(){ return {}; } export default { createClient };',
   });
 
+  // P1.4 R6：useChatMessages / useChatList 已迁移为 .ts，按 .ts 优先、.js 兜底解析。
+  //   .ts 源含 `import type` 等类型语法，Node 无法直接执行，需用项目自带 TypeScript
+  //   编译器做类型擦除后以 .js 落盘（与生产构建同一套编译器，非手写改写）。
+  const requireTs = createRequire(import.meta.url);
+  const ts = requireTs('typescript');
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    // 沙箱内 import 路径统一为 .js，故以 rel 落盘。
     const dst = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
+    if (actual.endsWith('.ts')) {
+      const code = ts.transpileModule(fs.readFileSync(src, 'utf8'), {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          isolatedModules: true,
+        },
+        fileName: path.basename(actual),
+      }).outputText;
+      fs.writeFileSync(dst, code);
+    } else {
+      fs.copyFileSync(src, dst);
+    }
   };
   copy('src/hooks/chat/useChatMessages.js');
   copy('src/hooks/chat/useChatList.js');
+  // P1.0 工作包 B：useChatList/useChatMessages 现依赖 useOwnerKey（→ useAuth）
+  copy('src/hooks/useOwnerKey.js');
 
   // stub 依赖
   const stub = (rel, content) => {
@@ -98,6 +141,8 @@ export default { useState, useEffect, useCallback, useMemo, useRef, createContex
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, content);
   };
+  // useOwnerKey 依赖 useAuth 导出的 ownerId / authEpoch；测试仅需稳定默认值
+  stub('src/hooks/useAuth.js', `export const useAuth = () => ({ ownerId: null, authEpoch: 0 }); export default { useAuth };`);
   stub('src/services/supabase.js', `export const supabase = { from(){ return { select(){return this;}, eq(){return this;}, single(){return Promise.resolve({data:null,error:null});}, order(){return this;}, limit(){return this;}, insert(){return Promise.resolve({error:null});}, update(){return this;}, delete(){return this;}, in(){return this;} }; }, channel(){ return { on(){return this;}, subscribe(){return this;} }; }, removeChannel(){ return Promise.resolve(); } };`);
   stub('src/services/mediaCache.js', `export const downloadToSandbox = async () => null; export const persistMedia = async () => null; export const resolveLocalMedia = async () => null;`);
   stub('src/hooks/chat/useSignedMediaUrl.js', `export const getSignedUrl = async () => null;`);

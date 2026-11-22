@@ -1,0 +1,595 @@
+// --- START OF FILE src/hooks/chat/useChatList.ts ---
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { supabase } from '../../services/supabase';
+import { useOwnerKey } from '../useOwnerKey';
+import type { MessageRow } from '../../types/chat';
+
+/** 会话列表本地缓存 key（按用户隔离，切换账号不会串数据） */
+const chatListCacheKey = (userId: string): string => `@chatList_${userId}`;
+
+/** 会话列表缓存载荷（写入/读取共用） */
+interface ChatListCachePayload {
+  friends?: FriendProfile[];
+  friendsMap?: Record<string, FriendRelation>;
+  requests?: FriendRequestWithProfile[];
+  latestMessages?: Record<string, string>;
+  lastMsgTimes?: Record<string, number>;
+  unreadCounts?: Record<string, number>;
+  cachedAt?: number;
+}
+
+/** 读取本地缓存的会话列表（只读磁盘，零网络） */
+const readChatListCache = async (
+  userId: string | null | undefined
+): Promise<ChatListCachePayload | null> => {
+  if (!userId) return null;
+  try {
+    const raw = await AsyncStorage.getItem(chatListCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as ChatListCachePayload;
+  } catch (e) {
+    console.warn('⚠️ 读取会话列表缓存失败:', (e as { message?: unknown } | null)?.message ?? e);
+    return null;
+  }
+};
+
+/** 写入本地缓存的会话列表（失败不影响主流程） */
+const writeChatListCache = async (
+  userId: string | null | undefined,
+  payload: ChatListCachePayload
+): Promise<void> => {
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(chatListCacheKey(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.warn('⚠️ 写入会话列表缓存失败:', (e as { message?: unknown } | null)?.message ?? e);
+  }
+};
+
+/** 好友列表本地缓存 key（按用户隔离，切换账号不会串数据） */
+const friendsListCacheKey = (userId: string): string => `@friends_list_${userId}`;
+
+/** 读取本地缓存的好友列表（只读磁盘，零网络） */
+const readFriendsListCache = async (
+  userId: string | null | undefined
+): Promise<FriendProfile[] | null> => {
+  if (!userId) return null;
+  try {
+    const raw = await AsyncStorage.getItem(friendsListCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed as FriendProfile[];
+  } catch (e) {
+    console.warn('⚠️ 读取好友列表缓存失败:', (e as { message?: unknown } | null)?.message ?? e);
+    return null;
+  }
+};
+
+/** 写入本地缓存的好友列表（失败不影响主流程） */
+const writeFriendsListCache = async (
+  userId: string | null | undefined,
+  payload: FriendProfile[]
+): Promise<void> => {
+  if (!userId) return;
+  try {
+    await AsyncStorage.setItem(friendsListCacheKey(userId), JSON.stringify(payload));
+  } catch (e) {
+    console.warn('⚠️ 写入好友列表缓存失败:', (e as { message?: unknown } | null)?.message ?? e);
+  }
+};
+
+/** 好友资料（profiles 表投影） */
+export interface FriendProfile {
+  id: string;
+  username?: string | null;
+  nickname?: string | null;
+  sync_id?: string | null;
+}
+
+/** friends 表关系行（用于取 remark） */
+export interface FriendRelation {
+  id?: string;
+  user_id?: string;
+  friend_id?: string;
+  remark?: string | null;
+  [key: string]: unknown;
+}
+
+/** friend_requests 表行 + 发送者资料 */
+export interface FriendRequestWithProfile {
+  id?: string;
+  sender_id?: string;
+  receiver_id?: string;
+  status?: string;
+  sender_profile?: FriendProfile | undefined;
+  [key: string]: unknown;
+}
+
+/** useChatList 的 user 入参（只依赖 id） */
+export interface ChatListUser {
+  id: string;
+}
+
+/** useChatList 对外暴露的接口 */
+export interface ChatListApi {
+  friends: FriendProfile[];
+  requests: FriendRequestWithProfile[];
+  unreadCounts: Record<string, number>;
+  friendsMap: Record<string, FriendRelation>;
+  latestMessages: Record<string, string>;
+  lastMsgTimes: Record<string, number>;
+  conversations: FriendProfile[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+  // ⚠️ 与迁移前 JS 严格一致：`rel?.remark || item.nickname || item.username`
+  //    在全部为假值时可能返回 undefined；静态类型上 remark 可为 null，
+  //    因此返回类型放宽为 string | null | undefined（运行时表达式未变）。
+  getDisplayName: (item: FriendProfile | null | undefined) => string | null | undefined;
+  ownerKey: string;
+}
+
+/**
+ * 把数据库里的密语翻译成人类可读的预览文本（按 subtype 协议字段判断）
+ * 原样迁移自 src/app/(tabs)/chat.js 的 formatPreview
+ */
+export const formatPreview = (msg: MessageRow | null | undefined): string => {
+  if (!msg) return '点击进入会话...';
+  if (msg.type === 'image') return '[图片]';
+  if (msg.type === 'video') return '[视频]';
+  if (msg.type === 'audio') return '[语音]';
+  // 🗑️ 地图卡片已下线：历史 type='location' 消息在列表里显示为 [位置]（只读兼容）
+  if (msg.type === 'location') return '[位置]';
+  if (msg.type === 'cinema_invite') return '[邀请同步观影]';
+  if (msg.subtype === 'SYNC_CINEMA_ENDED') return '[本次同步放映已结束]';
+  if (msg.subtype === 'SYNC_PARTNER_INVITE') return '[健康搭子邀请]';
+  if (msg.subtype === 'SYNC_PARTNER_ACCEPTED') return '你们已成为健康搭子！';
+  if (msg.subtype === 'SYNC_PARTNER_REJECTED') return '已拒绝健康搭子邀请';
+  if (msg.subtype === 'SYNC_PARTNER_UNBOUND') return '已解除健康守护伴侣关系';
+  if (msg.subtype === 'SYNC_SYSTEM') return msg.text || '暂无新消息';
+  return msg.text || '暂无新消息';
+};
+
+/**
+ * 会话列表数据层
+ *
+ * 职责：
+ *   1. 拉取好友 / 待处理请求 / 未读数 / 每个会话的最新消息
+ *   2. 订阅 messages 表的 INSERT / UPDATE，实时更新预览、时间与未读数
+ *   3. 暴露 refresh() 供加好友、同意请求等操作后手动刷新
+ *
+ * 逻辑与原 src/app/(tabs)/chat.js 的 fetchFriendsAndData + 实时监听完全一致，
+ * 仅把状态从页面组件搬到 hook，避免拆分页面时重复实现。
+ */
+export function useChatList(user: ChatListUser | null | undefined): ChatListApi {
+  const [friends, setFriends] = useState<FriendProfile[]>([]);
+  const [requests, setRequests] = useState<FriendRequestWithProfile[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [friendsMap, setFriendsMap] = useState<Record<string, FriendRelation>>({});
+  const [latestMessages, setLatestMessages] = useState<Record<string, string>>({});
+  const [lastMsgTimes, setLastMsgTimes] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
+  // 🆔 C1：身份作用域令牌（切号 / 同账号重新登录都会变化）
+  const { ownerKey, isOwnerKeyCurrent } = useOwnerKey();
+
+  // 🆔 R1-D3（CLIENT-01）：数据所属身份（dataOwnerKey）。
+  //    这是「当前 state 里的会话列表/未读/预览属于哪个账号」的真实标记，
+  //    与「当前渲染身份 ownerKey」是两个不同概念：
+  //      · 切号瞬间（首帧）：ownerKey 已是 B，但 state 仍是 A 的列表 → dataOwnerKey 必须仍为 A，
+  //        消费端据此在渲染期遮蔽，绝不依赖后续 useEffect 清理。
+  //      · 清理 effect 执行后：state 已清空，dataOwnerKey 同步更新为 B，遮罩解除。
+  //    若直接返回 ownerKey（当前身份），消费端比较恒等，遮罩永不触发 —— 这是 CLIENT-01 的原始缺陷。
+  const [dataOwnerKey, setDataOwnerKey] = useState<string>(ownerKey);
+
+  // 防止 user 切换后旧请求回写
+  // ⚠️ 不能在渲染期写 ref（react-hooks/refs），改在 effect 中同步
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null;
+  }, [user]);
+
+  // 🆔 C1-①：身份切换清理 —— ownerKey 变化时立即重置全部账号相关 state，
+  //    避免切号瞬间（新数据尚未拉回）继续显示上一个账号的会话/未读/预览。
+  //    用 ref 记录上一次 ownerKey，仅在真实切换时执行一次，避免每次渲染重复 setState。
+  const prevOwnerKeyRef = useRef<string>(ownerKey);
+  useEffect(() => {
+    if (prevOwnerKeyRef.current === ownerKey) return;
+    prevOwnerKeyRef.current = ownerKey;
+    setFriends([]);
+    setRequests([]);
+    setUnreadCounts({});
+    setFriendsMap({});
+    setLatestMessages({});
+    setLastMsgTimes({});
+    setLoading(Boolean(user?.id));
+    // 🆔 R1-D3（CLIENT-01）：数据已清空，归属切换到新身份，遮罩解除。
+    setDataOwnerKey(ownerKey);
+  }, [ownerKey, user?.id]);
+
+  const fetchAll = useCallback(async (): Promise<void> => {
+    // 直接读取 user?.id（而非 ref），使依赖数组真正生效：切换账号时自动重新拉取
+    const currentUserId = user?.id ?? null;
+    if (!currentUserId) {
+      setLoading(false);
+      return;
+    }
+
+    // 🆔 C1-②：捕获本次拉取的 ownerKey 快照，所有 setState 前比对
+    const ownerKeySnapshot = ownerKey;
+    const isStale = (): boolean => !isOwnerKeyCurrent(ownerKeySnapshot);
+
+    // 1️⃣ 第 0 帧：本地缓存优先（零网络，断网也能瞬间显示会话列表）
+    const cached = await readChatListCache(currentUserId);
+    if (isStale()) return;
+    if (cached) {
+      if (Array.isArray(cached.friends)) setFriends(cached.friends);
+      if (cached.friendsMap && typeof cached.friendsMap === 'object') setFriendsMap(cached.friendsMap);
+      if (Array.isArray(cached.requests)) setRequests(cached.requests);
+      if (cached.latestMessages && typeof cached.latestMessages === 'object') setLatestMessages(cached.latestMessages);
+      if (cached.lastMsgTimes && typeof cached.lastMsgTimes === 'object') setLastMsgTimes(cached.lastMsgTimes);
+      if (cached.unreadCounts && typeof cached.unreadCounts === 'object') setUnreadCounts(cached.unreadCounts);
+      // 缓存已渲染 → 立刻结束 loading，绝不卡在转圈状态
+      setLoading(false);
+    }
+
+    // 1️⃣-b 第 0 步：好友列表独立缓存优先（Cache-First，断网秒显联系人）
+    const cachedFriends = await readFriendsListCache(currentUserId);
+    if (isStale()) return;
+    if (cachedFriends) {
+      setFriends(cachedFriends);
+      // 缓存已渲染 → 立刻结束 loading，确保断网时不会卡在空白/转圈
+      setLoading(false);
+    }
+
+    try {
+      const allFriendIds = new Set<string>();
+      const fMap: Record<string, FriendRelation> = {};
+
+      const { data: fData, error: fError } = await supabase!
+        .from('friends')
+        .select('*')
+        .or(`user_id.eq.${currentUserId},friend_id.eq.${currentUserId}`);
+      if (fError) throw fError;
+      if (isStale()) return;
+
+      if (fData) {
+        (fData as FriendRelation[]).forEach((r) => {
+          const fid = (r.user_id === currentUserId ? r.friend_id : r.user_id) as string;
+          allFriendIds.add(fid);
+          if (r.user_id === currentUserId) fMap[fid] = r;
+        });
+      }
+
+      const { data: reqData, error: reqError } = await supabase!
+        .from('friend_requests')
+        .select('*')
+        .or(`sender_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`);
+      if (reqError) throw reqError;
+      if (isStale()) return;
+
+      const pendingReceived: FriendRequestWithProfile[] = [];
+      if (reqData) {
+        (reqData as FriendRequestWithProfile[]).forEach((r) => {
+          if (r.status === 'accepted') {
+            allFriendIds.add((r.sender_id === currentUserId ? r.receiver_id : r.sender_id) as string);
+          } else if (r.status === 'pending' && r.receiver_id === currentUserId) {
+            pendingReceived.push(r);
+          }
+        });
+      }
+
+      // 好友资料
+      const uniqueFriendIds = [...allFriendIds];
+      let nextFriends: FriendProfile[] = [];
+      let nextRequests: FriendRequestWithProfile[] = [];
+      if (uniqueFriendIds.length > 0) {
+        const { data: profilesData, error: pError } = await supabase!
+          .from('profiles')
+          .select('id, username, nickname, sync_id')
+          .in('id', uniqueFriendIds);
+        if (pError) throw pError;
+        if (isStale()) return;
+        nextFriends = (profilesData as FriendProfile[] | null) || [];
+        setFriends(nextFriends);
+        setFriendsMap(fMap);
+      } else {
+        setFriends([]);
+        setFriendsMap({});
+      }
+
+      // 待处理的好友请求（带发送者资料）
+      if (pendingReceived.length > 0) {
+        const senderIds = pendingReceived.map((r) => r.sender_id);
+        const { data: pData, error: sError } = await supabase!
+          .from('profiles')
+          .select('id, username, nickname')
+          .in('id', senderIds);
+        if (sError) throw sError;
+        if (isStale()) return;
+        nextRequests = pendingReceived.map((req) => ({
+          ...req,
+          sender_profile: (pData as FriendProfile[] | null)?.find((p) => p.id === req.sender_id),
+        }));
+        setRequests(nextRequests);
+      } else {
+        setRequests([]);
+      }
+
+      // 未读数量
+      const nextUnread: Record<string, number> = {};
+      const { data: unreadData, error: uError } = await supabase!
+        .from('messages')
+        .select('user_id')
+        .eq('receiver_id', currentUserId)
+        .eq('is_read', false);
+      if (uError) throw uError;
+      if (isStale()) return;
+      if (unreadData) {
+        (unreadData as Array<{ user_id: string }>).forEach((msg) => {
+          nextUnread[msg.user_id] = (nextUnread[msg.user_id] || 0) + 1;
+        });
+        setUnreadCounts(nextUnread);
+      }
+
+      // 批量抓取最近 200 条消息，用于渲染真实预览
+      //
+      // ⚠️ 软删除过滤：deleted_by 包含当前用户的消息不参与预览计算。
+      //    否则「删除该聊天」后，虽然窗口被 prefs.clearChat 移除了，
+      //    但只要会话因好友关系重新出现在列表里，预览又会显示旧消息内容。
+      //    与 useChatMessages 的过滤条件保持一致（单边删除语义）。
+      const { data: recentMsgs, error: mError } = await supabase!
+        .from('messages')
+        .select('*')
+        .or(`user_id.eq.${currentUserId},receiver_id.eq.${currentUserId}`)
+        .not('deleted_by', 'cs', `{${currentUserId}}`)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (mError) throw mError;
+      if (isStale()) return;
+
+      const latestMap: Record<string, string> = {};
+      const timeMap: Record<string, number> = {};
+      if (recentMsgs) {
+        (recentMsgs as MessageRow[]).forEach((msg) => {
+          const partnerId = (msg.user_id === currentUserId ? msg.receiver_id : msg.user_id) as string;
+          if (!latestMap[partnerId]) {
+            latestMap[partnerId] = formatPreview(msg);
+            timeMap[partnerId] = new Date(msg.created_at).getTime();
+          }
+        });
+      }
+      // 🆔 C1-②：写 state 前最终校验，防止旧账号数据落到新账号
+      if (isStale()) return;
+      setLatestMessages(latestMap);
+      setLastMsgTimes(timeMap);
+
+      // 3️⃣ 云端成功 → 合并写回本地缓存，供下次冷启动/断网秒开
+      writeChatListCache(currentUserId, {
+        friends: nextFriends,
+        friendsMap: fMap,
+        requests: nextRequests,
+        latestMessages: latestMap,
+        lastMsgTimes: timeMap,
+        unreadCounts: nextUnread,
+        cachedAt: Date.now(),
+      });
+
+      // 3️⃣-b 云端成功 → 好友列表单独回写缓存（@friends_list_${user.id}）
+      writeFriendsListCache(currentUserId, nextFriends);
+    } catch (e) {
+      // 🚨 离线降级：绝不清空已加载的本地会话列表，仅记录日志
+      console.warn('离线，使用缓存好友列表');
+      console.warn('离线状态，使用本地缓存会话列表');
+      console.warn('⚠️ 会话列表云端查询失败:', (e as { message?: unknown } | null)?.message ?? e);
+    } finally {
+      // 🆔 C1-②：身份已变化时不再写 loading，避免影响新账号的加载态
+      if (!isStale()) setLoading(false);
+    }
+    // ⚠️ 依赖 user?.id + ownerKey：切换账号（含同账号重新登录）时必须重新全量拉取
+  }, [user?.id, ownerKey, isOwnerKeyCurrent]);
+
+  // 每次页面获得焦点都刷新（从聊天室返回时未读数需要更新）
+  useFocusEffect(
+    useCallback(() => {
+      fetchAll();
+    }, [fetchAll])
+  );
+
+  // 全局消息实时监听：新消息自动置顶 + 未读 +1
+  useEffect(() => {
+    if (!user) return undefined;
+
+    // 🆔 C1-③：捕获本次订阅的 ownerKey 快照，回调内比对，拦截旧账号事件
+    const ownerKeySnapshot = ownerKey;
+
+    // ⚠️ 频道名必须唯一：effect 依赖 user 对象引用，重跑时若复用固定名，
+    //    supabase.channel() 会返回已 subscribe 的旧实例，再 .on() 会直接抛错。
+    const channelName = `chat_list_realtime_${user.id}_${Date.now()}`;
+    supabase!
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase!.removeChannel(ch));
+
+    // 🔒 服务端过滤：只订阅"发给我的消息"，避免全表广播导致的数据泄露与性能浪费。
+    //    注意：filter 只能作用于单列，因此这里用 receiver_id 而非 (user_id OR receiver_id)。
+    //    自己发出的消息由发送方本地乐观更新（saveAndSend）负责，无需依赖 Realtime 回环。
+    const receiverFilter = `receiver_id=eq.${user.id}`;
+
+    // ✅ 所有 .on() 必须在 .subscribe() 之前链式完成
+    const channel = supabase!
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: receiverFilter },
+        (payload: { new: MessageRow }) => {
+          // 🆔 C1-③：旧订阅回调保护 —— 身份已变化则丢弃事件
+          if (!isOwnerKeyCurrent(ownerKeySnapshot)) return;
+          const msg = payload.new;
+          // 底层已按 receiver_id 过滤，此处无需再做归属判断
+          const partnerId = msg.user_id;
+          setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
+          setLastMsgTimes((prev) => ({ ...prev, [partnerId]: new Date(msg.created_at).getTime() }));
+          setUnreadCounts((prev) => ({ ...prev, [partnerId]: (prev[partnerId] || 0) + 1 }));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: receiverFilter },
+        (payload: { new: MessageRow }) => {
+          // 🆔 C1-③：旧订阅回调保护
+          if (!isOwnerKeyCurrent(ownerKeySnapshot)) return;
+          const msg = payload.new;
+          // ⚠️ 软删除防护：若这条消息的 deleted_by 已包含我（我删过这个会话），
+          //    则 UPDATE 事件（如对方撤回）不应把预览重新塞回我的列表。
+          const deletedBy = Array.isArray(msg.deleted_by) ? msg.deleted_by : [];
+          if (deletedBy.includes(user.id)) return;
+
+          // 对方撤回/编辑消息时，预览也要跟着变
+          const partnerId = msg.user_id;
+          setLatestMessages((prev) => ({ ...prev, [partnerId]: formatPreview(msg) }));
+          // 已读回执：未读数递减（进入聊天室后对方消息被标记 is_read=true）
+          if (msg.is_read) {
+            setUnreadCounts((prev) => ({
+              ...prev,
+              [partnerId]: Math.max(0, (prev[partnerId] || 0) - 1),
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    // ⚠️ 与迁移前 JS 严格一致：cleanup 直接返回 removeChannel 的返回值。
+    //    React 的 EffectCallback 类型不接受 Promise 返回值，故用仅编译期生效的
+    //    局部类型断言，运行时表达式与旧 JS 完全相同。
+    return (() => supabase!.removeChannel(channel)) as unknown as () => void;
+    // 🆔 C1：ownerKey 纳入依赖，切号时强制重建 channel
+  }, [user, ownerKey, isOwnerKeyCurrent]);
+
+  // =========================================================================
+  // 关系网实时监听：friends / friend_requests
+  // =========================================================================
+  // 为什么需要：
+  //   1. friends          —— 对方删我好友 / 我加好友成功 → 会话列表与联系人立刻变化
+  //   2. friend_requests  —— 收到好友请求 → 联系人页红点与请求卡片立刻出现
+  //
+  // ⚠️ 为什么用「防抖全量刷新」而不是「增量改本地状态」：
+  //   friends 表的一次关系变化会牵动 friends / friendsMap / requests / 未读数
+  //   四份状态，增量维护极易漏改（例如删好友后 friendsMap 残留、请求卡片不消失）。
+  //   关系变化本身是低频事件，直接调 fetchAll() 全量重拉最稳、最不容易出 bug。
+  //   防抖 400ms 是为了合并「加好友」这类一次操作触发多条变更的抖动。
+  //
+  // ⚠️ 为什么不用 filter：
+  //   friends 表的关系可能落在 user_id 或 friend_id 任一列，Realtime 的 filter
+  //   只能作用于单列，无法表达 (user_id = me OR friend_id = me)。
+  //   因此这里不加 filter，靠 RLS 兜底 —— Realtime 推送前会按订阅者 RLS 逐行校验，
+  //   无权看的行不会推送，不会造成数据泄露。
+  //
+  // 🔒 H-3 安全加固：已移除对 profiles 的 Realtime 订阅
+  //   原实现订阅 `{ event: 'UPDATE', table: 'profiles' }`（无 filter），
+  //   用于「好友改昵称/头像时刷新列表」。
+  //   但 profiles 的 SELECT 策略是 USING (true)（搜人必需），
+  //   无 filter 订阅等于**任何登录用户都能收到全站用户资料变更的事件流**。
+  //   迁移 16_Realtime白名单 已把 profiles 移出 publication。
+  //
+  //   为什么不能改成 filter：
+  //   需要监听「所有好友」的资料变更，而 Realtime 的 filter 只支持单值 eq，
+  //   无法表达 id IN (好友1, 好友2, ...)；逐个好友建频道在好友多时
+  //   会撑爆连接数（Supabase 免费版并发频道上限很低）。
+  //
+  //   替代方案（好友改昵称属于低频事件，以下时机足够覆盖）：
+  //   · useFocusEffect —— 每次进入会话列表 / 联系人页都会 fetchAll()
+  //   · friends / friend_requests 变更事件 —— 已订阅，会触发全量刷新
+  //   · 下拉刷新 / 手动 refresh()
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    // 🆔 C1-③：捕获本次订阅的 ownerKey 快照
+    const ownerKeySnapshot = ownerKey;
+
+    const currentUserId = user.id;
+    const channelName = `relation_realtime_${currentUserId}_${Date.now()}`;
+
+    // 清掉可能残留的同名频道（effect 重跑时避免复用已 subscribe 的旧实例）
+    supabase!
+      .getChannels()
+      .filter((ch) => ch.topic === `realtime:${channelName}`)
+      .forEach((ch) => supabase!.removeChannel(ch));
+
+    // 防抖：合并短时间内的多次变更，只触发一次全量刷新
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = (): void => {
+      // 🆔 C1-③：旧订阅回调保护 —— 身份已变化则不再触发刷新
+      if (!isOwnerKeyCurrent(ownerKeySnapshot)) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        if (!isOwnerKeyCurrent(ownerKeySnapshot)) return;
+        fetchAll();
+      }, 400);
+    };
+
+    const channel = supabase!
+      .channel(channelName)
+      // 好友关系增删 → 会话列表 / 联系人列表变化
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friends' },
+        scheduleRefresh
+      )
+      // 好友请求新增 / 状态变更（pending → accepted）→ 红点与请求卡片变化
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friend_requests' },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase!.removeChannel(channel);
+    };
+    // 🆔 C1：ownerKey 纳入依赖，切号时强制重建关系网 channel
+  }, [user?.id, fetchAll, ownerKey, isOwnerKeyCurrent]);
+
+  // 按最新消息时间倒序排列的会话列表
+  const conversations = [...friends].sort((a, b) => {
+    const timeA = lastMsgTimes[a.id] || 0;
+    const timeB = lastMsgTimes[b.id] || 0;
+    return timeB - timeA;
+  });
+
+  const getDisplayName = useCallback(
+    (item: FriendProfile | null | undefined): string | null | undefined => {
+      if (!item) return '未知';
+      const rel = friendsMap[item.id];
+      // ⚠️ 与迁移前 JS 严格一致：原样返回 `||` 链结果（全为假值时返回 undefined），
+      //    不追加 `|| undefined`（那会把空字符串也改写为 undefined）。
+      return rel?.remark || item.nickname || item.username;
+    },
+    [friendsMap]
+  );
+
+  return {
+    friends,
+    requests,
+    unreadCounts,
+    friendsMap,
+    latestMessages,
+    lastMsgTimes,
+    conversations,
+    loading,
+    refresh: fetchAll,
+    getDisplayName,
+    // 🆔 C1-④ / R1-D3（CLIENT-01）：暴露「数据所属身份」dataOwnerKey，而非当前渲染身份。
+    //    消费方（chat.js）用它和 useOwnerKey().ownerKey（当前身份）比较，
+    //    切号首帧即可发现不一致并遮蔽旧会话列表。
+    ownerKey: dataOwnerKey,
+  };
+}
+// --- END OF FILE src/hooks/chat/useChatList.ts ---

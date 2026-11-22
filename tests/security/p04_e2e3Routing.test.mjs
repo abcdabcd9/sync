@@ -56,7 +56,7 @@ function buildSandbox() {
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
   };
-  copy('src/constants/browser/index.js');
+  copy('src/constants/browser/index.ts');
 
   // 把从真实源码抽取的纯函数写入独立模块（无 JSX / 无外部依赖）。
   const fnSrc = extractComputeAuthRedirect();
@@ -65,7 +65,7 @@ function buildSandbox() {
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -130,7 +130,7 @@ test('P04-E3-01 isSafeUrl 仅放行 https:// 与 about:，拒绝明文与危险�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const B = await import('./src/constants/browser/index.js');
+const B = await import('./src/constants/browser/index.ts');
 const allow = [
   'https://example.com',
   'https://cdn.example.com/a.m3u8?x=1',
@@ -168,7 +168,7 @@ test('P04-E3-02 浏览器历史/书签 key 对无效 userId 返回 null', () => 
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const B = await import('./src/constants/browser/index.js');
+const B = await import('./src/constants/browser/index.ts');
 const invalid = [null, undefined, '', 123, {}, []];
 const valid = 'user-xyz';
 process.stdout.write(JSON.stringify({

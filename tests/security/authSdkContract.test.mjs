@@ -47,7 +47,7 @@ import {
   AUTH_STORAGE_ERROR,
   createAuthStorageStatus,
   createSecureStoreAdapter,
-} from '../../src/services/authStorage.js';
+} from '../../src/services/authStorage.ts';
 
 // ---------------------------------------------------------------------------
 // 原生模块 fake（仅替换硬件边界，不替换适配器/SDK 逻辑）

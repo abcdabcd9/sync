@@ -140,9 +140,16 @@ export default { documentDirectory, getInfoAsync, makeDirectoryAsync, readDirect
   fs.mkdirSync(path.join(nm, 'expo-file-system'), { recursive: true });
   fs.writeFileSync(path.join(nm, 'expo-file-system', 'legacy.js'), `export * from './index.js';\n`);
 
+  // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts 优先、.js 兜底解析，
+  // 使沙箱始终复制当前真实源码（迁移后为 .ts，Node 24 原生类型擦除执行）。
+  const resolveSrc = (rel) => {
+    const tsRel = rel.replace(/\.js$/, '.ts');
+    return fs.existsSync(path.join(repoRoot, tsRel)) ? tsRel : rel;
+  };
   const copy = (rel) => {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(dir, rel);
+    const actual = resolveSrc(rel);
+    const src = path.join(repoRoot, actual);
+    const dst = path.join(dir, actual);
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
   };
@@ -160,7 +167,7 @@ export const AUTH_STORAGE_ERROR = { UNAVAILABLE: 'UNAVAILABLE', MIGRATION_FAILED
 
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
   fs.writeFileSync(path.join(dir, 'resolve-hook.mjs'),
-    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}}return n(s,c);}`);
+    `export async function resolve(s,c,n){if((s.startsWith('./')||s.startsWith('../'))&&!/\\.[a-z0-9]+$/i.test(s)){try{return await n(s+'.js',c);}catch{}try{return await n(s+'.ts',c);}catch{}}return n(s,c);}`);
   return dir;
 }
 
@@ -183,7 +190,7 @@ test('P04-D3-01 无 owner 时 downloadToSandbox fail-closed 且不发起网络�
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 let dlCount = 0;
 globalThis.__DL_IMPL__ = async (url, to) => { dlCount += 1; FS.__files.set(to, { size: 4096 }); return { uri: to }; };
@@ -206,7 +213,7 @@ test('P04-D3-02 同 owner 并发下载去重，网络请求恰好 1 次', () => 
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 let dlCount = 0;
 globalThis.__DL_IMPL__ = async (url, to) => {
@@ -242,7 +249,7 @@ test('P04-D4-01 getMediaCacheSize 递归统计所有 owner 分区的文件与字
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 globalThis.__DL_IMPL__ = async (url, to) => { FS.__files.set(to, { size: 1000 }); return { uri: to }; };
 // A 下载 2 个、B 下载 1 个 → 共 3 个文件，每个 1000 字节
@@ -268,7 +275,7 @@ test('P04-D4-02 clearMediaCache 清空缓存目录与索引，容量归零', () 
   const dir = buildSandbox();
   try {
     const out = runInSandbox(dir, `
-const MC = await import('./src/services/mediaCache.js');
+const MC = await import('./src/services/mediaCache.ts');
 const FS = await import('expo-file-system');
 const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
 globalThis.__DL_IMPL__ = async (url, to) => { FS.__files.set(to, { size: 500 }); return { uri: to }; };

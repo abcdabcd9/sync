@@ -29,7 +29,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAutoRefreshController } from '../../src/services/authAutoRefresh.js';
+import { createAutoRefreshController } from '../../src/services/authAutoRefresh.ts';
 
 // ---------------------------------------------------------------------------
 // fake 依赖
