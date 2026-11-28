@@ -44,9 +44,11 @@ export default function BrowserMenuModal({
   // 列表计数（仅用于展示）
   bookmarksList,
   historyList,
+  watchHistoryList,
   // 独立页入口
   onOpenBookmarks,
   onOpenHistory,
+  onOpenWatchHistory,
 }) {
   const overlayOpacity = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   const menuTranslateY = menuAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] });
@@ -134,6 +136,20 @@ export default function BrowserMenuModal({
               <Text style={[styles.entryText, { color: palette.textPrimary }]}>历史记录</Text>
               <Text style={[styles.entryCount, { color: palette.textSecondary }]}>
                 {historyList.length}
+              </Text>
+              <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+            </TouchableOpacity>
+
+            {/* 🎬 视频观看历史（V1）：独立于网页浏览历史，记录播放进度并支持续播 */}
+            <TouchableOpacity
+              style={[styles.entryRow, { backgroundColor: palette.background }]}
+              onPress={onOpenWatchHistory}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="film-outline" size={22} color={palette.primary} />
+              <Text style={[styles.entryText, { color: palette.textPrimary }]}>视频观看历史</Text>
+              <Text style={[styles.entryCount, { color: palette.textSecondary }]}>
+                {watchHistoryList.length}
               </Text>
               <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
             </TouchableOpacity>

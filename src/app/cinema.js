@@ -18,8 +18,22 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useAppTheme } from '../context/ThemeContext';
 import { useCinema } from '../hooks/useCinema';
 import { useAuth } from '../hooks/useAuth';
+import { useBrowserSession } from '../context/BrowserSessionContext';
 import EpisodeDrawer from '../components/cinema/EpisodeDrawer';
 import HiddenSnifferWebView from '../components/cinema/HiddenSnifferWebView';
+// 🎬 视频观看历史（V1）：播放进度采集 + 续播匹配
+import { useWatchHistory } from '../hooks/browser/useWatchHistory';
+import { useWatchProgressRecorder } from '../hooks/browser/useWatchProgressRecorder';
+import {
+  buildMediaKey,
+  buildRecordKey,
+  isPendingResumeMatch,
+  isResumeTargetCurrent,
+  isResumeTaskExpired,
+  parseEpisodeTriple,
+  resolveEpisodeLabel,
+  RESUME_TASK_STATUS,
+} from '../hooks/browser/watchHistoryLogic';
 
 const IS_ANDROID = Platform.OS === 'android';
 
@@ -66,7 +80,30 @@ export default function CinemaScreen() {
     episodeListRequest,
     // 📺 自动下一集：复用已有的 playNextEpisode（内部已做边界判断）
     playNextEpisode,
+    // 📺 当前播放页 URL（用于观看历史记录原始网页）
+    episodePageUrl,
   } = useCinema();
+
+  // 🎬 视频观看历史（V1）：按 owner 隔离的写入 + 待续播任务消费
+  const { authEpoch } = useAuth();
+  const { saveWatchRecord } = useWatchHistory(user?.id ?? null, authEpoch);
+  const {
+    pendingResume, consumePendingResume, updatePendingResumeStatus,
+  } = useBrowserSession();
+  // 🎯 待续播任务镜像：供嗅探回调（闭包可能过期）同步读取
+  const pendingResumeRef = useRef(null);
+  useEffect(() => {
+    pendingResumeRef.current = pendingResume;
+  }, [pendingResume]);
+  // 🎯 已应用的续播 taskId：同一任务只 seek 一次，避免重渲染重复 seek
+  //    🆔 用 taskId 而非 nonce：taskId 全局唯一（时间戳+序号+随机），
+  //       彻底避免「同一毫秒两次点击」导致 nonce 相同、任务被误判为已应用。
+  const appliedResumeTaskIdRef = useRef(null);
+  // 🎯 续播 seek 定时器：等播放器 readyToPlay 后再 seek，避免「资源未就绪就 seek」失败
+  const resumeSeekTimerRef = useRef(null);
+  // 🎯 续播超时定时器：任务创建后若在 RESUME_TASK_TIMEOUT_MS 内未能完成，
+  //    主动作废任务，避免「历史 URL 存在就无限等待」。
+  const resumeTimeoutTimerRef = useRef(null);
 
   // 🍎 P2-15 修复：房间号使用 useState 惰性初始化，仅在组件首次挂载时生成一次。
   //    旧实现把 roomId 放在 useEffect 里用 Date.now() 生成，任何重渲染/依赖变化
@@ -393,6 +430,192 @@ export default function CinemaScreen() {
     return () => clearInterval(interval);
   }, [player]);
 
+  // 🎬 视频观看历史（V1）：播放进度采集
+  //    - 仅在「有播放源」时启用，避免空播放器产生脏记录
+  //    - getMeta 读取当前播放源 / 原始播放页 / 标题 / 集数标签
+  //    - 500ms 采样 + 6s 节流 + 暂停立即写 + 卸载兜底写（见 useWatchProgressRecorder）
+  //
+  //    🐞 真机故障 A 修复（集数显示成六位数）：
+  //       旧实现把 URL 里的 `episodeId`（如 700596，站点内部资源 ID）直接格式化成
+  //       「第700596集」。`src/utils/episodeUrl.js` 已明确：第 1 集 = 700596。
+  //       现在改为按可信度取真实集数：
+  //         ① 选集列表里网页给出的真实标题（ep.label，来自 a.textContent）
+  //         ② 选集列表中的真实顺序（index + 1，与 EpisodeDrawer 兜底一致）
+  //         ③ 都无法确认 → 留空，绝不编造数字
+  //       ⚠️ episodeId 仍完整保留在 URL 定位与 recordKey / mediaKey 身份计算中，
+  //          本处只影响「展示给用户的文字」。
+  const watchMetaRef = useRef({
+    mediaUrl: '',
+    pageUrl: '',
+    episodePageUrl: '',
+    episodeId: 0,
+    episodeTitle: '',
+    title: '',
+    episodeLabel: '',
+  });
+  useEffect(() => {
+    const epTitle = (currentEpisodeIndex >= 0 && episodeList[currentEpisodeIndex]?.title) || '';
+    // 🎯 P0-5：落盘「实际成功播放的那一集」的定位信息。
+    //    episodePageUrl 是播放器真正加载的播放页（不是首页 / 详情页）；
+    //    episodeId 仅用于定位，绝不作为集数展示（故障 A 已隔离）。
+    const triple = parseEpisodeTriple(episodePageUrl || '');
+    watchMetaRef.current = {
+      mediaUrl: currentUrl || '',
+      pageUrl: episodePageUrl || '',
+      episodePageUrl: episodePageUrl || '',
+      episodeId: triple ? triple.episodeId : 0,
+      episodeTitle: epTitle,
+      title: epTitle,
+      episodeLabel: resolveEpisodeLabel(episodeList, currentEpisodeIndex),
+    };
+  }, [currentUrl, episodePageUrl, currentEpisodeIndex, episodeList]);
+
+  const { markCompleted } = useWatchProgressRecorder({
+    player,
+    enabled: !!currentUrl,
+    getMeta: () => watchMetaRef.current,
+    saveWatchRecord,
+  });
+
+  // 🎬 视频观看历史（V1）：Case A 续播 —— 播放器就绪后 seek 到历史位置
+  //    🛡️ P0-1 / P0-3 修复要点：
+  //      1. 身份核验：seek 前必须确认「当前播放媒体」与任务目标一致
+  //         （isResumeTargetCurrent），不一致绝不 seek，避免第 8 集进度套到第 9 集。
+  //      2. 就绪判定：只在 status === 'readyToPlay' 且时长已知时 seek。
+  //      3. 消费时机：只有 seek 成功执行后才 consumePendingResume(taskId)，
+  //         失败 / 越界 / 超时一律 ABORTED 清理，绝不残留。
+  //      4. 超时兜底：任务创建后超过 RESUME_TASK_TIMEOUT_MS 未完成 → 主动作废。
+  //      5. taskId 去重：同一任务只应用一次，避免重渲染重复 seek。
+  useEffect(() => {
+    const task = pendingResume;
+    if (!task || !player) return;
+    // 🆔 同一任务只处理一次
+    if (appliedResumeTaskIdRef.current === task.taskId) return;
+    // ⏳ 已安排 seek（等待播放器 ready）→ 不再重复安排，也绝不因重渲染取消
+    if (resumeSeekTimerRef.current) return;
+
+    // ⏱️ 超时兜底：任务过期 → 作废，不再无限等待
+    if (isResumeTaskExpired(task)) {
+      appliedResumeTaskIdRef.current = task.taskId;
+      updatePendingResumeStatus(task.taskId, RESUME_TASK_STATUS.ABORTED);
+      return;
+    }
+
+    // 🛡️ 身份核验：当前播放媒体必须与任务目标一致，否则不 seek
+    //    ═══════════════════════════════════════════════════════════════════
+    //    🐞 最终收口修复（媒体身份语义统一）：
+    //       旧实现只传 { mediaUrl, pageUrl } 给 buildMediaKey，不传 episode，
+    //       于是得到 `m:<mediaUrl>`；而历史记录的 mediaKey 是
+    //       `ep:<site>:<vod>:<src>:<ep>`。两者永不相等 → seek 永不执行，
+    //       只有「媒体 URL 逐字节相同」才能侥幸续播，换 CDN 即彻底失效。
+    //       现在同时提供 recordKey（与 CDN 无关的「哪一集」身份）与 mediaKey
+    //       （实际加载的资源身份），由 isResumeTargetCurrent 按三层模型判定：
+    //         · recordKey 一致 → 同一集，允许续播（换 CDN 也成立）
+    //         · mediaKey 一致  → 同一片源，允许续播
+    //         · 仅 pageUrl 相同 → 拒绝（防同页广告 / 同页不同集）
+    //    ═══════════════════════════════════════════════════════════════════
+    const currentPageUrl = episodePageUrl || '';
+    const currentMediaUrl = currentUrl || '';
+    const current = {
+      // ① 观看记录身份：内部强制解析剧集三元组，与历史记录同源
+      recordKey: buildRecordKey({ mediaUrl: currentMediaUrl, pageUrl: currentPageUrl }),
+      // ② 实际媒体身份：播放器此刻真正加载的资源
+      mediaKey: buildMediaKey({ mediaUrl: currentMediaUrl, pageUrl: currentPageUrl }),
+      mediaUrl: currentMediaUrl,
+      pageUrl: currentPageUrl,
+    };
+    if (!isResumeTargetCurrent(task, current)) {
+      // 媒体身份尚未确认（可能仍在切源 / 嗅探中）→ 等待，不消费、不 seek
+      //    ⚠️ 若任务已过期，上面的超时分支会兜底清理。
+      return;
+    }
+
+    const seekSeconds = Number(task.seekSeconds) || 0;
+    if (seekSeconds <= 0) {
+      // 从头播放：无需 seek，直接消费任务
+      appliedResumeTaskIdRef.current = task.taskId;
+      consumePendingResume(task.taskId);
+      return;
+    }
+    if (playerStatus !== 'readyToPlay') return;
+    const dur = player.duration || 0;
+    // 时长未知或目标越界 → 不 seek（避免 seek 到片尾外导致失败），作废任务
+    if (!(dur > 0) || seekSeconds >= dur - 1) {
+      appliedResumeTaskIdRef.current = task.taskId;
+      updatePendingResumeStatus(task.taskId, RESUME_TASK_STATUS.ABORTED);
+      return;
+    }
+    appliedResumeTaskIdRef.current = task.taskId;
+    // 标记为 MATCHED：身份已确认，等待 seek 执行
+    //    🐞 P0 修复（seek 定时器被 effect cleanup 取消）：
+    //       旧实现在本 effect 内 `return () => clearTimeout(resumeSeekTimerRef.current)`。
+    //       而 updatePendingResumeStatus(MATCHED) 会改变 pendingResume → 触发本 effect
+    //       重新执行 → 上一次的 cleanup 立即清掉刚安排的 120ms seek 定时器 →
+    //       seek 永不执行，续播彻底失效。
+    //       现在：seek 定时器不再由本 effect 的 cleanup 取消（改由卸载 effect 统一清理），
+    //       且用 resumeSeekTimerRef 作为「已安排」闸门，重渲染不会重复安排或取消。
+    updatePendingResumeStatus(task.taskId, RESUME_TASK_STATUS.MATCHED);
+    // 延后一帧再 seek，确保播放器已完成源切换
+    resumeSeekTimerRef.current = setTimeout(() => {
+      resumeSeekTimerRef.current = null;
+      let seekOk = false;
+      try {
+        player.currentTime = seekSeconds;
+        player.play();
+        seekOk = true;
+      } catch (_e) {
+        // seek 失败：静默降级为从头播放
+      }
+      if (seekOk) {
+        // ✅ seek 成功 → 消费任务（终态 APPLIED）
+        updatePendingResumeStatus(task.taskId, RESUME_TASK_STATUS.APPLIED);
+        consumePendingResume(task.taskId);
+      } else {
+        // ❌ seek 失败 → 作废任务，记录仍保留（用户可再次点击续播）
+        updatePendingResumeStatus(task.taskId, RESUME_TASK_STATUS.ABORTED);
+      }
+    }, 120);
+    // ⚠️ 故意不返回 cleanup：seek 定时器必须活过本次 effect 重跑，
+    //    否则 MATCHED 状态更新会取消自己的 seek。卸载清理见下方独立 effect。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- consumePendingResume/updatePendingResumeStatus 为稳定引用
+  }, [pendingResume, player, playerStatus, currentUrl, episodePageUrl]);
+
+  // 🧹 卸载时清理续播 seek 定时器（唯一清理点，避免 effect 重跑误取消）
+  useEffect(
+    () => () => {
+      if (resumeSeekTimerRef.current) {
+        clearTimeout(resumeSeekTimerRef.current);
+        resumeSeekTimerRef.current = null;
+      }
+    },
+    []
+  );
+
+  // ⏱️ 续播任务超时兜底：任务存在但长时间未完成（如播放器一直未就绪）→ 主动作废
+  //    避免「历史 URL 存在就无限等待」。切号 / 卸载时由 Context 渲染期清理。
+  useEffect(() => {
+    if (!pendingResume || !pendingResume.taskId) return;
+    if (resumeTimeoutTimerRef.current) clearTimeout(resumeTimeoutTimerRef.current);
+    const remain = Math.max(
+      0,
+      (Number(pendingResume.createdAt) || 0) + 45000 - Date.now()
+    );
+    resumeTimeoutTimerRef.current = setTimeout(() => {
+      const cur = pendingResumeRef.current;
+      if (cur && cur.taskId === pendingResume.taskId) {
+        updatePendingResumeStatus(cur.taskId, RESUME_TASK_STATUS.ABORTED);
+      }
+      resumeTimeoutTimerRef.current = null;
+    }, remain);
+    return () => {
+      if (resumeTimeoutTimerRef.current) {
+        clearTimeout(resumeTimeoutTimerRef.current);
+        resumeTimeoutTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- updatePendingResumeStatus 为稳定引用
+  }, [pendingResume]);
+
   // 💡 屏幕常亮：仅在「沉浸式全屏 + 正在播放」时激活，其余情况立即释放。
   //    用固定 tag，保证多次激活/释放不会叠加锁；卸载时兜底释放。
   //    注意：deactivateKeepAwake 在未激活时调用是安全的（原生侧幂等）。
@@ -424,6 +647,9 @@ export default function CinemaScreen() {
   }, [currentEpisodeIndex, episodeList.length]);
 
   useEventListener(player, 'playToEnd', () => {
+    // 🎬 视频观看历史（V1）：播放结束 → 立即写入「已完成」状态
+    //    （无论是否自动连播，当前这一集都应标记为看完）
+    try { markCompleted(); } catch (_e) {}
     if (autoNextGuardRef.current) return;
     // 📺 自动连播开关关闭时，片尾不做任何动作（用户可手动点「下一集」）
     if (!autoNextEnabledRef.current) return;
@@ -827,16 +1053,54 @@ export default function CinemaScreen() {
 
   // 嗅探到 m3u8 → 直接播放（走 loadUrl，保持同步广播）
   //    ⚠️ 列表模式下忽略 m3u8，避免首次进入时误切集
+  //    🎬 视频观看历史（V1）Case B：若存在待续播任务，必须先确认「同一媒体身份」
+  //       才播放并 seek；身份不匹配则丢弃该待续播任务（绝不把第 8 集进度套到第 9 集）。
   const handleSnifferMediaFound = useCallback(
     (m3u8Url) => {
       if (!m3u8Url) return;
       if (snifferModeRef.current !== 'switch') return;
-      loadUrl(m3u8Url);
+      const pending = pendingResumeRef.current;
+      if (pending) {
+        // 用「新嗅探到的片源 + 当前播放页」构造 found，做身份校验
+        //    🛡️ P0-3：必须带上 episode 三元组，使 mediaKey 走 `ep:site:vod:src:ep`
+        //       分支，才能与历史记录的 mediaKey 精确对齐
+        //       （避免同站不同集 / 跨站同集号碰撞）。
+        //    🐞 最终收口（媒体身份语义统一）：
+        //       仅靠 mediaKey 时，若播放页 URL 不含 /play/x-y-z.html（例如站点改版、
+        //       或嗅探页是 iframe 内页），mediaKey 退化为 m:<直链>，与历史记录的
+        //       ep: 身份永不相等 → 换 CDN 后无法续播。现在额外提供 recordKey
+        //       （与 CDN 无关的「哪一集」身份），由 isPendingResumeMatch 三层判定。
+        const foundPage = snifferUrlRef.current || episodePageUrl || '';
+        const foundTriple = parseEpisodeTriple(foundPage);
+        const found = {
+          mediaUrl: m3u8Url,
+          pageUrl: foundPage,
+          recordKey: buildRecordKey({ mediaUrl: m3u8Url, pageUrl: foundPage }),
+          mediaKey: buildMediaKey({
+            mediaUrl: m3u8Url,
+            pageUrl: foundPage,
+            episode: foundTriple || undefined,
+          }),
+        };
+        if (isPendingResumeMatch(pending, found)) {
+          // ✅ 身份匹配：播放新片源，保留 pendingResume 交给 Case A 续播 effect
+          //    （effect 会在 readyToPlay + 身份复核通过后 seek 并消费）
+          loadUrl(m3u8Url, foundPage || null);
+          //    ⚠️ 不在此处 consume，交由 seek effect 在 seek 成功后消费
+        } else {
+          // ❌ 身份不匹配：作废待续播任务，正常播放（不 seek）
+          //    用 taskId 精确作废，避免误清掉期间新写入的任务
+          updatePendingResumeStatus(pending.taskId, RESUME_TASK_STATUS.ABORTED);
+          loadUrl(m3u8Url);
+        }
+      } else {
+        loadUrl(m3u8Url);
+      }
       // 关闭隐藏 WebView，释放资源
       setSnifferUrl(null);
       snifferUrlRef.current = null;
     },
-    [loadUrl]
+    [loadUrl, episodePageUrl, updatePendingResumeStatus]
   );
 
   // 抓到选集列表 → 写入上下文

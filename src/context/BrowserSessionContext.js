@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useRef, useCallback, useEff
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isSafeUrl } from '../constants/browser';
 import { useAuth } from '../hooks/useAuth';
+import { createResumeTaskId, RESUME_TASK_STATUS } from '../hooks/browser/watchHistoryLogic';
 
 /**
  * 🌐 浏览器会话上下文（跨页 URL 交接 + 上次网址持久化）
@@ -44,6 +45,11 @@ export function BrowserSessionProvider({ children, userId: userIdProp = null, au
 
   // 📌 待加载 URL（历史 / 书签页写入，浏览器页消费后清空）
   const [pendingUrl, setPendingUrlState] = useState(null);
+  // 🎬 待续播任务（视频观看历史页写入，浏览器页消费后清空）
+  //    结构：{ mediaKey, pageUrl, mediaUrl, seekSeconds, title, episodeLabel, nonce }
+  //    ⚠️ 与 pendingUrl 分离：pendingUrl 只负责「打开哪个页面」，
+  //       pendingResume 负责「打开后要不要续播到第几秒」。
+  const [pendingResume, setPendingResumeState] = useState(null);
   // 🕘 上次访问网址（持久化到 AsyncStorage）
   const [lastUrl, setLastUrlState] = useState(null);
   // 🔁 交接序号：同一 URL 连续点击也能触发消费方 effect
@@ -73,6 +79,8 @@ export function BrowserSessionProvider({ children, userId: userIdProp = null, au
     setStateOwner(userId);
     setLastUrlState(null);
     setPendingUrlState(null);
+    // 🎬 账号切换：必须清空待续播任务，避免 A 的续播请求作用到 B 的播放器
+    setPendingResumeState(null);
   }
 
   // 🛡️ 15-02：同账号新会话（epoch 变化）→ 只清空 pendingUrl（一次性交接），
@@ -80,6 +88,8 @@ export function BrowserSessionProvider({ children, userId: userIdProp = null, au
   if (stateEpoch !== authEpoch) {
     setStateEpoch(authEpoch);
     setPendingUrlState(null);
+    // 🎬 同账号新会话：旧会话的续播任务同样失效
+    setPendingResumeState(null);
   }
 
   // 🕘 启动 / 账号切换时读取上次网址（容错：脏数据 / 非安全地址直接丢弃）
@@ -128,6 +138,66 @@ export function BrowserSessionProvider({ children, userId: userIdProp = null, au
     return null;
   }, []);
 
+  // 🎬 写入待续播任务（视频观看历史页调用）
+  //    🛡️ 与 setPendingUrl 相同的 owner + epoch 双重校验：
+  //    迟到回调（A 的续播请求在切到 B 后才执行）不得作用到 B 的播放器。
+  //    🆔 taskId：唯一任务标识（时间戳 + 单调序号 + 随机后缀），
+  //       彻底避免「同一毫秒连续点击两次」导致 nonce 相同、任务被误判为已应用。
+  //    ⏱️ createdAt：任务创建时间，供消费方判断是否超时（RESUME_TASK_TIMEOUT_MS）。
+  //    📌 status：任务生命周期状态（PENDING → MATCHED → APPLIED / ABORTED）。
+  //       PENDING  已创建，等待播放器确认媒体身份
+  //       MATCHED  已确认媒体身份匹配，等待 seek 执行
+  //       APPLIED  seek 已成功执行，任务完成
+  //       ABORTED  失败 / 超时 / 用户取消，任务作废
+  //    ⚠️ 浏览器页只负责「发起交接」，绝不在此处提前消费；
+  //       只有影院页在「媒体身份确认 + 播放器就绪 + seek 成功」后才消费。
+  const setPendingResume = useCallback((task) => {
+    if (!task || typeof task !== 'object') return;
+    if (lastUrlOwnerRef.current !== userId || authEpochRef.current !== authEpoch) return;
+    setPendingResumeState({
+      taskId: createResumeTaskId(),
+      // ① 观看记录身份（与 CDN 无关的「哪一集」）：续播授权的主依据
+      recordKey: task.recordKey || '',
+      // ② 实际媒体身份（历史记录写入时加载的资源）
+      mediaKey: task.mediaKey || '',
+      pageUrl: task.pageUrl || '',
+      mediaUrl: task.mediaUrl || '',
+      seekSeconds: Number.isFinite(task.seekSeconds) ? task.seekSeconds : 0,
+      title: task.title || '',
+      episodeLabel: task.episodeLabel || '',
+      createdAt: Date.now(),
+      status: RESUME_TASK_STATUS.PENDING,
+    });
+  }, [userId, authEpoch]);
+
+  // 🎬 更新待续播任务状态（影院页在身份确认 / seek 成功 / 失败时调用）
+  //    仅当 taskId 匹配时才更新，避免旧任务的迟到回调污染新任务。
+  //    status 为 APPLIED / ABORTED 时直接清空任务（终态）。
+  const updatePendingResumeStatus = useCallback((taskId, status) => {
+    if (!taskId) return;
+    setPendingResumeState((prev) => {
+      if (!prev || prev.taskId !== taskId) return prev;
+      if (status === RESUME_TASK_STATUS.APPLIED || status === RESUME_TASK_STATUS.ABORTED) {
+        return null;
+      }
+      return { ...prev, status };
+    });
+  }, []);
+
+  // 🎬 消费待续播任务（影院页在 seek 成功 / 失败后调用）
+  //    🆔 传入 taskId 时只消费匹配的任务，避免旧任务误清新任务。
+  //    返回被消费的任务（未匹配则返回 null）。
+  const consumePendingResume = useCallback((taskId = null) => {
+    let task = null;
+    setPendingResumeState((prev) => {
+      if (!prev) return null;
+      if (taskId && prev.taskId !== taskId) return prev;
+      task = prev;
+      return null;
+    });
+    return task;
+  }, []);
+
   // 🕘 记录上次访问网址（浏览器页导航状态变化时调用）
   //    🛡️ X-09a（CR-04）：写入「当前账号」的隔离 key，而非全局 key。
   //    旧实现在 setState updater 内读取可变的 lastUrlOwnerRef.current，
@@ -153,6 +223,11 @@ export function BrowserSessionProvider({ children, userId: userIdProp = null, au
     pendingSeq,
     setPendingUrl,
     consumePendingUrl,
+    // 🎬 视频观看历史（V1）：待续播任务交接
+    pendingResume,
+    setPendingResume,
+    updatePendingResumeStatus,
+    consumePendingResume,
     lastUrl,
     rememberUrl,
   };

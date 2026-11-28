@@ -404,6 +404,10 @@ export const readAsStringAsync = api.readAsStringAsync;
     // 🔄 P0.3 iOS-01：useAuth 现在 import authAutoRefresh 以驱动自动刷新生命周期。
     //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
     'src/services/authAutoRefresh.js',
+    // 🎬 P15 观看历史 V1：BrowserSessionContext 现在 import watchHistoryLogic
+    //    （createResumeTaskId / RESUME_TASK_STATUS）以生成唯一续播任务 ID。
+    //    必须把该真实纯逻辑模块一并复制进沙箱，否则沙箱 import 会 ERR_MODULE_NOT_FOUND。
+    'src/hooks/browser/watchHistoryLogic.js',
     'src/context/BrowserSessionContext.js',
     'src/hooks/useAuth.js',
   ];
