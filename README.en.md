@@ -5,7 +5,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey.svg)](#)
 [![Author](https://img.shields.io/badge/author-abcdabcd9-blue.svg)](https://github.com/abcdabcd9)
 
-A mobile app I built myself, packing health check-ins, chat, a movie room, and a browser into one shell.
+A mobile app I built myself, packing health check-ins, chat, a media sync room, and a browser into one shell.
 
 Written with Expo + React Native, backed by Supabase.
 
@@ -31,6 +31,14 @@ Built by [@abcdabcd9](https://github.com/abcdabcd9) · Contact: tangchengzhi641@
 > - **Detailed plan**: [`docs/development/ROADMAP_2027_SUMMER.md`](docs/development/ROADMAP_2027_SUMMER.md) — it lists the six phases, their durations, the risk points, and the fallback plans.
 >
 > If you want to pick this up and continue, that roadmap is the best place to start.
+
+---
+
+## Disclaimer
+
+- **Technical Research Purpose**: This repository is an open-source technical exploration of instant messaging, health tracking, and dual-end synchronized web media playback. All source code is provided strictly for personal learning, programming research, and technical exchange.
+- **No Content Hosting**: The developer does not host, distribute, or store any third-party audio or video files, nor does the developer operate any public centralized relay servers.
+- **Lawful Use Only**: The built-in WebView container and media stream detection utilities are intended solely for user-generated content, public domain works, or media streams that the user is legally authorized to access and play. Users must strictly comply with the intellectual property and copyright laws of their respective jurisdictions, and are strictly prohibited from using this project to access, detect, or distribute any unauthorized copyrighted content. All legal liabilities arising from any misuse shall be borne solely by the user.
 
 ---
 
@@ -63,8 +71,8 @@ One-on-one private chat with text, images, video, and voice. Voice messages can 
 
 The Space tab has 4 cards, 2 of which actually work:
 
-- Movie room: video playback, create a room to watch together in sync, with danmaku comments
-- Browser: built-in WebView that blocks ads and sniffs videos from web pages to cast straight into the movie room
+- Media room: audio/video playback, create a room for dual-end synchronized playback, with danmaku comments and anti-jitter seek sync
+- Browser: built-in WebView supporting standard web browsing, ad filtering, and media stream detection to pass streams directly into the media room
 
 The other 2 (Private Space, Moments) are placeholder pages — see "What doesn't work yet" below.
 
@@ -192,7 +200,7 @@ src/
 ├── services/     # Supabase, push, media cache
 ├── constants/    # Colors, theme, motion, feature flags
 ├── context/      # Global contexts (theme, etc.)
-├── scripts/      # Scripts injected into the WebView (ad blocking, sniffing)
+├── scripts/      # Scripts injected into the WebView (ad blocking, media stream detection)
 └── types/        # Reserved for the TS migration (only a README for now)
 supabase/
 ├── functions/    # Edge Functions
@@ -247,7 +255,7 @@ The reason is documented in the comments of `src/hooks/useAppSettings.js`: this 
 | Per-friend permission settings | Pure local state, never written to the database, gone on exit |
 | Location message | The screen still exists (`src/app/chat/location.js`), but the entry point in the chat input bar has been removed |
 
-### 4. The movie room has no lobby
+### 4. The media room has no lobby
 
 Room IDs are generated locally with `Crypto.randomUUID()`. There is no room list and no lobby — the only way to share a room is to send the room ID via "invite a friend to watch together".
 
@@ -309,8 +317,8 @@ This isn't a "got the demo running" project. Here's what's genuinely done:
 
 - Expo Router file-based routing, 42 screen files under `src/app/`
 - Hand-rolled UI component library (`src/components/ui/`), no third-party UI framework
-- Built-in browser with ad blocking, media sniffing, and desktop UA spoofing (`src/scripts/browser/`)
-- Synced watch party: playback position stays aligned across both devices, with a seek lock to prevent jitter
+- Built-in browser with ad blocking, media stream detection, and desktop UA spoofing (`src/scripts/browser/`)
+- Synced media room: playback position stays aligned across both devices, with a seek lock to prevent jitter
 
 **Engineering**
 

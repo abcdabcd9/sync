@@ -374,6 +374,10 @@ export const readAsStringAsync = api.readAsStringAsync;
   // P1.2 R6：mediaCache 已迁移为 TypeScript。按 .ts/.tsx 优先、.js 兜底解析，
   // 使沙箱始终复制当前真实源码（迁移后为 .ts/.tsx，Node 24 原生类型擦除执行）。
   // P1.4 R1：BrowserSessionContext 迁移为 .tsx（含 Provider JSX），需优先匹配 .tsx。
+  // 🧩 P15 合并适配：`src/constants/browser/index.js` 在 P1.x 已迁移为 index.ts，
+  //    但 watchHistoryLogic.js 仍以显式 `index.js` 导入（Node ESM 不做扩展名回退）。
+  //    因此除 .tsx/.ts 优先解析外，还需把「.js 落盘路径」与「实际 .ts 源」解耦：
+  //    copy() 会同时落盘 .js（转译后）与 .ts（原样），保证两种导入都能解析。
   const resolveSrc = (rel) => {
     const tsxRel = rel.replace(/\.js$/, '.tsx');
     if (fs.existsSync(path.join(repoRoot, tsxRel))) return tsxRel;
@@ -426,6 +430,16 @@ export const readAsStringAsync = api.readAsStringAsync;
         fileName: path.basename(actual),
       }).outputText;
       fs.writeFileSync(path.join(dir, actual), raw);
+      // 🧩 P15 合并适配：同时落盘 .js 副本，供仍以显式 `index.js` 导入的
+      //    生产模块（如 watchHistoryLogic.js）在沙箱内解析。
+      if (actual.endsWith('.ts') && !actual.endsWith('.d.ts')) {
+        const jsRel = actual.replace(/\.ts$/, '.js');
+        if (jsRel !== dstRel) {
+          const jsDst = path.join(dir, jsRel);
+          fs.mkdirSync(path.dirname(jsDst), { recursive: true });
+          fs.writeFileSync(jsDst, code);
+        }
+      }
     }
     // P1.4 R6：useHealthData 已迁移为 .tsx（HealthProvider JSX + TS 类型注解）。
     //   使用项目自带 TypeScript 编译器做「类型擦除 + JSX→createElement」转译，
@@ -460,6 +474,10 @@ export const readAsStringAsync = api.readAsStringAsync;
     //    复制**真实实现**（非 stub），保证沙箱执行的是生产代码。
     //    P1.2 R5：源码已迁移为 TypeScript，沙箱按 .ts 落盘（Node 24 原生类型擦除）。
     'src/services/authAutoRefresh.ts',
+    // 🎬 P15 观看历史 V1：BrowserSessionContext 现在 import watchHistoryLogic
+    //    （createResumeTaskId / RESUME_TASK_STATUS）以生成唯一续播任务 ID。
+    //    必须把该真实纯逻辑模块一并复制进沙箱，否则沙箱 import 会 ERR_MODULE_NOT_FOUND。
+    'src/hooks/browser/watchHistoryLogic.js',
     'src/context/BrowserSessionContext.js',
     'src/hooks/useAuth.js',
     // 🧩 P1.4 R3：useAuth 已把身份转移决策委托给 identityTransitionLogic.ts，

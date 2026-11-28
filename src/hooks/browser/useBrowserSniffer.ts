@@ -105,22 +105,45 @@ export function useBrowserSniffer({
   // 🎬 合并新片源：去重 + 置顶 + 触感反馈 + 布局动画
   //    ✅ 仅当「确实新增了片源」时才反馈，并通知编排层弹出选择窗口
   //    🔒 M-5：入列前统一做协议白名单过滤，非 http(s) 一律丢弃
+  //
+  //    🐞 P0 真机崩溃修复（React 渲染期跨组件 setState）：
+  //       旧实现把 LayoutAnimation / Haptics / onMediaFound 全部写在
+  //       `setSniffedMediaList(prev => ...)` 的 updater 内部。updater 会在
+  //       React 渲染阶段被调用，此时同步调用 onMediaFound → 编排层
+  //       loadUrl() → useCinema 的 setCurrentUrl()，触发
+  //       「Cannot update a component while rendering a different component」。
+  //       现在 updater 只做纯计算（返回新列表），所有副作用（动画 / 震动 /
+  //       通知编排层）统一在「提交后」的 effect 中基于真实列表派发。
   const pushMedia = useCallback((incoming: unknown) => {
     // ⚠️ P1.3 R2：数组兜底 + M-5 白名单过滤 + trim 已迁至 ./snifferMediaLogic
     const safeIncoming = normalizeIncomingUrls(incoming);
     // 🔇 全部被过滤掉：静默返回，不触发动画/震动/弹窗
     if (safeIncoming.length === 0) return;
-    setSniffedMediaList((prev) => {
-      const next = mergeMediaList(prev, safeIncoming);
-      if (next !== prev) {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // 📣 真正嗅探到片源 → 通知编排层打开选择播放源弹窗
-        onMediaFoundRef.current?.(next);
-      }
-      return next;
-    });
+    // ✅ updater 必须保持纯函数：只计算并返回新列表，绝不执行任何副作用
+    setSniffedMediaList((prev) => mergeMediaList(prev, safeIncoming));
   }, []);
+
+  // 📣 媒体发现通知（提交后派发）：基于「真实已提交的 sniffedMediaList」，
+  //    在 effect 中比较「上次已通知的列表引用」判断是否新增，再执行
+  //    动画 / 震动 / 通知编排层。这样彻底避开渲染期跨组件 setState。
+  const notifiedListRef = useRef<readonly SniffedMedia[] | null>(null);
+  useEffect(() => {
+    const prev = notifiedListRef.current;
+    // 首次挂载（空列表）不通知
+    if (prev === null) {
+      notifiedListRef.current = sniffedMediaList;
+      return;
+    }
+    if (prev === sniffedMediaList) return;
+    notifiedListRef.current = sniffedMediaList;
+    // 列表被清空 / 移除（长度减少）→ 不视为「发现新片源」
+    if (!Array.isArray(sniffedMediaList) || sniffedMediaList.length === 0) return;
+    if (Array.isArray(prev) && sniffedMediaList.length <= prev.length) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // 📣 真正嗅探到新片源 → 通知编排层（此时已脱离渲染阶段，setState 安全）
+    onMediaFoundRef.current?.(sniffedMediaList);
+  }, [sniffedMediaList]);
 
   /**
    * 📨 处理来自 <WebView> 的 onMessage 事件

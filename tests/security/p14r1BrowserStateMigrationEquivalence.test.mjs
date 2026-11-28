@@ -331,12 +331,34 @@ export default AsyncStorage;
 
   // 常量模块（真实源码，纯函数无原生依赖）
   copyFile(path.join(repoRoot, 'src/constants/browser/index.ts'), 'src/constants/browser/index.ts');
+  // 🧩 P15 观看历史 V1：watchHistoryLogic.js 以显式 `index.js` 导入常量模块，
+  //    而真实源已迁移为 index.ts。Node ESM 不做扩展名回退，故额外落盘一份
+  //    转译后的 index.js（擦除类型），供显式 .js 导入解析。
+  {
+    const constSrc = fs.readFileSync(path.join(repoRoot, 'src/constants/browser/index.ts'), 'utf8');
+    const constJs = ts.transpileModule(constSrc, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        isolatedModules: true,
+      },
+      fileName: 'index.ts',
+    }).outputText;
+    fs.writeFileSync(path.join(dir, 'src/constants/browser/index.js'), constJs);
+  }
   // 类型模块（仅类型，运行时为空；复制以支持潜在 import type 解析）
   copyFile(path.join(repoRoot, 'src/types/browser.ts'), 'src/types/browser.ts');
   // P1.3 纯函数依赖（历史 / 书签数据逻辑）
   copyFile(
     path.join(repoRoot, 'src/hooks/browser/historyDataLogic.ts'),
     'src/hooks/browser/historyDataLogic.ts'
+  );
+  // 🧩 P15 观看历史 V1：BrowserSessionContext（before 基线 .js 与 after .tsx 均）
+  //    import watchHistoryLogic（createResumeTaskId / RESUME_TASK_STATUS）以生成
+  //    续播任务 ID。该模块为纯逻辑（无原生依赖），两侧沙箱都需复制真实源码。
+  copyFile(
+    path.join(repoRoot, 'src/hooks/browser/watchHistoryLogic.js'),
+    'src/hooks/browser/watchHistoryLogic.js'
   );
 
   // useAuth 真实路径：Context 源码 import '../hooks/useAuth'。
@@ -968,14 +990,32 @@ function mountProvider(opts) {
   };
 }
 
+// 🧩 P15 观看历史 V1（增量扩展）：after 侧 BrowserSessionContext 新增了
+//    pendingResume / setPendingResume / updatePendingResumeStatus /
+//    consumePendingResume 四个续播任务 API。这是「纯增量」扩展，不改变
+//    P1.4 迁移原有的 pendingUrl / lastUrl / pendingSeq 语义。
+//    等价性断言只比较「迁移前后共同拥有的接口」，V1 新增键单独断言。
+const V1_ADDED_KEYS = [
+  'consumePendingResume',
+  'pendingResume',
+  'setPendingResume',
+  'updatePendingResumeStatus',
+];
+const stripV1Keys = (keys) => keys.filter((k) => !V1_ADDED_KEYS.includes(k));
+
 function snapCtx(m) {
   return {
     pendingUrl: m.ctx.pendingUrl,
     pendingSeq: m.ctx.pendingSeq,
     lastUrl: m.ctx.lastUrl,
-    keys: Object.keys(m.ctx).sort(),
-    providerKeys: Object.keys(m.providerValue).sort(),
+    keys: stripV1Keys(Object.keys(m.ctx).sort()),
+    providerKeys: stripV1Keys(Object.keys(m.providerValue).sort()),
   };
+}
+
+// V1 新增接口的独立断言（不参与 before/after 等价比较）
+function v1KeysOf(m) {
+  return Object.keys(m.ctx).filter((k) => V1_ADDED_KEYS.includes(k)).sort();
 }
 
 async function drain() {
@@ -1736,11 +1776,13 @@ process.stdout.write(JSON.stringify({ snap: snapCtx(m) }));
   // 移除「同账号新 epoch → 清空 pendingUrl」的渲染期调整，
   // 使旧 pendingUrl 残留 → 与基线（清空）产生差异。
   // 注意：搜索串匹配转译后 .js 的缩进格式（8 空格）。
+  // 🧩 P15 观看历史 V1：该分支内新增了 `setPendingResumeState(null)` 与注释，
+  //    因此只精确替换「清空 pendingUrl」这一行，不依赖块尾 `}` 的位置。
   mutateAndCompare(
     'context',
     'src/context/BrowserSessionContext.js',
-    'if (stateEpoch !== authEpoch) {\n        setStateEpoch(authEpoch);\n        setPendingUrlState(null);\n    }',
-    'if (stateEpoch !== authEpoch) {\n        setStateEpoch(authEpoch);\n    }',
+    'if (stateEpoch !== authEpoch) {\n        setStateEpoch(authEpoch);\n        setPendingUrlState(null);',
+    'if (stateEpoch !== authEpoch) {\n        setStateEpoch(authEpoch);',
     body,
     '同账号新 epoch 清空 pendingUrl'
   );

@@ -152,6 +152,14 @@ export default {};
     fs.writeFileSync(dst, code);
   };
   relStub('src/context/ThemeContext', `export const useAppTheme = () => ({ isDark: false, colors: {} }); export default {};`);
+  // 🧩 P15 观看历史 V1：cinema.js 现在 import useBrowserSession 以消费续播任务。
+  //    本测试只验证 resolveCinemaRoomId 纯函数，故给出最小 stub（无 pendingResume）。
+  relStub('src/context/BrowserSessionContext', `export const useBrowserSession = () => ({ pendingResume: null, consumePendingResume: () => {}, setPendingResumeState: () => {} }); export default {};`);
+  // 🧩 P15 观看历史 V1：cinema.js 现在 import 观看历史 Hook 与纯逻辑模块。
+  //    本测试只验证 resolveCinemaRoomId 纯函数，故给出最小 stub。
+  relStub('src/hooks/browser/useWatchHistory', `export const useWatchHistory = () => ({ watchList: [], upsertWatchRecord: () => {}, removeWatchRecord: () => {}, clearWatchHistory: () => {} }); export default {};`);
+  relStub('src/hooks/browser/useWatchProgressRecorder', `export const useWatchProgressRecorder = () => ({ markCompleted: () => {}, flush: () => {} }); export default {};`);
+  relStub('src/hooks/browser/watchHistoryLogic', `export const buildMediaKey = () => 'm:stub'; export const buildRecordKey = () => 'r:stub'; export const isPendingResumeMatch = () => false; export const isResumeTargetCurrent = () => false; export const isResumeTaskExpired = () => false; export const parseEpisodeTriple = () => null; export const resolveEpisodeLabel = () => ''; export const RESUME_TASK_STATUS = { PENDING: 'PENDING', MATCHED: 'MATCHED', APPLIED: 'APPLIED', ABORTED: 'ABORTED' }; export default {};`);
   relStub('src/hooks/useCinema', `export const useCinema = () => ({}); export default {};`);
   relStub('src/hooks/useAuth', `export const useAuth = () => ({ user: null }); export default {};`);
   relStub('src/hooks/useOwnerKey', `export const useOwnerKey = () => ({ ownerKey: 'anon::0' }); export default {};`);
